@@ -156,8 +156,10 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Schedule the daily quote at a specific time (e.g., 8:00 AM UTC)
-    job_queue = application.job_queue
-    job_queue.run_daily(send_daily_quote, time=time(hour=8, minute=0, tzinfo=timezone.utc))
+    if application.job_queue:
+        application.job_queue.run_daily(send_daily_quote, time=time(hour=8, minute=0, tzinfo=timezone.utc))
+    else:
+        print("Warning: JobQueue is not available. Daily quotes will not be scheduled.")
     
     print("Zen Monk Bot has awakened. Press Ctrl+C to return to silence.")
     application.run_polling(drop_pending_updates=True)
