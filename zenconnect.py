@@ -50,7 +50,7 @@ async def generate_response(prompt):
         return response.choices[0].message.content.strip()
     except Exception as e:
         print(f"Error generating response: {type(e).__name__}: {str(e)}")
-        return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later."
+        return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later.1"
 
 async def send_daily_quote(context: ContextTypes.DEFAULT_TYPE):
     if YOUR_CHAT_ID:
@@ -66,7 +66,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     db = get_db_connection()
     if not db:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.2")
         return
 
     try:
