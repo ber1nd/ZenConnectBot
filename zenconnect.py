@@ -212,7 +212,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s ORDER BY timestamp DESC LIMIT 5", (user_id,))
         results = cursor.fetchall()
-                memory = "\n".join([result[0] for result in results[::-1]]) if results else ""
+
+        memory = "\n".join([result[0] for result in results[::-1]]) if results else ""
         
         elaborate = any(word in user_message.lower() for word in ['why', 'how', 'explain', 'elaborate', 'tell me more'])
         
