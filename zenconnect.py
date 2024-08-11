@@ -7,6 +7,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from datetime import time, timezone
 import mysql.connector
 from mysql.connector import Error
+from flask import Flask, jsonify, request
 
 # Socket-based lock
 LOCK_SOCKET = None
@@ -27,6 +28,9 @@ client = AsyncOpenAI(api_key=os.getenv("API_KEY"))
 # Your personal chat ID (use environment variable)
 YOUR_CHAT_ID = int(os.getenv("CHAT_ID"))
 
+# Initialize Flask app
+app = Flask(__name__)
+
 def get_db_connection():
     try:
         return mysql.connector.connect(
@@ -39,6 +43,33 @@ def get_db_connection():
     except Error as e:
         print(f"Error connecting to MySQL database: {e}")
         return None
+
+@app.route('/getZenData', methods=['GET'])
+def get_zen_data():
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+    
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor()
+            cursor.execute("SELECT total_minutes, zen_points FROM users WHERE user_id = %s", (user_id,))
+            result = cursor.fetchone()
+            if result:
+                total_minutes, zen_points = result
+                level = zen_points // 100
+                return jsonify({"zen_points": zen_points, "level": level, "total_minutes": total_minutes})
+            else:
+                return jsonify({"error": "User not found"}), 404
+        except Error as e:
+            print(f"Database error: {e}")
+            return jsonify({"error": "Database error"}), 500
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    return jsonify({"error": "Unable to connect to database"}), 500
 
 async def generate_response(prompt, elaborate=False):
     try:
@@ -307,6 +338,10 @@ def main():
         application.job_queue.run_daily(send_daily_quote, time=time(hour=8, minute=0, tzinfo=timezone.utc))
     else:
         print("Warning: JobQueue is not available. Daily quotes will not be scheduled.")
+    
+    # Start the Flask app in a separate thread
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, app.run, "0.0.0.0", 5000)
     
     print("Zen Monk Bot has awakened. Press Ctrl+C to return to silence.")
     application.run_polling(drop_pending_updates=True)
