@@ -39,12 +39,16 @@ def get_db_connection():
         print(f"Error connecting to MySQL database: {e}")
         return None
 
-async def generate_response(prompt):
+async def generate_response(prompt, elaborate=False):
     try:
+        max_tokens = 150 if elaborate else 50
         response = await client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=150,
+            messages=[
+                {"role": "system", "content": "You are a wise Zen monk. Provide concise, insightful responses unless asked for elaboration."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=max_tokens,
             temperature=0.7
         )
         return response.choices[0].message.content.strip()
@@ -52,11 +56,11 @@ async def generate_response(prompt):
         import traceback
         traceback.print_exc()
         print(f"Error generating response: {type(e).__name__}: {str(e)}")
-        return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later.1"
+        return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later."
 
 async def send_daily_quote(context: ContextTypes.DEFAULT_TYPE):
     if YOUR_CHAT_ID:
-        quote = await generate_response("Give me a Zen quote.")
+        quote = await generate_response("Give me a short Zen quote.")
         await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=quote)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -68,17 +72,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     db = get_db_connection()
     if not db:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.2")
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
         return
 
     try:
         cursor = db.cursor()
         
-        # Retrieve memory from the database (last 10 interactions)
-        cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s ORDER BY timestamp DESC LIMIT 10", (user_id,))
+        # Retrieve memory from the database (last 5 interactions)
+        cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s ORDER BY timestamp DESC LIMIT 5", (user_id,))
         results = cursor.fetchall()
 
         memory = "\n".join([result[0] for result in results[::-1]]) if results else ""
+        
+        elaborate = any(word in user_message.lower() for word in ['why', 'how', 'explain', 'elaborate', 'tell me more'])
         
         prompt = f"""You are a wise Zen monk having a conversation with a student. 
         Here's the recent conversation history:
@@ -88,7 +94,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         Student: {user_message}
         Zen Monk: """
 
-        response = await generate_response(prompt)
+        response = await generate_response(prompt, elaborate)
 
         # Store the new memory in the database
         new_memory = f"Student: {user_message}\nZen Monk: {response}"
