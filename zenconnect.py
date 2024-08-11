@@ -2,8 +2,8 @@ import os
 import socket
 import asyncio
 from openai import AsyncOpenAI
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
 from datetime import time, timezone
 import mysql.connector
 from mysql.connector import Error
@@ -79,13 +79,16 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"Start meditating for {duration} minutes. Focus on your breath.")
     
-    # Wait for the duration of the meditation
-    await asyncio.sleep(duration * 60)  # Sleep for the duration of the meditation
+    interval = 2  # Interval in minutes
+    total_intervals = duration // interval
     
-    # Calculate Zen points
+    for i in range(total_intervals):
+        await asyncio.sleep(interval * 60)  # Wait for the interval duration
+        motivational_message = await generate_response("Give me a short Zen meditation guidance message.")
+        await update.message.reply_text(motivational_message)
+    
+    await asyncio.sleep((duration % interval) * 60)  # Sleep for the remaining time
     zen_points = duration + (5 if duration > 15 else 0)  # 1 point per minute, +5 for sessions > 15 minutes
-    
-    # Log meditation in the database
     db = get_db_connection()
     if db:
         try:
@@ -112,11 +115,17 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
             result = cursor.fetchone()
             if result:
                 total_minutes, zen_points = result
+                level = zen_points // 100  # Example level logic
                 
-                # Create a text-based progress bar
-                progress_bar = create_progress_bar(zen_points)
-                
-                await update.message.reply_text(f"You have meditated for a total of {total_minutes} minutes and earned {zen_points} Zen points.\n{progress_bar}")
+                if level >= 10:
+                    keyboard = [
+                        [InlineKeyboardButton("Unlock Higher Levels", callback_data='upgrade')]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    await update.message.reply_text(f"You have reached Level {level}. Unlock higher levels for more features!", reply_markup=reply_markup)
+                else:
+                    progress_bar = create_progress_bar(zen_points)
+                    await update.message.reply_text(f"You have meditated for a total of {total_minutes} minutes and earned {zen_points} Zen points.\n{progress_bar}")
             else:
                 await update.message.reply_text("You have not logged any meditation sessions yet.")
         except Error as e:
@@ -126,6 +135,13 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if db.is_connected():
                 cursor.close()
                 db.close()
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.data == "upgrade":
+        await query.answer()
+        await query.message.reply_text("To unlock higher levels and additional features, please subscribe.")
+        # Here you would integrate with Telegram's payment system to handle the subscription process
 
 def create_progress_bar(points):
     total_blocks = 20  # Total length of the progress bar
@@ -160,7 +176,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         cursor = db.cursor()
         
-        # Retrieve memory from the database (last 5 interactions)
         cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s ORDER BY timestamp DESC LIMIT 5", (user_id,))
         results = cursor.fetchall()
 
@@ -178,7 +193,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         response = await generate_response(prompt, elaborate)
 
-        # Store the new memory in the database
         new_memory = f"Student: {user_message}\nZen Monk: {response}"
         cursor.execute("INSERT INTO user_memory (user_id, memory) VALUES (%s, %s)", (user_id, new_memory))
         db.commit()
@@ -283,6 +297,7 @@ def main():
     application.add_handler(CommandHandler("checkpoints", check_points))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CallbackQueryHandler(button_handler))
     
     # Schedule the daily quote at a specific time (e.g., 8:00 AM UTC)
     if application.job_queue:
