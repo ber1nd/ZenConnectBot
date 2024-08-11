@@ -1,5 +1,6 @@
 import os
 import socket
+import asyncio
 from openai import AsyncOpenAI
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
@@ -44,13 +45,25 @@ async def generate_response(prompt):
         response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=150,  # Increased for more detailed responses
+            max_tokens=150,
             temperature=0.7
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"Error generating response: {e}")
+        print(f"Error generating response: {type(e).__name__}: {str(e)}")
         return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later."
+
+async def test_openai_connection():
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "Hello, are you working?"}],
+            max_tokens=10,
+            temperature=0.7
+        )
+        print("OpenAI API test successful:", response.choices[0].message.content.strip())
+    except Exception as e:
+        print(f"OpenAI API test failed: {type(e).__name__}: {str(e)}")
 
 async def send_daily_quote(context: CallbackContext):
     if YOUR_CHAT_ID:
@@ -123,7 +136,7 @@ async def toggle_daily_quote(update: Update, context: CallbackContext):
 async def get_chat_id(update: Update, context: CallbackContext):
     await update.message.reply_text(f"Your unique identifier in this realm is: {update.effective_chat.id}")
 
-def main():
+async def main():
     if is_already_running():
         print("Another instance of this bot is already running. Exiting.")
         return
@@ -147,6 +160,9 @@ def main():
         finally:
             connection.close()
 
+    # Test OpenAI connection
+    await test_openai_connection()
+
     token = os.getenv("BOT_TOKEN")  # Use environment variable for the Telegram bot token
     application = Application.builder().token(token).build()
     
@@ -160,7 +176,9 @@ def main():
     job_queue.run_daily(send_daily_quote, time=time(hour=8, minute=0, tzinfo=timezone.utc))
     
     print("Zen Monk Bot has awakened. Press Ctrl+C to return to silence.")
-    application.run_polling(drop_pending_updates=True)
+    await application.initialize()
+    await application.start()
+    await application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
