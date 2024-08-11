@@ -1,15 +1,17 @@
+import os
 import socket
 import openai
+import mysql.connector
 from openai import AsyncOpenAI
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
 from datetime import time, timezone
 
-# Set up your OpenAI client
-client = AsyncOpenAI(api_key='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')  # Replace with your actual API key
+# Set up your OpenAI client using environment variables
+client = AsyncOpenAI(api_key=os.getenv("API_KEY"))
 
-# Your personal chat ID (to be filled in later)
-YOUR_CHAT_ID = 546589997  # Replace with your actual chat ID
+# Your personal chat ID (use environment variable)
+YOUR_CHAT_ID = int(os.getenv("CHAT_ID"))
 
 # Socket-based lock
 LOCK_SOCKET = None
@@ -23,6 +25,14 @@ def is_already_running():
         return False
     except socket.error:
         return True
+
+def get_db_connection():
+    return mysql.connector.connect(
+        host=os.getenv("MYSQLHOST"),
+        user=os.getenv("MYSQLUSER"),
+        password=os.getenv("MYSQLPASSWORD"),
+        database=os.getenv("MYSQLDATABASE")
+    )
 
 async def generate_response(prompt):
     models = ["gpt-4o-mini"]  
@@ -49,9 +59,31 @@ async def handle_message(update: Update, context: CallbackContext):
     if update.effective_chat.id != YOUR_CHAT_ID:
         return  # Don't respond to anyone else
 
+    user_id = update.effective_chat.id
     user_message = update.message.text
-    prompt = f"Respond as a wise Zen monk: {user_message}"
+
+    # Retrieve memory from the database
+    db = get_db_connection()
+    cursor = db.cursor()
+    cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s ORDER BY timestamp DESC LIMIT 1", (user_id,))
+    result = cursor.fetchone()
+
+    if result:
+        memory = result[0]
+        prompt = f"{memory}\nUser: {user_message}\nZen Monk:"
+    else:
+        prompt = f"User: {user_message}\nZen Monk:"
+
     response = await generate_response(prompt)
+
+    # Store the new memory in the database
+    new_memory = f"{prompt}\n{response}"
+    cursor.execute("INSERT INTO user_memory (user_id, memory) VALUES (%s, %s)", (user_id, new_memory))
+    db.commit()
+
+    cursor.close()
+    db.close()
+
     await update.message.reply_text(response)
 
 async def start(update: Update, context: CallbackContext):
@@ -78,7 +110,7 @@ def main():
         print("Another instance is already running. Exiting.")
         return
 
-    token = '7283636452:AAHDQqsbqNYn5sRWAn3WroKVugHeGMAkXKY'  # Replace with your Telegram bot token
+    token = os.getenv("BOT_TOKEN")  # Use environment variable for the Telegram bot token
     application = Application.builder().token(token).build()
     
     application.add_handler(CommandHandler("start", start))
