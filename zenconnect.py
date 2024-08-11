@@ -49,6 +49,8 @@ async def generate_response(prompt):
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"Error generating response: {type(e).__name__}: {str(e)}")
         return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later.1"
 
