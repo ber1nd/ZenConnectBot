@@ -1,5 +1,6 @@
 import os
 import socket
+import asyncio
 from openai import AsyncOpenAI
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -63,6 +64,87 @@ async def send_daily_quote(context: ContextTypes.DEFAULT_TYPE):
         quote = await generate_response("Give me a short Zen quote.")
         await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=quote)
 
+async def zen_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    story = await generate_response("Tell me a short Zen story.")
+    await update.message.reply_text(story)
+
+async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        duration = int(context.args[0]) if context.args else 5  # Default to 5 minutes
+        if duration <= 0:
+            raise ValueError("Meditation duration must be a positive number.")
+    except ValueError as e:
+        await update.message.reply_text(f"Invalid duration: {str(e)}. Please provide a positive number of minutes.")
+        return
+
+    await update.message.reply_text(f"Start meditating for {duration} minutes. Focus on your breath.")
+    
+    # Wait for the duration of the meditation
+    await asyncio.sleep(duration * 60)  # Sleep for the duration of the meditation
+    
+    # Calculate Zen points
+    zen_points = duration + (5 if duration > 15 else 0)  # 1 point per minute, +5 for sessions > 15 minutes
+    
+    # Log meditation in the database
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor()
+            cursor.execute("INSERT INTO meditation_log (user_id, duration, zen_points) VALUES (%s, %s, %s)", (update.effective_chat.id, duration, zen_points))
+            cursor.execute("INSERT INTO users (user_id, total_minutes, zen_points) VALUES (%s, %s, %s) ON DUPLICATE KEY UPDATE total_minutes = total_minutes + %s, zen_points = zen_points + %s", 
+                           (update.effective_chat.id, duration, zen_points, duration, zen_points))
+            db.commit()
+            await update.message.reply_text(f"Your meditation session is over. You earned {zen_points} Zen points!")
+        except Error as e:
+            print(f"Database error: {e}")
+            await update.message.reply_text("I'm sorry, there was an issue logging your meditation session.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+
+async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor()
+            cursor.execute("SELECT total_minutes, zen_points FROM users WHERE user_id = %s", (update.effective_chat.id,))
+            result = cursor.fetchone()
+            if result:
+                total_minutes, zen_points = result
+                
+                # Create a text-based progress bar
+                progress_bar = create_progress_bar(zen_points)
+                
+                await update.message.reply_text(f"You have meditated for a total of {total_minutes} minutes and earned {zen_points} Zen points.\n{progress_bar}")
+            else:
+                await update.message.reply_text("You have not logged any meditation sessions yet.")
+        except Error as e:
+            print(f"Database error: {e}")
+            await update.message.reply_text("I'm sorry, there was an issue retrieving your Zen points.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+
+def create_progress_bar(points):
+    total_blocks = 20  # Total length of the progress bar
+    filled_blocks = int((points % 100) / 5)  # 5 points per block, reset every 100 points
+    empty_blocks = total_blocks - filled_blocks
+    return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {points % 100}/100 Zen Points"
+
+async def zen_quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    quote = await generate_response("Give me a Zen quote.")
+    await update.message.reply_text(quote)
+
+async def zen_advice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    advice = await generate_response("Give me practical Zen advice for daily life.")
+    await update.message.reply_text(advice)
+
+async def random_wisdom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    wisdom = await generate_response("Share a random piece of Zen wisdom.")
+    await update.message.reply_text(wisdom)
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != YOUR_CHAT_ID:
         return  # Don't respond to anyone else
@@ -117,7 +199,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return  # Don't respond to anyone else
     await update.message.reply_text('Greetings, seeker of wisdom. I am a Zen monk here to guide you on your path to enlightenment. How may I assist you today?')
 
-async def toggle_daily_quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def togglequote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != YOUR_CHAT_ID:
         return  # Don't respond to anyone else
 
@@ -128,15 +210,31 @@ async def toggle_daily_quote(update: Update, context: ContextTypes.DEFAULT_TYPE)
         del context.bot_data['daily_quote_active']
         await update.message.reply_text("You have chosen to pause the daily Zen quotes. Remember, wisdom is all around us, even in silence.")
 
-async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def getchatid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Your unique identifier in this realm is: {update.effective_chat.id}")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = """
+    Available commands:
+    /start - Start interacting with the Zen Monk bot
+    /togglequote - Subscribe/Unsubscribe to daily Zen quotes
+    /zenstory - Hear a Zen story
+    /meditate [minutes] - Start a meditation timer (default is 5 minutes)
+    /zenquote - Receive a Zen quote
+    /zenadvice - Get practical Zen advice
+    /randomwisdom - Get a random piece of Zen wisdom
+    /checkpoints - Check your meditation minutes and Zen points progress
+    /getchatid - Get your unique Chat ID
+    /help - Display this help message
+    """
+    await update.message.reply_text(help_text)
 
 def main():
     if is_already_running():
         print("Another instance of this bot is already running. Exiting.")
         return
 
-    # Create table if not exists
+    # Create tables if not exist
     connection = get_db_connection()
     if connection:
         try:
@@ -149,9 +247,25 @@ def main():
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS meditation_log (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT,
+                    duration INT,
+                    zen_points INT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    total_minutes INT DEFAULT 0,
+                    zen_points INT DEFAULT 0
+                )
+                """)
             connection.commit()
         except Error as e:
-            print(f"Error creating table: {e}")
+            print(f"Error creating tables: {e}")
         finally:
             connection.close()
 
@@ -159,8 +273,15 @@ def main():
     application = Application.builder().token(token).build()
     
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("toggle_quote", toggle_daily_quote))
-    application.add_handler(CommandHandler("get_chat_id", get_chat_id))
+    application.add_handler(CommandHandler("togglequote", togglequote))
+    application.add_handler(CommandHandler("getchatid", getchatid))
+    application.add_handler(CommandHandler("zenstory", zen_story))
+    application.add_handler(CommandHandler("meditate", meditate))
+    application.add_handler(CommandHandler("zenquote", zen_quote))
+    application.add_handler(CommandHandler("zenadvice", zen_advice))
+    application.add_handler(CommandHandler("randomwisdom", random_wisdom))
+    application.add_handler(CommandHandler("checkpoints", check_points))
+    application.add_handler(CommandHandler("help", help_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Schedule the daily quote at a specific time (e.g., 8:00 AM UTC)
