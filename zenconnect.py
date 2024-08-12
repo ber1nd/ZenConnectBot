@@ -210,7 +210,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Available commands:
     /start - Start interacting with the Zen Monk bot
     /togglequote - Subscribe/Unsubscribe to daily Zen quotes
-        /zenstory - Hear a Zen story
+    /zenstory - Hear a Zen story
     /meditate [minutes] - Start a meditation timer (default is 5 minutes)
     /zenquote - Receive a Zen quote
     /zenadvice - Get practical Zen advice
