@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zen Stats</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        .container {
+            text-align: center;
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .progress-bar {
+            width: 100%;
+            background-color: #e0e0e0;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+        .progress {
+            width: 0%;
+            height: 20px;
+            background-color: #4CAF50;
+            border-radius: 5px;
+            transition: width 0.5s ease-in-out;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Your Zen Journey</h1>
+        <p id="total-minutes"></p>
+        <p id="zen-points"></p>
+        <p id="level"></p>
+        <div class="progress-bar">
+            <div id="progress" class="progress"></div>
+        </div>
+    </div>
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        
+        async function fetchStats() {
+            const response = await fetch(`/api/stats?user_id=${tg.initDataUnsafe.user.id}`);
+            const stats = await response.json();
+            document.getElementById('total-minutes').textContent = `Total Meditation Time: ${stats.total_minutes} minutes`;
+            document.getElementById('zen-points').textContent = `Zen Points: ${stats.zen_points}`;
+            document.getElementById('level').textContent = `Current Level: ${Math.floor(stats.zen_points / 100)}`;
+            const progress = (stats.zen_points % 100);
+            document.getElementById('progress').style.width = `${progress}%`;
+        }
+        
+        fetchStats();
+    </script>
+</body>
+</html>
