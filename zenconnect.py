@@ -41,16 +41,31 @@ def setup_database():
     if connection:
         try:
             with connection.cursor() as cursor:
-                # Check if username column exists, if not, add it
                 cursor.execute("""
-                SELECT COUNT(*)
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_NAME = 'users'
-                AND COLUMN_NAME = 'username'
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    username VARCHAR(255),
+                    first_name VARCHAR(255),
+                    last_name VARCHAR(255),
+                    chat_type ENUM('private', 'group') DEFAULT 'private',
+                    total_minutes INT DEFAULT 0,
+                    zen_points INT DEFAULT 0,
+                    daily_quote TINYINT(1) DEFAULT 0
+                )
                 """)
-                if cursor.fetchone()[0] == 0:
-                    cursor.execute("ALTER TABLE users ADD COLUMN username VARCHAR(255)")
                 
+                # Check if columns exist, if not, add them
+                columns_to_check = ['first_name', 'last_name']
+                for column in columns_to_check:
+                    cursor.execute(f"""
+                    SELECT COUNT(*)
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_NAME = 'users'
+                    AND COLUMN_NAME = '{column}'
+                    """)
+                    if cursor.fetchone()[0] == 0:
+                        cursor.execute(f"ALTER TABLE users ADD COLUMN {column} VARCHAR(255)")
+
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_memory (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -68,18 +83,6 @@ def setup_database():
                     duration INT,
                     zen_points INT,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """)
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    username VARCHAR(255),
-                    first_name VARCHAR(255),
-                    last_name VARCHAR(255),
-                    chat_type ENUM('private', 'group') DEFAULT 'private',
-                    total_minutes INT DEFAULT 0,
-                    zen_points INT DEFAULT 0,
-                    daily_quote TINYINT(1) DEFAULT 0
                 )
                 """)
                 cursor.execute("""
@@ -185,12 +188,6 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, there was an issue logging your meditation session.")
 
-def create_progress_bar(points):
-    total_blocks = 20  # Total length of the progress bar
-    filled_blocks = int((points % 100) / 5)  # 5 points per block, reset every 100 points
-    empty_blocks = total_blocks - filled_blocks
-    return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {points % 100}/100 Zen Points"
-
 async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_type = update.message.chat.type
@@ -223,13 +220,6 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.close()
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query.data == "upgrade":
-        await query.answer()
-        await query.message.reply_text("To unlock higher levels and additional features, please subscribe.")
-        # Here you would integrate with Telegram's payment system to handle the subscription process
 
 async def zen_quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     quote = await generate_response("Give me a Zen quote.")
@@ -270,7 +260,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     db = get_db_connection()
     if not db:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+        await update.message.reply_text("I'm having trouble accessing my memory right now. Please try again later.")
         return
 
     try:
@@ -319,8 +309,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(response)
 
     except Error as e:
-        print(f"Database error: {e}")
-        await update.message.reply_text("I apologize, I'm having trouble remembering our conversation. Let's continue anyway.")
+        print(f"Database error in handle_message: {e}")
+        await update.message.reply_text("I'm having trouble processing your message. Please try again later.")
 
     finally:
         if db.is_connected():
@@ -418,12 +408,12 @@ async def get_user_stats(request):
         try:
             cursor = db.cursor(dictionary=True)
             query = """
-                SELECT u.total_minutes, u.zen_points, 
-                       COALESCE(u.username, '') as username, 
-                       COALESCE(u.first_name, '') as first_name, 
-                       COALESCE(u.last_name, '') as last_name
-                FROM users u
-                WHERE u.user_id = %s
+                SELECT total_minutes, zen_points, 
+                       COALESCE(username, '') as username, 
+                       COALESCE(first_name, '') as first_name, 
+                       COALESCE(last_name, '') as last_name
+                FROM users
+                WHERE user_id = %s
             """
             print(f"Executing query: {query}")  # Debug log
             cursor.execute(query, (user_id,))
@@ -478,7 +468,6 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("deletedata", delete_user_data))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(button_handler))
     
     application.add_error_handler(error_handler)
     

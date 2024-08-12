@@ -13,21 +13,19 @@
             align-items: center;
             height: 100vh;
             margin: 0;
-            background-color: #111111; /* Slightly lighter black background */
+            background-color: #111111;
             color: white;
         }
-
         .container {
             text-align: center;
-            background-color: #000000; /* Black background to blend with the image */
+            background-color: #000000;
             padding: 20px;
             border-radius: 10px;
             box-shadow: 0 0 15px rgba(0,0,0,0.5);
-            width: 80%; /* Adjusted width */
-            max-width: 400px; /* Ensure it's responsive */
+            width: 80%;
+            max-width: 400px;
             position: relative;
         }
-
         .container:before,
         .container:after {
             content: '';
@@ -40,21 +38,18 @@
             left: 25%;
             box-shadow: 0 0 10px rgba(0,0,0,0.5);
         }
-
         .container:after {
             top: unset;
             bottom: -10px;
         }
-
         img {
             width: 100px;
             height: 100px;
             object-fit: contain;
             margin-bottom: 10px;
-            border-radius: 50%; /* Round the image */
-            background-color: #000000; /* Ensure it blends */
+            border-radius: 50%;
+            background-color: #000000;
         }
-
         .progress-bar {
             width: 100%;
             background-color: #333333;
@@ -62,21 +57,18 @@
             margin-top: 10px;
             overflow: hidden;
         }
-
         .progress {
             width: 0%;
             height: 20px;
             background-color: #4CAF50;
-            border-radius: 20px; /* Round the edges */
-            transition: width 1.5s ease-in-out; /* Slow down loading */
+            border-radius: 20px;
+            transition: width 1.5s ease-in-out;
         }
-
         .message {
             margin-top: 15px;
             font-style: italic;
-            color: #aaaaaa; /* Light grey text for the motivational message */
+            color: #aaaaaa;
         }
-
         #error-message {
             color: #ff6b6b;
             margin-top: 10px;
