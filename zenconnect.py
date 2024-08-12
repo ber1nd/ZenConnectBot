@@ -245,13 +245,31 @@ async def get_user_stats(request):
                 db.close()
     return web.json_response({"error": "Database connection failed"}, status=500)
 
-async def set_menu_button(application: Application):
+async def setup_bot(application: Application):
     await application.bot.set_my_commands([
         ("start", "Start the bot"),
         ("help", "Show available commands"),
         ("meditate", "Start a meditation session"),
         ("checkpoints", "View your Zen stats"),
     ])
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("togglequote", togglequote))
+    application.add_handler(CommandHandler("getchatid", getchatid))
+    application.add_handler(CommandHandler("zenstory", zen_story))
+    application.add_handler(CommandHandler("meditate", meditate))
+    application.add_handler(CommandHandler("zenquote", zen_quote))
+    application.add_handler(CommandHandler("zenadvice", zen_advice))
+    application.add_handler(CommandHandler("randomwisdom", random_wisdom))
+    application.add_handler(CommandHandler("checkpoints", check_points))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CallbackQueryHandler(button_handler))
+
+    if application.job_queue:
+        application.job_queue.run_daily(send_daily_quote, time=time(hour=8, minute=0, tzinfo=timezone.utc))
+    else:
+        print("Warning: JobQueue is not available. Daily quotes will not be scheduled.")
 
 async def main():
     if is_already_running():
@@ -293,29 +311,10 @@ async def main():
         finally:
             connection.close()
 
-    token = os.getenv("BOT_TOKEN")  # Use environment variable for the Telegram bot token
+    token = os.getenv("BOT_TOKEN")
     application = Application.builder().token(token).build()
     
-    await set_menu_button(application)
-    
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("togglequote", togglequote))
-    application.add_handler(CommandHandler("getchatid", getchatid))
-    application.add_handler(CommandHandler("zenstory", zen_story))
-    application.add_handler(CommandHandler("meditate", meditate))
-    application.add_handler(CommandHandler("zenquote", zen_quote))
-    application.add_handler(CommandHandler("zenadvice", zen_advice))
-    application.add_handler(CommandHandler("randomwisdom", random_wisdom))
-    application.add_handler(CommandHandler("checkpoints", check_points))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    
-    # Schedule the daily quote at a specific time (e.g., 8:00 AM UTC)
-    if application.job_queue:
-        application.job_queue.run_daily(send_daily_quote, time=time(hour=8, minute=0, tzinfo=timezone.utc))
-    else:
-        print("Warning: JobQueue is not available. Daily quotes will not be scheduled.")
+    await setup_bot(application)
     
     # Set up web app
     app = web.Application()
@@ -323,9 +322,9 @@ async def main():
     app.router.add_get('/api/stats', get_user_stats)
 
     # Start bot and web server
-    web_runner = web.AppRunner(app)
-    await web_runner.setup()
-    site = web.TCPSite(web_runner, '0.0.0.0', int(os.environ.get('PORT', 8080)))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', int(os.environ.get('PORT', 8080)))
     await site.start()
     
     print("Zen Monk Bot has awakened. Press Ctrl+C to return to silence.")
