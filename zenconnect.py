@@ -2,7 +2,7 @@ import os
 import socket
 import asyncio
 from openai import AsyncOpenAI
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, MenuButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
 from datetime import time, timezone
 import mysql.connector
@@ -113,10 +113,13 @@ def create_progress_bar(points):
     return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {points % 100}/100 Zen Points"
 
 async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mini_app_url = "https://zenconnectminiapp-production.up.railway.app"
+    mini_app_url = "https://zenconnectbot-production.up.railway.app/"
     keyboard = [[InlineKeyboardButton("Open Zen Stats", web_app=WebAppInfo(url=mini_app_url))]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Click the button below to view your Zen stats:", reply_markup=reply_markup)
+    await update.message.reply_text(
+        "Click the button below to view your Zen stats, or use the menu button for quick access anytime:",
+        reply_markup=reply_markup
+    )
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -220,7 +223,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(help_text)
 
 async def serve_mini_app(request):
-    return web.FileResponse('./zen_stats.html')
+    return web.FileResponse('zen_stats.html')
 
 async def get_user_stats(request):
     user_id = request.query.get('user_id')
@@ -243,7 +246,12 @@ async def get_user_stats(request):
                 db.close()
     return web.json_response({"error": "Database connection failed"}, status=500)
 
-def main():
+async def set_menu_button(application: Application):
+    await application.bot.set_chat_menu_button(
+        menu_button=MenuButton(type="web_app", text="Zen Stats", web_app=WebAppInfo(url="https://zenconnectbot-production.up.railway.app/"))
+    )
+
+async def main():
     if is_already_running():
         print("Another instance of this bot is already running. Exiting.")
         return
@@ -286,6 +294,8 @@ def main():
     token = os.getenv("BOT_TOKEN")  # Use environment variable for the Telegram bot token
     application = Application.builder().token(token).build()
     
+    await set_menu_button(application)
+    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("togglequote", togglequote))
     application.add_handler(CommandHandler("getchatid", getchatid))
@@ -313,12 +323,13 @@ def main():
     # Start bot and web server
     web_runner = web.AppRunner(app)
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(web_runner.setup())
+    await web_runner.setup()
     site = web.TCPSite(web_runner, '0.0.0.0', int(os.environ.get('PORT', 8080)))
-    loop.run_until_complete(site.start())
+    await site.start()
     
     print("Zen Monk Bot has awakened. Press Ctrl+C to return to silence.")
-    application.run_polling(drop_pending_updates=True)
+    await application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
+</antArt
