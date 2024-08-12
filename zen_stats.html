@@ -13,18 +13,23 @@
             align-items: center;
             height: 100vh;
             margin: 0;
-            background-color: #f0f0f0;
+            background-color: #121212;
+            color: #ffffff;
         }
         .container {
             text-align: center;
-            background-color: white;
+            background-color: #1e1e1e;
             padding: 20px;
             border-radius: 10px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            box-shadow: 0 0 15px rgba(0,0,0,0.3);
+        }
+        .container img {
+            max-width: 100px;
+            margin-bottom: 20px;
         }
         .progress-bar {
             width: 100%;
-            background-color: #e0e0e0;
+            background-color: #333;
             border-radius: 5px;
             margin-top: 10px;
         }
@@ -39,6 +44,7 @@
 </head>
 <body>
     <div class="container">
+        <img src="images/monk_image.png" alt="Zen Monk">
         <h1>Your Zen Journey</h1>
         <p id="total-minutes"></p>
         <p id="zen-points"></p>
@@ -56,7 +62,13 @@
             const stats = await response.json();
             document.getElementById('total-minutes').textContent = `Total Meditation Time: ${stats.total_minutes} minutes`;
             document.getElementById('zen-points').textContent = `Zen Points: ${stats.zen_points}`;
-            document.getElementById('level').textContent = `Current Level: ${Math.floor(stats.zen_points / 100)}`;
+            
+            // Updated Level display with name
+            const levels = ["Beginner", "Novice", "Adept", "Expert", "Master"];
+            const currentLevel = Math.floor(stats.zen_points / 100);
+            const levelName = levels[currentLevel] || "Zen Master";
+            document.getElementById('level').textContent = `Current Level: ${currentLevel} (${levelName})`;
+            
             const progress = (stats.zen_points % 100);
             document.getElementById('progress').style.width = `${progress}%`;
         }
