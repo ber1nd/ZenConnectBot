@@ -262,10 +262,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.message.chat.type
     group_id = update.message.chat.id if chat_type == 'group' else None
 
-    # Check if the message mentions the bot in a group chat
+    # Check if the message is in a group and contains 'Zen' or mentions the bot
     bot_username = context.bot.username.lower()
-    if chat_type == 'group' and not (user_message.lower().startswith('/') or f'@{bot_username}' in user_message.lower()):
-        return  # Exit the function if it's a group message not directed at the bot
+    if chat_type == 'group' and not (
+        'zen' in user_message.lower() or 
+        f'@{bot_username}' in user_message.lower() or 
+        user_message.lower().startswith('/')
+    ):
+        return  # Exit the function if it's a group message not meant for the bot
 
     # Apply rate limiting
     if not check_rate_limit(user_id):
