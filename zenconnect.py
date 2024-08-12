@@ -331,4 +331,12 @@ async def main():
     await application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except RuntimeError as e:
+        if str(e) == "This event loop is already running":
+            print("Detected a running event loop, reusing it.")
+            loop = asyncio.get_running_loop()
+            loop.run_until_complete(main())
+        else:
+            raise
