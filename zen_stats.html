@@ -22,6 +22,11 @@
             border-radius: 10px;
             box-shadow: 0 0 10px rgba(0,0,0,0.5);
         }
+        img {
+            max-width: 100%; /* Scale the image to fit within the container */
+            height: auto;
+            margin-bottom: 20px;
+        }
         .progress-bar {
             width: 100%;
             background-color: #333;
@@ -35,8 +40,9 @@
             border-radius: 5px;
             transition: width 0.5s ease-in-out;
         }
-        h1, p {
-            color: #FFF; /* Keep text color white for better contrast */
+        .motivational-message {
+            color: #999; /* Lighter grey for the motivational message */
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -50,6 +56,7 @@
         <div class="progress-bar">
             <div id="progress" class="progress"></div>
         </div>
+        <p class="motivational-message">Keep going! You're on your way to enlightenment.</p>
     </div>
     <script>
         const tg = window.Telegram.WebApp;
@@ -60,7 +67,13 @@
             const stats = await response.json();
             document.getElementById('total-minutes').textContent = `Total Meditation Time: ${stats.total_minutes} minutes`;
             document.getElementById('zen-points').textContent = `Zen Points: ${stats.zen_points}`;
-            document.getElementById('level').textContent = `Current Level: ${stats.level_name}`; // Ensure the level name is displayed
+            
+            // Map zen points to level names
+            const levels = ["Beginner", "Novice", "Apprentice", "Adept", "Master"];
+            const levelIndex = Math.floor(stats.zen_points / 100);
+            const levelName = levels[levelIndex] || "Zen Master";
+
+            document.getElementById('level').textContent = `Current Level: ${levelName}`;
             const progress = (stats.zen_points % 100);
             document.getElementById('progress').style.width = `${progress}%`;
         }
