@@ -262,16 +262,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.message.chat.type
     group_id = update.message.chat.id if chat_type == 'group' else None
 
-    # Check if the message is in a group and contains 'Zen' or mentions the bot
-    bot_username = context.bot.username.lower()
-    if chat_type == 'group':
-        if not (
-            'zen' in user_message.lower() or 
-            f'@{bot_username}' in user_message.lower() or 
-            user_message.lower().startswith('/')
-        ):
-            return  # Exit the function if it's a group message not meant for the bot
-    
     # Apply rate limiting
     if not check_rate_limit(user_id):
         await update.message.reply_text("Please wait a moment before sending another message. Zen teaches us the value of patience.")
@@ -361,7 +351,7 @@ async def togglequote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db:
         try:
             cursor = db.cursor()
-            cursor.execute("SELECT daily_quote FROM users WHERE user_id = %s", (user_id,))
+cursor.execute("SELECT daily_quote FROM users WHERE user_id = %s", (user_id,))
             result = cursor.fetchone()
             if result is None:
                 new_status = 1
@@ -485,6 +475,7 @@ def main():
     token = os.getenv("BOT_TOKEN")  # Use environment variable for the Telegram bot token
     application = Application.builder().token(token).build()
     
+    # Command handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("togglequote", togglequote))
     application.add_handler(CommandHandler("getchatid", getchatid))
@@ -496,7 +487,18 @@ def main():
     application.add_handler(CommandHandler("checkpoints", check_points))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("deletedata", delete_user_data))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Message handler with custom filters
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & (
+            filters.ChatType.PRIVATE |
+            (filters.ChatType.GROUPS & (
+                filters.Regex(r'(?i)\bzen\b') |
+                filters.Regex(r'@\w+')  # This will match any mention, we'll check for the bot's username in handle_message
+            ))
+        ),
+        handle_message
+    ))
     
     application.add_error_handler(error_handler)
     
