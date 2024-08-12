@@ -76,6 +76,11 @@
             font-style: italic;
             color: #aaaaaa; /* Light grey text for the motivational message */
         }
+
+        #error-message {
+            color: #ff6b6b;
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
@@ -89,6 +94,7 @@
             <div id="progress" class="progress"></div>
         </div>
         <p class="message">Keep going! You're on your way to enlightenment.</p>
+        <p id="error-message"></p>
     </div>
     <script>
         const tg = window.Telegram.WebApp;
@@ -96,11 +102,15 @@
 
         async function fetchStats() {
             try {
+                console.log("Fetching stats for user ID:", tg.initDataUnsafe.user.id);
                 const response = await fetch(`/api/stats?user_id=${tg.initDataUnsafe.user.id}`);
+                console.log("Response status:", response.status);
                 if (!response.ok) {
-                    throw new Error('Failed to fetch stats');
+                    const errorText = await response.text();
+                    throw new Error(`Failed to fetch stats: ${response.status} ${errorText}`);
                 }
                 const stats = await response.json();
+                console.log("Received stats:", stats);
                 document.getElementById('total-minutes').textContent = `Total Meditation Time: ${stats.total_minutes || 0} minutes`;
                 document.getElementById('zen-points').textContent = `Zen Points: ${stats.zen_points || 0}`;
                 document.getElementById('level').textContent = `Current Level: ${getLevelName(stats.zen_points || 0)}`;
@@ -112,6 +122,7 @@
                 document.getElementById('zen-points').textContent = 'Unable to fetch Zen points';
                 document.getElementById('level').textContent = 'Level: Unknown';
                 document.getElementById('progress').style.width = '0%';
+                document.getElementById('error-message').textContent = `Error: ${error.message}`;
             }
         }
 

@@ -412,31 +412,38 @@ async def serve_mini_app(request):
 
 async def get_user_stats(request):
     user_id = request.query.get('user_id')
+    print(f"Fetching stats for user_id: {user_id}")  # Debug log
     db = get_db_connection()
     if db:
         try:
             cursor = db.cursor(dictionary=True)
-            cursor.execute("""
+            query = """
                 SELECT u.total_minutes, u.zen_points, 
                        COALESCE(u.username, '') as username, 
                        COALESCE(u.first_name, '') as first_name, 
                        COALESCE(u.last_name, '') as last_name
                 FROM users u
                 WHERE u.user_id = %s
-            """, (user_id,))
+            """
+            print(f"Executing query: {query}")  # Debug log
+            cursor.execute(query, (user_id,))
             result = cursor.fetchone()
+            print(f"Query result: {result}")  # Debug log
             if result:
                 return web.json_response(result)
             else:
-                return web.json_response({"error": "User not found"}, status=404)
+                print(f"User not found: {user_id}")  # Debug log
+                return web.json_response({"error": "User not found", "user_id": user_id}, status=404)
         except Error as e:
             print(f"Database error: {e}")
-            return web.json_response({"error": "Database error"}, status=500)
+            return web.json_response({"error": "Database error", "details": str(e)}, status=500)
         finally:
             if db.is_connected():
                 cursor.close()
                 db.close()
-    return web.json_response({"error": "Database connection failed"}, status=500)
+    else:
+        print("Failed to connect to database")  # Debug log
+        return web.json_response({"error": "Database connection failed"}, status=500)
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     print(f"Exception while handling an update: {context.error}")
