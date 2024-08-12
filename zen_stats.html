@@ -7,44 +7,58 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
             display: flex;
             justify-content: center;
             align-items: center;
             height: 100vh;
             margin: 0;
-            background-color: #121212;
+            background-color: #1c1c1c;
             color: #ffffff;
         }
         .container {
             text-align: center;
-            background-color: #1e1e1e;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 0 15px rgba(0,0,0,0.3);
+            background-color: #2b2b2b;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+            max-width: 90%;
+            width: 400px;
         }
         .container img {
-            max-width: 100px;
+            width: 100px;
+            height: auto;
             margin-bottom: 20px;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            font-weight: normal;
+            letter-spacing: 1px;
+        }
+        p {
+            font-size: 16px;
+            margin: 8px 0;
+            color: #cccccc;
         }
         .progress-bar {
             width: 100%;
-            background-color: #333;
-            border-radius: 5px;
-            margin-top: 10px;
+            background-color: #3a3a3a;
+            border-radius: 10px;
+            margin-top: 20px;
+            overflow: hidden;
         }
         .progress {
             width: 0%;
-            height: 20px;
-            background-color: #4CAF50;
-            border-radius: 5px;
+            height: 25px;
+            background-color: #4caf50;
             transition: width 0.5s ease-in-out;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <img src="https://github.com/ber1nd/ZenConnectBot/blob/main/assets/monk_image.png?raw=true" alt="Zen Monk">
+        <img src="assets/monk_image.png" alt="Zen Circle">
         <h1>Your Zen Journey</h1>
         <p id="total-minutes"></p>
         <p id="zen-points"></p>
@@ -57,18 +71,26 @@
         const tg = window.Telegram.WebApp;
         tg.expand();
         
+        const levelNames = [
+            "Beginner",
+            "Novice",
+            "Seeker",
+            "Adept",
+            "Disciple",
+            "Sage",
+            "Master",
+            "Zen Master",
+            "Enlightened",
+            "Grand Master"
+        ];
+
         async function fetchStats() {
             const response = await fetch(`/api/stats?user_id=${tg.initDataUnsafe.user.id}`);
             const stats = await response.json();
             document.getElementById('total-minutes').textContent = `Total Meditation Time: ${stats.total_minutes} minutes`;
             document.getElementById('zen-points').textContent = `Zen Points: ${stats.zen_points}`;
-            
-            // Updated Level display with name
-            const levels = ["Beginner", "Novice", "Adept", "Expert", "Master"];
-            const currentLevel = Math.floor(stats.zen_points / 100);
-            const levelName = levels[currentLevel] || "Zen Master";
-            document.getElementById('level').textContent = `Current Level: ${currentLevel} (${levelName})`;
-            
+            const level = Math.min(Math.floor(stats.zen_points / 100), levelNames.length - 1);
+            document.getElementById('level').textContent = `Current Level: ${levelNames[level]}`;
             const progress = (stats.zen_points % 100);
             document.getElementById('progress').style.width = `${progress}%`;
         }
