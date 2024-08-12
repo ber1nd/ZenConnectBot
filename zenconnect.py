@@ -80,6 +80,17 @@ def setup_database():
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
+                
+                # Check if group_id column exists in user_memory table
+                cursor.execute("""
+                SELECT COUNT(*)
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = 'user_memory'
+                AND COLUMN_NAME = 'group_id'
+                """)
+                if cursor.fetchone()[0] == 0:
+                    cursor.execute("ALTER TABLE user_memory ADD COLUMN group_id BIGINT")
+
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS meditation_log (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -271,6 +282,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         cursor = db.cursor()
         
+        # Ensure chat_type is either 'private' or 'group'
+        chat_type_db = 'private' if chat_type == 'private' else 'group'
+        
         # Update or insert user information
         cursor.execute("""
             INSERT INTO users (user_id, username, first_name, last_name, chat_type)
@@ -281,7 +295,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             last_name = VALUES(last_name),
             chat_type = VALUES(chat_type)
         """, (user_id, update.effective_user.username, update.effective_user.first_name, 
-              update.effective_user.last_name, chat_type))
+              update.effective_user.last_name, chat_type_db))
 
         # If it's a group chat, update group membership
         if group_id:
@@ -290,7 +304,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 VALUES (%s, %s)
             """, (user_id, group_id))
 
-        cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s AND group_id IS NULL ORDER BY timestamp DESC LIMIT 5", (user_id,))
+        # Fetch user memory
+        if group_id:
+            cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s AND group_id = %s ORDER BY timestamp DESC LIMIT 5", (user_id, group_id))
+        else:
+            cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s AND group_id IS NULL ORDER BY timestamp DESC LIMIT 5", (user_id,))
+        
         results = cursor.fetchall()
 
         memory = "\n".join([result[0] for result in results[::-1]]) if results else ""
