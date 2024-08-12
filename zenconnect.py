@@ -113,7 +113,7 @@ def create_progress_bar(points):
     return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {points % 100}/100 Zen Points"
 
 async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mini_app_url = "https://zenconnectminiapp-production.up.railway.app"
+    mini_app_url = "https://zenconnectbot-production.up.railway.app/"
     keyboard = [[InlineKeyboardButton("Open Zen Stats", web_app=WebAppInfo(url=mini_app_url))]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Click the button below to view your Zen stats:", reply_markup=reply_markup)
