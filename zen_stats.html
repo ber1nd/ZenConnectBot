@@ -13,44 +13,74 @@
             align-items: center;
             height: 100vh;
             margin: 0;
-            background-color: #1a1a1a; /* Darker background for blending */
-            color: white; /* Ensure text is visible */
+            background-color: #111111; /* Slightly lighter black background */
+            color: white;
         }
+
         .container {
             text-align: center;
-            background-color: #000000; /* Matching black background */
+            background-color: #000000; /* Black background to blend with the image */
             padding: 20px;
             border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.5);
+            width: 80%; /* Adjusted width */
+            max-width: 400px; /* Ensure it's responsive */
+            position: relative;
+        }
+
+        .container:before,
+        .container:after {
+            content: '';
+            display: block;
+            height: 3px;
+            background-color: white;
+            width: 50%;
+            position: absolute;
+            top: -10px;
+            left: 25%;
             box-shadow: 0 0 10px rgba(0,0,0,0.5);
         }
+
+        .container:after {
+            top: unset;
+            bottom: -10px;
+        }
+
+        img {
+            width: 100px;
+            height: 100px;
+            object-fit: contain;
+            margin-bottom: 10px;
+            border-radius: 50%; /* Round the image */
+            background-color: #000000; /* Ensure it blends */
+        }
+
         .progress-bar {
             width: 100%;
-            background-color: #e0e0e0;
-            border-radius: 5px;
+            background-color: #333333;
+            border-radius: 20px;
             margin-top: 10px;
+            overflow: hidden;
         }
+
         .progress {
             width: 0%;
             height: 20px;
             background-color: #4CAF50;
-            border-radius: 5px;
-            transition: width 0.5s ease-in-out;
+            border-radius: 20px; /* Round the edges */
+            transition: width 1.5s ease-in-out; /* Slow down loading */
         }
-        .quote {
+
+        .message {
+            margin-top: 15px;
             font-style: italic;
-            margin-top: 20px;
-            color: #b3b3b3; /* Slightly lighter color for the quote */
-        }
-        .enso-image {
-            width: 150px; /* Adjust the size to better fit the screen */
-            height: 150px;
-            margin-bottom: 20px;
+            color: #aaaaaa; /* Light grey text for the motivational message */
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <img src="https://github.com/ber1nd/ZenConnectBot/blob/main/assets/monk_image.png?raw=true" alt="Zen Circle" class="enso-image">
+        <img src="https://github.com/ber1nd/ZenConnectBot/blob/main/assets/monk_image.png?raw=true" alt="Zen Circle">
         <h1>Your Zen Journey</h1>
         <p id="total-minutes"></p>
         <p id="zen-points"></p>
@@ -58,22 +88,29 @@
         <div class="progress-bar">
             <div id="progress" class="progress"></div>
         </div>
-        <p class="quote">Keep going! You're on your way to enlightenment.</p>
+        <p class="message">Keep going! You're on your way to enlightenment.</p>
     </div>
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
-        
+
         async function fetchStats() {
             const response = await fetch(`/api/stats?user_id=${tg.initDataUnsafe.user.id}`);
             const stats = await response.json();
             document.getElementById('total-minutes').textContent = `Total Meditation Time: ${stats.total_minutes} minutes`;
             document.getElementById('zen-points').textContent = `Zen Points: ${stats.zen_points}`;
-            document.getElementById('level').textContent = `Current Level: Beginner`; // Using a placeholder for level
+            document.getElementById('level').textContent = `Current Level: ${getLevelName(stats.zen_points)}`;
             const progress = (stats.zen_points % 100);
             document.getElementById('progress').style.width = `${progress}%`;
         }
-        
+
+        function getLevelName(points) {
+            if (points < 100) return "Beginner";
+            if (points < 200) return "Novice";
+            if (points < 300) return "Adept";
+            return "Master";
+        }
+
         fetchStats();
     </script>
 </body>
