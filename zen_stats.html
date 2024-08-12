@@ -95,13 +95,24 @@
         tg.expand();
 
         async function fetchStats() {
-            const response = await fetch(`/api/stats?user_id=${tg.initDataUnsafe.user.id}`);
-            const stats = await response.json();
-            document.getElementById('total-minutes').textContent = `Total Meditation Time: ${stats.total_minutes} minutes`;
-            document.getElementById('zen-points').textContent = `Zen Points: ${stats.zen_points}`;
-            document.getElementById('level').textContent = `Current Level: ${getLevelName(stats.zen_points)}`;
-            const progress = (stats.zen_points % 100);
-            document.getElementById('progress').style.width = `${progress}%`;
+            try {
+                const response = await fetch(`/api/stats?user_id=${tg.initDataUnsafe.user.id}`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch stats');
+                }
+                const stats = await response.json();
+                document.getElementById('total-minutes').textContent = `Total Meditation Time: ${stats.total_minutes || 0} minutes`;
+                document.getElementById('zen-points').textContent = `Zen Points: ${stats.zen_points || 0}`;
+                document.getElementById('level').textContent = `Current Level: ${getLevelName(stats.zen_points || 0)}`;
+                const progress = ((stats.zen_points || 0) % 100);
+                document.getElementById('progress').style.width = `${progress}%`;
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+                document.getElementById('total-minutes').textContent = 'Unable to fetch meditation time';
+                document.getElementById('zen-points').textContent = 'Unable to fetch Zen points';
+                document.getElementById('level').textContent = 'Level: Unknown';
+                document.getElementById('progress').style.width = '0%';
+            }
         }
 
         function getLevelName(points) {

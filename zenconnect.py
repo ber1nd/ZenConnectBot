@@ -1,6 +1,8 @@
 import os
 import socket
 import asyncio
+import fcntl
+import sys
 from openai import AsyncOpenAI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
@@ -13,19 +15,6 @@ from dotenv import load_dotenv
 from collections import defaultdict
 
 load_dotenv()  # Load environment variables from .env file
-
-# Socket-based lock
-LOCK_SOCKET = None
-LOCK_SOCKET_ADDRESS = ("localhost", 47200)  # Choose an arbitrary port number
-
-def is_already_running():
-    global LOCK_SOCKET
-    LOCK_SOCKET = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        LOCK_SOCKET.bind(LOCK_SOCKET_ADDRESS)
-        return False
-    except socket.error:
-        return True
 
 # Set up your OpenAI client using environment variables
 client = AsyncOpenAI(api_key=os.getenv("API_KEY"))
@@ -46,6 +35,70 @@ def get_db_connection():
     except Error as e:
         print(f"Error connecting to MySQL database: {e}")
         return None
+
+def setup_database():
+    connection = get_db_connection()
+    if connection:
+        try:
+            with connection.cursor() as cursor:
+                # Check if username column exists, if not, add it
+                cursor.execute("""
+                SELECT COUNT(*)
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = 'users'
+                AND COLUMN_NAME = 'username'
+                """)
+                if cursor.fetchone()[0] == 0:
+                    cursor.execute("ALTER TABLE users ADD COLUMN username VARCHAR(255)")
+                
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_memory (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT,
+                    group_id BIGINT,
+                    memory TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS meditation_log (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT,
+                    group_id BIGINT,
+                    duration INT,
+                    zen_points INT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    username VARCHAR(255),
+                    first_name VARCHAR(255),
+                    last_name VARCHAR(255),
+                    chat_type ENUM('private', 'group') DEFAULT 'private',
+                    total_minutes INT DEFAULT 0,
+                    zen_points INT DEFAULT 0,
+                    daily_quote TINYINT(1) DEFAULT 0
+                )
+                """)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS group_memberships (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT,
+                    group_id BIGINT,
+                    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+                """)
+            connection.commit()
+            print("Database setup completed successfully.")
+        except Error as e:
+            print(f"Error setting up database: {e}")
+        finally:
+            connection.close()
+    else:
+        print("Failed to connect to the database for setup.")
 
 async def generate_response(prompt, elaborate=False):
     try:
@@ -206,7 +259,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if the message mentions the bot in a group chat
     bot_username = context.bot.username.lower()
     if chat_type == 'group' and not (user_message.lower().startswith('/') or f'@{bot_username}' in user_message.lower()):
-        return
+        return  # Exit the function if it's a group message not directed at the bot
 
     # Apply rate limiting
     if not check_rate_limit(user_id):
@@ -364,7 +417,10 @@ async def get_user_stats(request):
         try:
             cursor = db.cursor(dictionary=True)
             cursor.execute("""
-                SELECT u.total_minutes, u.zen_points, u.username, u.first_name, u.last_name
+                SELECT u.total_minutes, u.zen_points, 
+                       COALESCE(u.username, '') as username, 
+                       COALESCE(u.first_name, '') as first_name, 
+                       COALESCE(u.last_name, '') as last_name
                 FROM users u
                 WHERE u.user_id = %s
             """, (user_id,))
@@ -388,60 +444,17 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.effective_message.reply_text("An error occurred while processing your request. Please try again later.")
 
 def main():
-    if is_already_running():
+    # File-based lock
+    lock_file = '/tmp/zenconnect_bot.lock'
+    
+    try:
+        lock_file_fd = open(lock_file, 'w')
+        fcntl.lockf(lock_file_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
         print("Another instance of this bot is already running. Exiting.")
-        return
+        sys.exit(1)
 
-    # Create tables if not exist
-    connection = get_db_connection()
-    if connection:
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS user_memory (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id BIGINT,
-                    group_id BIGINT,
-                    memory TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """)
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS meditation_log (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id BIGINT,
-                    group_id BIGINT,
-                    duration INT,
-                    zen_points INT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """)
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    username VARCHAR(255),
-                    first_name VARCHAR(255),
-                    last_name VARCHAR(255),
-                    chat_type ENUM('private', 'group') DEFAULT 'private',
-                    total_minutes INT DEFAULT 0,
-                    zen_points INT DEFAULT 0,
-                    daily_quote TINYINT(1) DEFAULT 0
-                )
-                """)
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS group_memberships (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id BIGINT,
-                    group_id BIGINT,
-                    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
-                )
-                """)
-            connection.commit()
-        except Error as e:
-            print(f"Error creating tables: {e}")
-        finally:
-            connection.close()
+    setup_database()
 
     token = os.getenv("BOT_TOKEN")  # Use environment variable for the Telegram bot token
     application = Application.builder().token(token).build()
