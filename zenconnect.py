@@ -2,13 +2,12 @@ import os
 import socket
 import asyncio
 from openai import AsyncOpenAI
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, MenuButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
 from datetime import time, timezone
 import mysql.connector
 from mysql.connector import Error
 from aiohttp import web
-import json
 
 # Socket-based lock
 LOCK_SOCKET = None
@@ -113,7 +112,7 @@ def create_progress_bar(points):
     return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {points % 100}/100 Zen Points"
 
 async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mini_app_url = "https://zenconnectbot-production.up.railway.app/"
+    mini_app_url = "https://zenconnectbot-production.up.railway.app"
     keyboard = [[InlineKeyboardButton("Open Zen Stats", web_app=WebAppInfo(url=mini_app_url))]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -247,9 +246,12 @@ async def get_user_stats(request):
     return web.json_response({"error": "Database connection failed"}, status=500)
 
 async def set_menu_button(application: Application):
-    await application.bot.set_chat_menu_button(
-        menu_button=MenuButton(type="web_app", text="Zen Stats", web_app=WebAppInfo(url="https://zenconnectbot-production.up.railway.app/"))
-    )
+    await application.bot.set_my_commands([
+        ("start", "Start the bot"),
+        ("help", "Show available commands"),
+        ("meditate", "Start a meditation session"),
+        ("checkpoints", "View your Zen stats"),
+    ])
 
 async def main():
     if is_already_running():
@@ -322,7 +324,6 @@ async def main():
 
     # Start bot and web server
     web_runner = web.AppRunner(app)
-    loop = asyncio.get_event_loop()
     await web_runner.setup()
     site = web.TCPSite(web_runner, '0.0.0.0', int(os.environ.get('PORT', 8080)))
     await site.start()
