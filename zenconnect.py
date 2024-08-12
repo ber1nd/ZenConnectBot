@@ -55,7 +55,7 @@ def setup_database():
                 """)
                 
                 # Check if columns exist, if not, add them
-                columns_to_check = ['first_name', 'last_name']
+                columns_to_check = ['first_name', 'last_name', 'chat_type', 'daily_quote']
                 for column in columns_to_check:
                     cursor.execute(f"""
                     SELECT COUNT(*)
@@ -64,7 +64,12 @@ def setup_database():
                     AND COLUMN_NAME = '{column}'
                     """)
                     if cursor.fetchone()[0] == 0:
-                        cursor.execute(f"ALTER TABLE users ADD COLUMN {column} VARCHAR(255)")
+                        if column in ['first_name', 'last_name']:
+                            cursor.execute(f"ALTER TABLE users ADD COLUMN {column} VARCHAR(255)")
+                        elif column == 'chat_type':
+                            cursor.execute("ALTER TABLE users ADD COLUMN chat_type ENUM('private', 'group') DEFAULT 'private'")
+                        elif column == 'daily_quote':
+                            cursor.execute("ALTER TABLE users ADD COLUMN daily_quote TINYINT(1) DEFAULT 0")
 
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_memory (
@@ -107,7 +112,7 @@ async def generate_response(prompt, elaborate=False):
     try:
         max_tokens = 150 if elaborate else 50
         response = await client.chat.completions.create(
-            model="gpt-4-0613",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a wise Zen monk. Provide concise, insightful responses unless asked for elaboration."},
                 {"role": "user", "content": prompt}
