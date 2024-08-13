@@ -185,7 +185,7 @@ async def generate_response(prompt, elaborate=False):
     try:
         max_tokens = 150 if elaborate else 50
         response = await client.chat.completions.create(
-            model="gpt-4-0613",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a wise Zen monk. Provide concise, insightful responses unless asked for elaboration."},
                 {"role": "user", "content": prompt}
@@ -1086,7 +1086,11 @@ async def main():
     logger.info("Starting the bot...")
     await application.initialize()
     await application.start()
-    await application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    try:
+        await application.run_polling(allowed_updates=Update.ALL_TYPES)
+    finally:
+        await application.stop()
 
 if __name__ == '__main__':
     asyncio.run(main())
