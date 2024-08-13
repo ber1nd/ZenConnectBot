@@ -83,6 +83,7 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.close()
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+
 def setup_database():
     connection = get_db_connection()
     if connection:
@@ -184,7 +185,7 @@ async def generate_response(prompt, elaborate=False):
     try:
         max_tokens = 150 if elaborate else 50
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a wise Zen monk. Provide concise, insightful responses unless asked for elaboration."},
                 {"role": "user", "content": prompt}
@@ -571,45 +572,6 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
-async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor()
-            
-            # Check if user has an active subscription
-            cursor.execute("SELECT subscription_status FROM users WHERE user_id = %s", (user_id,))
-            result = cursor.fetchone()
-            if result and result[0]:
-                # Cancel subscription if active
-                cursor.execute("""
-                    UPDATE subscriptions 
-                    SET status = 'cancelled', end_date = NOW()
-                    WHERE user_id = %s AND status = 'active'
-                """, (user_id,))
-            
-            # Delete user data from all tables
-            cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
-            cursor.execute("DELETE FROM user_memory WHERE user_id = %s", (user_id,))
-            cursor.execute("DELETE FROM meditation_log WHERE user_id = %s", (user_id,))
-            cursor.execute("DELETE FROM group_memberships WHERE user_id = %s", (user_id,))
-            cursor.execute("DELETE FROM subscriptions WHERE user_id = %s", (user_id,))
-            cursor.execute("DELETE FROM pvp_battles WHERE challenger_id = %s OR opponent_id = %s", (user_id, user_id))
-            cursor.execute("DELETE FROM pvp_cooldowns WHERE user_id = %s", (user_id,))
-            
-            db.commit()
-            await update.message.reply_text("Your data has been deleted, including any active subscriptions. Your journey with us ends here, but remember that every ending is a new beginning.")
-        except Error as e:
-            logger.error(f"Database error in delete_data: {e}")
-            await update.message.reply_text("I apologize, I'm having trouble deleting your data. Please try again later.")
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.message.text
@@ -745,16 +707,19 @@ async def challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"User @{opponent_username} is not found in our records.")
             return
 
-        # Check for existing battles
+        # Check for existing battles for both challenger and opponent
         cursor.execute("""
             SELECT * FROM pvp_battles 
-            WHERE (challenger_id = %s OR opponent_id = %s) 
+            WHERE (challenger_id IN (%s, %s) OR opponent_id IN (%s, %s))
             AND status != 'completed'
-        """, (challenger.id, challenger.id))
+        """, (challenger.id, opponent_info['user_id'], challenger.id, opponent_info['user_id']))
         existing_battle = cursor.fetchone()
 
         if existing_battle:
-            await update.message.reply_text("You are already in a battle. Complete it before starting a new one.")
+            if existing_battle['challenger_id'] == challenger.id or existing_battle['opponent_id'] == challenger.id:
+                await update.message.reply_text("You are already in a battle. Complete it before starting a new one.")
+            else:
+                await update.message.reply_text(f"@{opponent_username} is already in a battle. Try challenging someone else.")
             return
 
         # Create a new battle
@@ -763,12 +728,13 @@ async def challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
             VALUES (%s, %s, %s, 'pending', %s)
         """, (challenger.id, opponent_info['user_id'], chat_id, challenger.id))
         
+        battle_id = cursor.lastrowid
         db.commit()
 
         # Create inline keyboard for opponent to accept or decline
         keyboard = [
-            [InlineKeyboardButton("Accept", callback_data=f"accept_challenge:{challenger.id}"),
-             InlineKeyboardButton("Decline", callback_data=f"decline_challenge:{challenger.id}")]
+            [InlineKeyboardButton("Accept", callback_data=f"accept_challenge:{battle_id}"),
+             InlineKeyboardButton("Decline", callback_data=f"decline_challenge:{battle_id}")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -790,8 +756,8 @@ async def handle_challenge_response(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     await query.answer()
 
-    response, challenger_id = query.data.split(':')
-    opponent_id = query.from_user.id
+    response, battle_id = query.data.split(':')
+    responder_id = query.from_user.id
 
     db = get_db_connection()
     if not db:
@@ -801,23 +767,33 @@ async def handle_challenge_response(update: Update, context: ContextTypes.DEFAUL
     try:
         cursor = db.cursor(dictionary=True)
 
+        # Fetch the battle information
+        cursor.execute("SELECT * FROM pvp_battles WHERE id = %s", (battle_id,))
+        battle = cursor.fetchone()
+
+        if not battle:
+            await query.edit_message_text("This challenge is no longer valid.")
+            return
+
+        if battle['status'] != 'pending':
+            await query.edit_message_text("This challenge has already been responded to.")
+            return
+
+        if responder_id != battle['opponent_id']:
+            await query.answer("You are not the challenged player!", show_alert=True)
+            return
+
         if response == 'accept_challenge':
             cursor.execute("""
                 UPDATE pvp_battles 
                 SET status = 'in_progress' 
-                WHERE challenger_id = %s AND opponent_id = %s AND status = 'pending'
-            """, (challenger_id, opponent_id))
+                WHERE id = %s
+            """, (battle_id,))
             
-            if cursor.rowcount > 0:
-                db.commit()
-                await start_battle(context.bot, query.message.chat_id, int(challenger_id), opponent_id)
-            else:
-                await query.edit_message_text("This challenge is no longer valid.")
+            db.commit()
+            await start_battle(context.bot, query.message.chat_id, battle['challenger_id'], battle['opponent_id'], battle_id)
         else:  # decline_challenge
-            cursor.execute("""
-                DELETE FROM pvp_battles 
-                WHERE challenger_id = %s AND opponent_id = %s AND status = 'pending'
-            """, (challenger_id, opponent_id))
+            cursor.execute("DELETE FROM pvp_battles WHERE id = %s", (battle_id,))
             
             db.commit()
             await query.edit_message_text("The challenge has been declined.")
@@ -830,12 +806,12 @@ async def handle_challenge_response(update: Update, context: ContextTypes.DEFAUL
             cursor.close()
             db.close()
 
-async def start_battle(bot, chat_id, challenger_id, opponent_id):
+async def start_battle(bot, chat_id, challenger_id, opponent_id, battle_id):
     keyboard = [
-        [InlineKeyboardButton("Attack", callback_data=f"battle_move:attack:{challenger_id}:{opponent_id}")],
-        [InlineKeyboardButton("Defend", callback_data=f"battle_move:defend:{challenger_id}:{opponent_id}")],
-        [InlineKeyboardButton("Special Move", callback_data=f"battle_move:special:{challenger_id}:{opponent_id}")],
-        [InlineKeyboardButton("Focus", callback_data=f"battle_move:focus:{challenger_id}:{opponent_id}")]
+        [InlineKeyboardButton("Attack", callback_data=f"battle_move:attack:{battle_id}")],
+        [InlineKeyboardButton("Defend", callback_data=f"battle_move:defend:{battle_id}")],
+        [InlineKeyboardButton("Special Move", callback_data=f"battle_move:special:{battle_id}")],
+        [InlineKeyboardButton("Focus", callback_data=f"battle_move:focus:{battle_id}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -851,9 +827,7 @@ async def handle_battle_move(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
 
-    move, challenger_id, opponent_id = query.data.split(':')[1:]
-    challenger_id = int(challenger_id)
-    opponent_id = int(opponent_id)
+    move, battle_id = query.data.split(':')[1:]
     current_player_id = query.from_user.id
 
     db = get_db_connection()
@@ -865,14 +839,15 @@ async def handle_battle_move(update: Update, context: ContextTypes.DEFAULT_TYPE)
         cursor = db.cursor(dictionary=True)
         
         # Fetch battle information
-        cursor.execute("""
-            SELECT * FROM pvp_battles 
-            WHERE challenger_id = %s AND opponent_id = %s AND status = 'in_progress'
-        """, (challenger_id, opponent_id))
+        cursor.execute("SELECT * FROM pvp_battles WHERE id = %s", (battle_id,))
         battle = cursor.fetchone()
 
         if not battle:
             await query.edit_message_text("This battle is no longer active.")
+            return
+
+        if battle['status'] != 'in_progress':
+            await query.edit_message_text("This battle has already ended.")
             return
 
         if battle['current_turn'] != current_player_id:
@@ -883,39 +858,41 @@ async def handle_battle_move(update: Update, context: ContextTypes.DEFAULT_TYPE)
         damage, message = process_move(move, current_player_id, battle)
 
         # Update battle state
-        new_hp = battle['opponent_hp'] - damage if current_player_id == challenger_id else battle['challenger_hp'] - damage
-        new_turn = opponent_id if current_player_id == challenger_id else challenger_id
+        new_hp = battle['opponent_hp'] - damage if current_player_id == battle['challenger_id'] else battle['challenger_hp'] - damage
+        new_turn = battle['opponent_id'] if current_player_id == battle['challenger_id'] else battle['challenger_id']
 
-        if current_player_id == challenger_id:
-            cursor.execute("""
-                UPDATE pvp_battles 
-                SET opponent_hp = %s, current_turn = %s, last_move_timestamp = NOW()
-                WHERE id = %s
-            """, (new_hp, new_turn, battle['id']))
-        else:
-            cursor.execute("""
-                UPDATE pvp_battles 
-                SET challenger_hp = %s, current_turn = %s, last_move_timestamp = NOW()
-                WHERE id = %s
-            """, (new_hp, new_turn, battle['id']))
+        cursor.execute("""
+            UPDATE pvp_battles 
+            SET challenger_hp = CASE WHEN challenger_id = %s THEN challenger_hp ELSE GREATEST(challenger_hp - %s, 0) END,
+                opponent_hp = CASE WHEN opponent_id = %s THEN opponent_hp ELSE GREATEST(opponent_hp - %s, 0) END,
+                current_turn = %s, 
+                last_move_timestamp = NOW()
+            WHERE id = %s
+        """, (current_player_id, damage, current_player_id, damage, new_turn, battle['id']))
 
         db.commit()
 
+        # Fetch updated battle info
+        cursor.execute("SELECT * FROM pvp_battles WHERE id = %s", (battle_id,))
+        updated_battle = cursor.fetchone()
+
         # Check if the battle is over
-        if new_hp <= 0:
-            await end_battle(context.bot, battle['group_id'], challenger_id, opponent_id, current_player_id)
+        if updated_battle['challenger_hp'] <= 0 or updated_battle['opponent_hp'] <= 0:
+            await end_battle(context.bot, battle['group_id'], updated_battle)
         else:
             # Prepare for the next turn
             keyboard = [
-                [InlineKeyboardButton("Attack", callback_data=f"battle_move:attack:{challenger_id}:{opponent_id}")],
-                [InlineKeyboardButton("Defend", callback_data=f"battle_move:defend:{challenger_id}:{opponent_id}")],
-                [InlineKeyboardButton("Special Move", callback_data=f"battle_move:special:{challenger_id}:{opponent_id}")],
-                [InlineKeyboardButton("Focus", callback_data=f"battle_move:focus:{challenger_id}:{opponent_id}")]
+                [InlineKeyboardButton("Attack", callback_data=f"battle_move:attack:{battle_id}")],
+                [InlineKeyboardButton("Defend", callback_data=f"battle_move:defend:{battle_id}")],
+                [InlineKeyboardButton("Special Move", callback_data=f"battle_move:special:{battle_id}")],
+                [InlineKeyboardButton("Focus", callback_data=f"battle_move:focus:{battle_id}")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             await query.edit_message_text(
                 text=f"{message}\n\n"
+                     f"Challenger HP: {updated_battle['challenger_hp']}\n"
+                     f"Opponent HP: {updated_battle['opponent_hp']}\n\n"
                      f"<@{new_turn}>, it's your turn. Choose your move:",
                 reply_markup=reply_markup,
                 parse_mode='HTML'
@@ -930,13 +907,29 @@ async def handle_battle_move(update: Update, context: ContextTypes.DEFAULT_TYPE)
             db.close()
 
 def process_move(move, player_id, battle):
-    # This function will process the move and return the damage dealt and a message
-    # You can implement the logic for different moves, cooldowns, and randomness here
-    damage = random.randint(10, 20)  # Simple random damage for now
-    message = f"<@{player_id}> used {move} and dealt {damage} damage!"
+    base_damage = {
+        'attack': (15, 25),
+        'defend': (5, 10),
+        'special': (20, 30),
+        'focus': (0, 0)
+    }
+
+    min_damage, max_damage = base_damage[move]
+    damage = random.randint(min_damage, max_damage)
+
+    if move == 'defend':
+        message = f"<@{player_id}> used Defend, reducing incoming damage and counter-attacking for {damage} damage!"
+    elif move == 'special':
+        message = f"<@{player_id}> used a Special Move, dealing {damage} damage!"
+    elif move == 'focus':
+        message = f"<@{player_id}> used Focus, preparing for a stronger attack next turn!"
+        damage = 0
+    else:  # attack
+        message = f"<@{player_id}> attacked, dealing {damage} damage!"
+
     return damage, message
 
-async def end_battle(bot, chat_id, challenger_id, opponent_id, winner_id):
+async def end_battle(bot, chat_id, battle):
     db = get_db_connection()
     if not db:
         await bot.send_message(chat_id, "Unable to end the battle. Please contact support.")
@@ -945,19 +938,26 @@ async def end_battle(bot, chat_id, challenger_id, opponent_id, winner_id):
     try:
         cursor = db.cursor(dictionary=True)
 
+        # Determine the winner
+        if battle['challenger_hp'] <= 0:
+            winner_id = battle['opponent_id']
+            loser_id = battle['challenger_id']
+        else:
+            winner_id = battle['challenger_id']
+            loser_id = battle['opponent_id']
+
         # Update battle status
         cursor.execute("""
             UPDATE pvp_battles 
             SET status = 'completed'
-            WHERE challenger_id = %s AND opponent_id = %s AND status = 'in_progress'
-        """, (challenger_id, opponent_id))
+            WHERE id = %s
+        """, (battle['id'],))
 
         # Fetch user data
-        cursor.execute("SELECT user_id, zen_points FROM users WHERE user_id IN (%s, %s)", (challenger_id, opponent_id))
+        cursor.execute("SELECT user_id, zen_points FROM users WHERE user_id IN (%s, %s)", (winner_id, loser_id))
         user_data = {row['user_id']: row['zen_points'] for row in cursor.fetchall()}
 
         # Calculate Zen points transfer
-        loser_id = opponent_id if winner_id == challenger_id else challenger_id
         points_transfer = min(user_data[loser_id] // 10, 50)  # 10% of loser's points, max 50
 
         # Update Zen points
@@ -975,6 +975,46 @@ async def end_battle(bot, chat_id, challenger_id, opponent_id, winner_id):
     except Error as e:
         logger.error(f"Database error in end_battle: {e}")
         await bot.send_message(chat_id, "An error occurred while ending the battle. Please contact support.")
+    finally:
+        if db.is_connected():
+            cursor.close()
+            db.close()
+
+async def cancel_battle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    db = get_db_connection()
+    if not db:
+        await update.message.reply_text("Unable to process your request right now. Please try again later.")
+        return
+
+    try:
+        cursor = db.cursor(dictionary=True)
+
+        # Check for active battles involving the user
+        cursor.execute("""
+            SELECT * FROM pvp_battles 
+            WHERE (challenger_id = %s OR opponent_id = %s)
+            AND status != 'completed'
+            AND group_id = %s
+        """, (user_id, user_id, chat_id))
+        
+        battle = cursor.fetchone()
+
+        if not battle:
+            await update.message.reply_text("You don't have any active battles in this group.")
+            return
+
+        # Cancel the battle
+        cursor.execute("DELETE FROM pvp_battles WHERE id = %s", (battle['id'],))
+        db.commit()
+
+        await update.message.reply_text("Your active battle has been cancelled.")
+
+    except Error as e:
+        logger.error(f"Database error in cancel_battle: {e}")
+        await update.message.reply_text("An error occurred while cancelling the battle. Please try again later.")
     finally:
         if db.is_connected():
             cursor.close()
@@ -1047,6 +1087,7 @@ async def main():
     application.add_handler(CommandHandler("subscriptionstatus", subscription_status_command))
     application.add_handler(CommandHandler("deletedata", delete_data))
     application.add_handler(CommandHandler("challenge", challenge))
+    application.add_handler(CommandHandler("cancelbattle", cancel_battle))
     
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & (
