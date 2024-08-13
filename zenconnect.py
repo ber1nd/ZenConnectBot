@@ -185,7 +185,7 @@ async def generate_response(prompt, elaborate=False):
     try:
         max_tokens = 150 if elaborate else 50
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4-0613",
             messages=[
                 {"role": "system", "content": "You are a wise Zen monk. Provide concise, insightful responses unless asked for elaboration."},
                 {"role": "user", "content": prompt}
@@ -1017,45 +1017,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     if update and isinstance(update, Update) and update.effective_message:
         await update.effective_message.reply_text("An error occurred while processing your request. Please try again later.")
 
-async def serve_mini_app(request):
-    return web.FileResponse('./zen_stats.html')
-
-async def get_user_stats(request):
-    user_id = request.query.get('user_id')
-    logger.info(f"Fetching stats for user_id: {user_id}")
-    db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
-            query = """
-                SELECT total_minutes, zen_points, 
-                       COALESCE(username, '') as username, 
-                       COALESCE(first_name, '') as first_name, 
-                       COALESCE(last_name, '') as last_name,
-                       level
-                FROM users
-                WHERE user_id = %s
-            """
-            logger.info(f"Executing query: {query}")
-            cursor.execute(query, (user_id,))
-            result = cursor.fetchone()
-            logger.info(f"Query result: {result}")
-            if result:
-                return web.json_response(result)
-            else:
-                logger.warning(f"User not found: {user_id}")
-                return web.json_response({"error": "User not found", "user_id": user_id}, status=404)
-        except Error as e:
-            logger.error(f"Database error: {e}")
-            return web.json_response({"error": "Database error", "details": str(e)}, status=500)
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
-        logger.error("Failed to connect to database")
-        return web.json_response({"error": "Database connection failed"}, status=500)
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await update.message.reply_html(
@@ -1084,23 +1045,10 @@ Remember, the path to enlightenment is not just in these commands, but in how yo
     """
     await update.message.reply_text(help_text)
 
-async def run_web_app():
-    try:
-        app = web.Application()
-        app.router.add_get('/zen_stats', serve_mini_app)
-        app.router.add_get('/user_stats', get_user_stats)
-        runner = web.AppRunner(app)
-        await runner.setup()
-        port = int(os.getenv('PORT', 8080))
-        logger.info(f"Starting web application on port {port}")
-        site = web.TCPSite(runner, '0.0.0.0', port)
-        await site.start()
-        logger.info("Web application started successfully")
-    except Exception as e:
-        logger.error(f"Error starting web application: {e}")
-        raise
-
-async def run_bot():
+async def main():
+    logger.info("Starting the Zen Monk bot...")
+    setup_database()
+    
     application = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
     
     # Command handlers
@@ -1135,27 +1083,10 @@ async def run_bot():
     application.add_error_handler(error_handler)
 
     # Start the bot
+    logger.info("Starting the bot...")
     await application.initialize()
     await application.start()
-    await application.updater.start_polling()
-    logger.info("Bot started successfully")
-    await application.updater.idle()
-
-async def main():
-    logger.info("Starting the Zen Monk bot...")
-    setup_database()
-    
-    bot_task = asyncio.create_task(run_bot())
-    web_task = asyncio.create_task(run_web_app())
-    
-    try:
-        await asyncio.gather(bot_task, web_task)
-    except asyncio.CancelledError:
-        logger.info("Application is shutting down...")
-    except Exception as e:
-        logger.error(f"An error occurred: {e}")
-    finally:
-        logger.info("Application has shut down.")
+    await application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     asyncio.run(main())
