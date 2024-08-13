@@ -2,6 +2,7 @@ import os
 import asyncio
 import fcntl
 import sys
+import logging
 from openai import AsyncOpenAI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, LabeledPrice
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes, PreCheckoutQueryHandler
@@ -13,6 +14,10 @@ import json
 from dotenv import load_dotenv
 from collections import defaultdict
 
+# Set up logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 load_dotenv()
 
 client = AsyncOpenAI(api_key=os.getenv("API_KEY"))
@@ -21,7 +26,7 @@ RATE_LIMIT = 5
 rate_limit_dict = defaultdict(list)
 
 # Telegram payment provider token
-PAYMENT_PROVIDER_TOKEN = "284685063:TEST:Yzg1M2NlZDYyNDc4"
+PAYMENT_PROVIDER_TOKEN = "284685063:TEST:Yzg1M2NlZDYyNDc0"
 
 def get_db_connection():
     try:
@@ -33,7 +38,7 @@ def get_db_connection():
             port=int(os.getenv("MYSQLPORT", 3306))
         )
     except Error as e:
-        print(f"Error connecting to MySQL database: {e}")
+        logger.error(f"Error connecting to MySQL database: {e}")
         return None
 
 def setup_database():
@@ -98,13 +103,13 @@ def setup_database():
                 )
                 """)
             connection.commit()
-            print("Database setup completed successfully.")
+            logger.info("Database setup completed successfully.")
         except Error as e:
-            print(f"Error setting up database: {e}")
+            logger.error(f"Error setting up database: {e}")
         finally:
             connection.close()
     else:
-        print("Failed to connect to the database for setup.")
+        logger.error("Failed to connect to the database for setup.")
 
 async def generate_response(prompt, elaborate=False):
     try:
@@ -120,7 +125,7 @@ async def generate_response(prompt, elaborate=False):
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"Error generating response: {type(e).__name__}: {str(e)}")
+        logger.error(f"Error generating response: {type(e).__name__}: {str(e)}")
         return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later."
 
 def get_level_name(points):
@@ -142,7 +147,7 @@ async def update_user_level(user_id, zen_points, db):
         cursor.execute("UPDATE users SET level = %s WHERE user_id = %s", (new_level, user_id))
         db.commit()
     except Error as e:
-        print(f"Error updating user level: {e}")
+        logger.error(f"Error updating user level: {e}")
     finally:
         cursor.close()
 
@@ -153,7 +158,7 @@ async def check_subscription(user_id, db):
         result = cursor.fetchone()
         return result['subscription_status'] if result else False
     except Error as e:
-        print(f"Error checking subscription: {e}")
+        logger.error(f"Error checking subscription: {e}")
         return False
     finally:
         cursor.close()
@@ -169,7 +174,7 @@ async def send_daily_quote(context: ContextTypes.DEFAULT_TYPE):
                 quote = await generate_response("Give me a short Zen quote.")
                 await context.bot.send_message(chat_id=user[0], text=quote)
         except Error as e:
-            print(f"Database error: {e}")
+            logger.error(f"Database error in send_daily_quote: {e}")
         finally:
             if db.is_connected():
                 cursor.close()
@@ -201,7 +206,7 @@ async def togglequote(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("You have chosen to pause the daily Zen quotes. Remember, wisdom is all around us, even in silence.")
         except Error as e:
-            print(f"Database error: {e}")
+            logger.error(f"Database error in togglequote: {e}")
             await update.message.reply_text("I apologize, I'm having trouble updating your preferences. Please try again later.")
         finally:
             if db.is_connected():
@@ -271,7 +276,7 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"Your meditation session is over. You earned {zen_points} Zen points!")
 
         except Error as e:
-            print(f"Database error: {e}")
+            logger.error(f"Database error in meditate: {e}")
             await update.message.reply_text("I'm sorry, there was an issue logging your meditation session.")
         finally:
             if db.is_connected():
@@ -337,7 +342,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
             db.commit()
             await update.message.reply_text("Thank you for your subscription! You now have access to all levels.")
         except Error as e:
-            print(f"Database error: {e}")
+            logger.error(f"Database error in successful_payment_callback: {e}")
             await update.message.reply_text("There was an error processing your subscription. Please contact support.")
         finally:
             if db.is_connected():
@@ -372,7 +377,7 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("You haven't started your Zen journey yet. Try meditating to earn some points!")
         except Error as e:
-            print(f"Database error: {e}")
+            logger.error(f"Database error in check_points: {e}")
             await update.message.reply_text("I apologize, I'm having trouble accessing your stats right now. Please try again later.")
         finally:
             if db.is_connected():
@@ -461,7 +466,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(response)
 
     except Error as e:
-        print(f"Database error in handle_message: {e}")
+        logger.error(f"Database error in handle_message: {e}")
         await update.message.reply_text("I'm having trouble processing your message. Please try again later.")
 
     finally:
@@ -477,7 +482,7 @@ def check_rate_limit(user_id):
     return len(user_messages) < RATE_LIMIT
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    print(f"Exception while handling an update: {context.error}")
+    logger.error(f"Exception while handling an update: {context.error}")
     if update and isinstance(update, Update) and update.effective_message:
         await update.effective_message.reply_text("An error occurred while processing your request. Please try again later.")
 
@@ -486,7 +491,7 @@ async def serve_mini_app(request):
 
 async def get_user_stats(request):
     user_id = request.query.get('user_id')
-    print(f"Fetching stats for user_id: {user_id}")  # Debug log
+    logger.info(f"Fetching stats for user_id: {user_id}")
     db = get_db_connection()
     if db:
         try:
@@ -500,24 +505,24 @@ async def get_user_stats(request):
                 FROM users
                 WHERE user_id = %s
             """
-            print(f"Executing query: {query}")  # Debug log
+            logger.info(f"Executing query: {query}")
             cursor.execute(query, (user_id,))
             result = cursor.fetchone()
-            print(f"Query result: {result}")  # Debug log
+            logger.info(f"Query result: {result}")
             if result:
                 return web.json_response(result)
             else:
-                print(f"User not found: {user_id}")  # Debug log
+                logger.warning(f"User not found: {user_id}")
                 return web.json_response({"error": "User not found", "user_id": user_id}, status=404)
         except Error as e:
-            print(f"Database error: {e}")
+            logger.error(f"Database error: {e}")
             return web.json_response({"error": "Database error", "details": str(e)}, status=500)
         finally:
             if db.is_connected():
                 cursor.close()
                 db.close()
     else:
-        print("Failed to connect to database")  # Debug log
+        logger.error("Failed to connect to database")
         return web.json_response({"error": "Database connection failed"}, status=500)
 
 async def main():
@@ -528,7 +533,7 @@ async def main():
         lock_file_fd = open(lock_file, 'w')
         fcntl.lockf(lock_file_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except IOError:
-        print("Another instance of this bot is already running. Exiting.")
+        logger.error("Another instance of this bot is already running. Exiting.")
         sys.exit(1)
 
     setup_database()
@@ -568,7 +573,7 @@ async def main():
     if application.job_queue:
         application.job_queue.run_daily(send_daily_quote, time=time(hour=8, minute=0, tzinfo=timezone.utc))
     else:
-        print("Warning: JobQueue is not available. Daily quotes will not be scheduled.")
+        logger.warning("JobQueue is not available. Daily quotes will not be scheduled.")
     
     # Set up web app
     app = web.Application()
@@ -577,13 +582,12 @@ async def main():
 
     # Start bot and web server
     web_runner = web.AppRunner(app)
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(web_runner.setup())
+    await web_runner.setup()
     site = web.TCPSite(web_runner, '0.0.0.0', int(os.environ.get('PORT', 8080)))
-    loop.run_until_complete(site.start())
+    await site.start()
     
-    print("Zen Monk Bot has awakened. Press Ctrl+C to return to silence.")
-    application.run_polling(drop_pending_updates=True)
+    logger.info("Zen Monk Bot has awakened. Press Ctrl+C to return to silence.")
+    await application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
