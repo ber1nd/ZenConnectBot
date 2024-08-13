@@ -367,7 +367,7 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 level = result['level']
                 level_name = get_level_name(zen_points)
                 message = f"Your Zen journey:\nLevel: {level_name}\nTotal meditation time: {total_minutes} minutes\nZen points: {zen_points}"
-               if chat_type == 'private':
+                if chat_type == 'private':
                     mini_app_url = "https://zenconnectbot-production.up.railway.app/"
                     keyboard = [[InlineKeyboardButton("Open Zen Stats", web_app=WebAppInfo(url=mini_app_url))]]
                     reply_markup = InlineKeyboardMarkup(keyboard)
