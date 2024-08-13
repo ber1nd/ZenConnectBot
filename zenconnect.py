@@ -185,7 +185,7 @@ async def generate_response(prompt, elaborate=False):
     try:
         max_tokens = 150 if elaborate else 50
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4-0613",
             messages=[
                 {"role": "system", "content": "You are a wise Zen monk. Provide concise, insightful responses unless asked for elaboration."},
                 {"role": "user", "content": prompt}
@@ -1084,5 +1084,61 @@ Remember, the path to enlightenment is not just in these commands, but in how yo
     """
     await update.message.reply_text(help_text)
 
+async def run_web_app():
+    app = web.Application()
+    app.router.add_get('/zen_stats', serve_mini_app)
+    app.router.add_get('/user_stats', get_user_stats)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', int(os.getenv('PORT', 8080)))
+    await site.start()
+
+async def run_bot():
+    application = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
+    
+    # Command handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("meditate", meditate))
+    application.add_handler(CommandHandler("zenquote", zen_quote))
+    application.add_handler(CommandHandler("checkpoints", check_points))
+    application.add_handler(CommandHandler("togglequote", togglequote))
+    application.add_handler(CommandHandler("subscribe", subscribe_command))
+    application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
+    application.add_handler(CommandHandler("subscriptionstatus", subscription_status_command))
+    application.add_handler(CommandHandler("challenge", challenge))
+    application.add_handler(CommandHandler("cancelbattle", cancel_battle))
+    application.add_handler(CommandHandler("deletedata", delete_data))
+
+    # Message handler
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    # Callback query handlers
+    application.add_handler(CallbackQueryHandler(subscribe_callback, pattern="^subscribe$"))
+    application.add_handler(CallbackQueryHandler(handle_challenge_response, pattern="^(accept|decline)_challenge:"))
+    application.add_handler(CallbackQueryHandler(handle_battle_move, pattern="^battle_move:"))
+
+    # Pre-checkout handler
+    application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+
+    # Successful payment handler
+    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
+
+    # Error handler
+    application.add_error_handler(error_handler)
+
+    # Start the bot
+    await application.initialize()
+    await application.start()
+    await application.run_polling()
+
 async def main():
-    setup
+    logger.info("Starting the Zen Monk bot...")
+    setup_database()
+    await asyncio.gather(
+        run_web_app(),
+        run_bot()
+    )
+
+if __name__ == '__main__':
+    asyncio.run(main())
