@@ -102,6 +102,33 @@ def setup_database():
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
                 """)
+
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS pvp_battles (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    challenger_id BIGINT,
+                    opponent_id BIGINT,
+                    group_id BIGINT,
+                    status ENUM('pending', 'in_progress', 'completed') DEFAULT 'pending',
+                    current_turn BIGINT,
+                    challenger_hp INT DEFAULT 100,
+                    opponent_hp INT DEFAULT 100,
+                    last_move_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (challenger_id) REFERENCES users(user_id),
+                    FOREIGN KEY (opponent_id) REFERENCES users(user_id)
+                )
+                """)
+
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS pvp_cooldowns (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT,
+                    move_name VARCHAR(50),
+                    cooldown_end TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+                """)
+
             connection.commit()
             logger.info("Database setup completed successfully.")
         except Error as e:
@@ -508,13 +535,29 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db:
         try:
             cursor = db.cursor()
+            
+            # Check if user has an active subscription
+            cursor.execute("SELECT subscription_status FROM users WHERE user_id = %s", (user_id,))
+            result = cursor.fetchone()
+            if result and result[0]:
+                # Cancel subscription if active
+                cursor.execute("""
+                    UPDATE subscriptions 
+                    SET status = 'cancelled', end_date = NOW()
+                    WHERE user_id = %s AND status = 'active'
+                """, (user_id,))
+            
+            # Delete user data from all tables
             cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM user_memory WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM meditation_log WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM group_memberships WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM subscriptions WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM pvp_battles WHERE challenger_id = %s OR opponent_id = %s", (user_id, user_id))
+            cursor.execute("DELETE FROM pvp_cooldowns WHERE user_id = %s", (user_id,))
+            
             db.commit()
-            await update.message.reply_text("Your data has been deleted. Your journey with us ends here, but remember that every ending is a new beginning.")
+            await update.message.reply_text("Your data has been deleted, including any active subscriptions. Your journey with us ends here, but remember that every ending is a new beginning.")
         except Error as e:
             logger.error(f"Database error in delete_data: {e}")
             await update.message.reply_text("I apologize, I'm having trouble deleting your data. Please try again later.")
@@ -620,6 +663,281 @@ def check_rate_limit(user_id):
     rate_limit_dict[user_id] = user_messages
     return len(user_messages) < RATE_LIMIT
 
+# PvP-related functions
+async def challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    challenger = update.effective_user
+    chat_id = update.effective_chat.id
+    chat_type = update.message.chat.type
+
+    if chat_type == 'private':
+        await update.message.reply_text("You can only challenge others in group chats.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Please mention the user you want to challenge.")
+        return
+
+    opponent_username = context.args[0].replace("@", "")
+    
+    db = get_db_connection()
+    if not db:
+        await update.message.reply_text("Unable to process your challenge right now. Please try again later.")
+        return
+
+    try:
+        cursor = db.cursor(dictionary=True)
+        
+        # Get challenger's info
+        cursor.execute("SELECT user_id, zen_points FROM users WHERE user_id = %s", (challenger.id,))
+        challenger_info = cursor.fetchone()
+        
+        if not challenger_info:
+            await update.message.reply_text("You need to start your Zen journey before challenging others.")
+            return
+
+        # Get opponent's info
+        cursor.execute("SELECT user_id, zen_points FROM users WHERE username = %s", (opponent_username,))
+        opponent_info = cursor.fetchone()
+        
+        if not opponent_info:
+            await update.message.reply_text(f"User @{opponent_username} is not found in our records.")
+            return
+
+        # Check for existing battles
+        cursor.execute("""
+            SELECT * FROM pvp_battles 
+            WHERE (challenger_id = %s OR opponent_id = %s) 
+            AND status != 'completed'
+        """, (challenger.id, challenger.id))
+        existing_battle = cursor.fetchone()
+
+        if existing_battle:
+            await update.message.reply_text("You are already in a battle. Complete it before starting a new one.")
+            return
+
+        # Create a new battle
+        cursor.execute("""
+            INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, status, current_turn)
+            VALUES (%s, %s, %s, 'pending', %s)
+        """, (challenger.id, opponent_info['user_id'], chat_id, challenger.id))
+        
+        db.commit()
+
+        # Create inline keyboard for opponent to accept or decline
+        keyboard = [
+            [InlineKeyboardButton("Accept", callback_data=f"accept_challenge:{challenger.id}"),
+             InlineKeyboardButton("Decline", callback_data=f"decline_challenge:{challenger.id}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            f"@{challenger.username} has challenged @{opponent_username} to a Zen battle! "
+            f"@{opponent_username}, do you accept?",
+            reply_markup=reply_markup
+        )
+
+    except Error as e:
+        logger.error(f"Database error in challenge: {e}")
+        await update.message.reply_text("An error occurred while processing your challenge. Please try again later.")
+    finally:
+        if db.is_connected():
+            cursor.close()
+            db.close()
+
+async def handle_challenge_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    response, challenger_id = query.data.split(':')
+    opponent_id = query.from_user.id
+
+    db = get_db_connection()
+    if not db:
+        await query.edit_message_text("Unable to process your response right now. Please try again later.")
+        return
+
+    try:
+        cursor = db.cursor(dictionary=True)
+
+        if response == 'accept_challenge':
+            cursor.execute("""
+                UPDATE pvp_battles 
+                SET status = 'in_progress' 
+                WHERE challenger_id = %s AND opponent_id = %s AND status = 'pending'
+            """, (challenger_id, opponent_id))
+            
+            if cursor.rowcount > 0:
+                db.commit()
+                await start_battle(context.bot, query.message.chat_id, int(challenger_id), opponent_id)
+            else:
+                await query.edit_message_text("This challenge is no longer valid.")
+        else:  # decline_challenge
+            cursor.execute("""
+                DELETE FROM pvp_battles 
+                WHERE challenger_id = %s AND opponent_id = %s AND status = 'pending'
+            """, (challenger_id, opponent_id))
+            
+            db.commit()
+            await query.edit_message_text("The challenge has been declined.")
+
+    except Error as e:
+        logger.error(f"Database error in handle_challenge_response: {e}")
+        await query.edit_message_text("An error occurred while processing your response. Please try again later.")
+    finally:
+        if db.is_connected():
+            cursor.close()
+            db.close()
+
+async def start_battle(bot, chat_id, challenger_id, opponent_id):
+    keyboard = [
+        [InlineKeyboardButton("Attack", callback_data=f"battle_move:attack:{challenger_id}:{opponent_id}")],
+        [InlineKeyboardButton("Defend", callback_data=f"battle_move:defend:{challenger_id}:{opponent_id}")],
+        [InlineKeyboardButton("Special Move", callback_data=f"battle_move:special:{challenger_id}:{opponent_id}")],
+        [InlineKeyboardButton("Focus", callback_data=f"battle_move:focus:{challenger_id}:{opponent_id}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await bot.send_message(
+        chat_id=chat_id,
+        text=f"The Zen battle between <@{challenger_id}> and <@{opponent_id}> begins!\n"
+             f"<@{challenger_id}>, it's your turn. Choose your move:",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+
+async def handle_battle_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    move, challenger_id, opponent_id = query.data.split(':')[1:]
+    challenger_id = int(challenger_id)
+    opponent_id = int(opponent_id)
+    current_player_id = query.from_user.id
+
+    db = get_db_connection()
+    if not db:
+        await query.edit_message_text("Unable to process your move right now. Please try again later.")
+        return
+
+    try:
+        cursor = db.cursor(dictionary=True)
+        
+        # Fetch battle information
+        cursor.execute("""
+            SELECT * FROM pvp_battles 
+            WHERE challenger_id = %s AND opponent_id = %s AND status = 'in_progress'
+        """, (challenger_id, opponent_id))
+        battle = cursor.fetchone()
+
+        if not battle:
+            await query.edit_message_text("This battle is no longer active.")
+            return
+
+        if battle['current_turn'] != current_player_id:
+            await query.answer("It's not your turn!", show_alert=True)
+            return
+
+        # Process the move
+        damage, message = process_move(move, current_player_id, battle)
+
+        # Update battle state
+        new_hp = battle['opponent_hp'] - damage if current_player_id == challenger_id else battle['challenger_hp'] - damage
+        new_turn = opponent_id if current_player_id == challenger_id else challenger_id
+
+        if current_player_id == challenger_id:
+            cursor.execute("""
+                UPDATE pvp_battles 
+                SET opponent_hp = %s, current_turn = %s, last_move_timestamp = NOW()
+                WHERE id = %s
+            """, (new_hp, new_turn, battle['id']))
+        else:
+            cursor.execute("""
+                UPDATE pvp_battles 
+                SET challenger_hp = %s, current_turn = %s, last_move_timestamp = NOW()
+                WHERE id = %s
+            """, (new_hp, new_turn, battle['id']))
+
+        db.commit()
+
+        # Check if the battle is over
+        if new_hp <= 0:
+            await end_battle(context.bot, battle['group_id'], challenger_id, opponent_id, current_player_id)
+        else:
+            # Prepare for the next turn
+            keyboard = [
+                [InlineKeyboardButton("Attack", callback_data=f"battle_move:attack:{challenger_id}:{opponent_id}")],
+                [InlineKeyboardButton("Defend", callback_data=f"battle_move:defend:{challenger_id}:{opponent_id}")],
+                [InlineKeyboardButton("Special Move", callback_data=f"battle_move:special:{challenger_id}:{opponent_id}")],
+                [InlineKeyboardButton("Focus", callback_data=f"battle_move:focus:{challenger_id}:{opponent_id}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await query.edit_message_text(
+                text=f"{message}\n\n"
+                     f"<@{new_turn}>, it's your turn. Choose your move:",
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+
+    except Error as e:
+        logger.error(f"Database error in handle_battle_move: {e}")
+        await query.edit_message_text("An error occurred while processing your move. Please try again later.")
+    finally:
+        if db.is_connected():
+            cursor.close()
+            db.close()
+
+def process_move(move, player_id, battle):
+    # This function will process the move and return the damage dealt and a message
+    # You can implement the logic for different moves, cooldowns, and randomness here
+    damage = random.randint(10, 20)  # Simple random damage for now
+    message = f"<@{player_id}> used {move} and dealt {damage} damage!"
+    return damage, message
+
+async def end_battle(bot, chat_id, challenger_id, opponent_id, winner_id):
+    db = get_db_connection()
+    if not db:
+        await bot.send_message(chat_id, "Unable to end the battle. Please contact support.")
+        return
+
+    try:
+        cursor = db.cursor(dictionary=True)
+
+        # Update battle status
+        cursor.execute("""
+            UPDATE pvp_battles 
+            SET status = 'completed'
+            WHERE challenger_id = %s AND opponent_id = %s AND status = 'in_progress'
+        """, (challenger_id, opponent_id))
+
+        # Fetch user data
+        cursor.execute("SELECT user_id, zen_points FROM users WHERE user_id IN (%s, %s)", (challenger_id, opponent_id))
+        user_data = {row['user_id']: row['zen_points'] for row in cursor.fetchall()}
+
+        # Calculate Zen points transfer
+        loser_id = opponent_id if winner_id == challenger_id else challenger_id
+        points_transfer = min(user_data[loser_id] // 10, 50)  # 10% of loser's points, max 50
+
+        # Update Zen points
+        cursor.execute("UPDATE users SET zen_points = zen_points + %s WHERE user_id = %s", (points_transfer, winner_id))
+        cursor.execute("UPDATE users SET zen_points = GREATEST(zen_points - %s, 0) WHERE user_id = %s", (points_transfer, loser_id))
+
+        db.commit()
+
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f"The Zen battle has ended! <@{winner_id}> is victorious and gains {points_transfer} Zen points from <@{loser_id}>.",
+            parse_mode='HTML'
+        )
+
+    except Error as e:
+        logger.error(f"Database error in end_battle: {e}")
+        await bot.send_message(chat_id, "An error occurred while ending the battle. Please contact support.")
+    finally:
+        if db.is_connected():
+            cursor.close()
+            db.close()
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(f"Exception while handling an update: {context.error}")
     if update and isinstance(update, Update) and update.effective_message:
@@ -686,6 +1004,7 @@ async def main():
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     application.add_handler(CommandHandler("subscriptionstatus", subscription_status_command))
     application.add_handler(CommandHandler("deletedata", delete_data))
+    application.add_handler(CommandHandler("challenge", challenge))
     
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & (
@@ -698,8 +1017,10 @@ async def main():
         handle_message
     ))
 
-    # Callback query handler
+    # Callback query handlers
     application.add_handler(CallbackQueryHandler(subscribe_callback, pattern="^subscribe$"))
+    application.add_handler(CallbackQueryHandler(handle_challenge_response, pattern="^(accept|decline)_challenge:"))
+    application.add_handler(CallbackQueryHandler(handle_battle_move, pattern="^battle_move:"))
     
     # Pre-checkout and successful payment handlers
     application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
