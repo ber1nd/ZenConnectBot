@@ -580,14 +580,36 @@ async def main():
     app.router.add_get('/', serve_mini_app)
     app.router.add_get('/api/stats', get_user_stats)
 
-    # Start bot and web server
-    web_runner = web.AppRunner(app)
-    await web_runner.setup()
-    site = web.TCPSite(web_runner, '0.0.0.0', int(os.environ.get('PORT', 8080)))
-    await site.start()
+    # Create a runner for the web app
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', int(os.environ.get('PORT', 8080)))
     
-    logger.info("Zen Monk Bot has awakened. Press Ctrl+C to return to silence.")
-    await application.run_polling(drop_pending_updates=True)
+    async def start_webapp():
+        await site.start()
+        logger.info("Web application started")
+    
+    async def start_bot():
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        logger.info("Telegram bot started")
+    
+    async def shutdown():
+        await application.stop()
+        await application.shutdown()
+        await runner.cleanup()
+    
+    try:
+        logger.info("Zen Monk Bot and Web App are awakening. Press Ctrl+C to return to silence.")
+        await asyncio.gather(start_webapp(), start_bot())
+        # Keep the script running
+        while True:
+            await asyncio.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Shutting down...")
+    finally:
+        await shutdown()
 
 if __name__ == '__main__':
     asyncio.run(main())
