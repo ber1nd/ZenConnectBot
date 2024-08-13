@@ -1,11 +1,10 @@
 import os
-import socket
 import asyncio
 import fcntl
 import sys
 from openai import AsyncOpenAI
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, LabeledPrice
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes, PreCheckoutQueryHandler
 from datetime import time, timezone, datetime, timedelta
 import mysql.connector
 from mysql.connector import Error
@@ -14,14 +13,15 @@ import json
 from dotenv import load_dotenv
 from collections import defaultdict
 
-load_dotenv()  # Load environment variables from .env file
+load_dotenv()
 
-# Set up your OpenAI client using environment variables
 client = AsyncOpenAI(api_key=os.getenv("API_KEY"))
 
-# Rate limiting
-RATE_LIMIT = 5  # messages per minute
+RATE_LIMIT = 5
 rate_limit_dict = defaultdict(list)
+
+# Telegram payment provider token
+PAYMENT_PROVIDER_TOKEN = "284685063:TEST:Yzg1M2NlZDYyNDc4"
 
 def get_db_connection():
     try:
@@ -50,27 +50,12 @@ def setup_database():
                     chat_type ENUM('private', 'group') DEFAULT 'private',
                     total_minutes INT DEFAULT 0,
                     zen_points INT DEFAULT 0,
-                    daily_quote TINYINT(1) DEFAULT 0
+                    daily_quote TINYINT(1) DEFAULT 0,
+                    level INT DEFAULT 0,
+                    subscription_status BOOLEAN DEFAULT FALSE
                 )
                 """)
                 
-                # Check if columns exist, if not, add them
-                columns_to_check = ['first_name', 'last_name', 'chat_type', 'daily_quote']
-                for column in columns_to_check:
-                    cursor.execute(f"""
-                    SELECT COUNT(*)
-                    FROM INFORMATION_SCHEMA.COLUMNS
-                    WHERE TABLE_NAME = 'users'
-                    AND COLUMN_NAME = '{column}'
-                    """)
-                    if cursor.fetchone()[0] == 0:
-                        if column in ['first_name', 'last_name']:
-                            cursor.execute(f"ALTER TABLE users ADD COLUMN {column} VARCHAR(255)")
-                        elif column == 'chat_type':
-                            cursor.execute("ALTER TABLE users ADD COLUMN chat_type ENUM('private', 'group') DEFAULT 'private'")
-                        elif column == 'daily_quote':
-                            cursor.execute("ALTER TABLE users ADD COLUMN daily_quote TINYINT(1) DEFAULT 0")
-
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_memory (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -81,16 +66,6 @@ def setup_database():
                 )
                 """)
                 
-                # Check if group_id column exists in user_memory table
-                cursor.execute("""
-                SELECT COUNT(*)
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_NAME = 'user_memory'
-                AND COLUMN_NAME = 'group_id'
-                """)
-                if cursor.fetchone()[0] == 0:
-                    cursor.execute("ALTER TABLE user_memory ADD COLUMN group_id BIGINT")
-
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS meditation_log (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -101,12 +76,24 @@ def setup_database():
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
+                
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS group_memberships (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     user_id BIGINT,
                     group_id BIGINT,
                     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+                """)
+                
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS subscriptions (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT,
+                    start_date DATETIME,
+                    end_date DATETIME,
+                    status ENUM('active', 'cancelled', 'expired') DEFAULT 'active',
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
                 """)
@@ -136,6 +123,41 @@ async def generate_response(prompt, elaborate=False):
         print(f"Error generating response: {type(e).__name__}: {str(e)}")
         return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later."
 
+def get_level_name(points):
+    if points < 100:
+        return "Beginner"
+    elif points < 200:
+        return "Novice"
+    elif points < 300:
+        return "Apprentice"
+    elif points < 400:
+        return "Adept"
+    else:
+        return "Master"
+
+async def update_user_level(user_id, zen_points, db):
+    new_level = min(zen_points // 100, 4)  # Cap at level 4
+    try:
+        cursor = db.cursor()
+        cursor.execute("UPDATE users SET level = %s WHERE user_id = %s", (new_level, user_id))
+        db.commit()
+    except Error as e:
+        print(f"Error updating user level: {e}")
+    finally:
+        cursor.close()
+
+async def check_subscription(user_id, db):
+    try:
+        cursor = db.cursor(dictionary=True)
+        cursor.execute("SELECT subscription_status FROM users WHERE user_id = %s", (user_id,))
+        result = cursor.fetchone()
+        return result['subscription_status'] if result else False
+    except Error as e:
+        print(f"Error checking subscription: {e}")
+        return False
+    finally:
+        cursor.close()
+
 async def send_daily_quote(context: ContextTypes.DEFAULT_TYPE):
     db = get_db_connection()
     if db:
@@ -152,6 +174,41 @@ async def send_daily_quote(context: ContextTypes.DEFAULT_TYPE):
             if db.is_connected():
                 cursor.close()
                 db.close()
+
+async def togglequote(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_type = update.message.chat.type
+    
+    if chat_type != 'private':
+        await update.message.reply_text("This command can only be used in private chats. Please message me directly to toggle your daily quote subscription.")
+        return
+
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor()
+            cursor.execute("SELECT daily_quote FROM users WHERE user_id = %s", (user_id,))
+            result = cursor.fetchone()
+            if result is None:
+                new_status = 1
+                cursor.execute("INSERT INTO users (user_id, daily_quote) VALUES (%s, %s)", (user_id, new_status))
+            else:
+                new_status = 1 if result[0] == 0 else 0
+                cursor.execute("UPDATE users SET daily_quote = %s WHERE user_id = %s", (new_status, user_id))
+            db.commit()
+            if new_status == 1:
+                await update.message.reply_text("You have chosen to receive daily nuggets of Zen wisdom. May they light your path.")
+            else:
+                await update.message.reply_text("You have chosen to pause the daily Zen quotes. Remember, wisdom is all around us, even in silence.")
+        except Error as e:
+            print(f"Database error: {e}")
+            await update.message.reply_text("I apologize, I'm having trouble updating your preferences. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 async def zen_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
     story = await generate_response("Tell me a short Zen story.")
@@ -183,17 +240,36 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db_connection()
     if db:
         try:
-            cursor = db.cursor()
-            cursor.execute("INSERT INTO meditation_log (user_id, duration, zen_points) VALUES (%s, %s, %s)", (user_id, duration, zen_points))
+            cursor = db.cursor(dictionary=True)
+            cursor.execute("SELECT zen_points, level, subscription_status FROM users WHERE user_id = %s", (user_id,))
+            user_data = cursor.fetchone()
+            
+            if not user_data:
+                await update.message.reply_text("Error: User data not found.")
+                return
+
+            new_zen_points = user_data['zen_points'] + zen_points
+            new_level = min(new_zen_points // 100, 4)
+
+            if new_level > user_data['level']:
+                if new_level >= 2 and not user_data['subscription_status']:
+                    await prompt_subscription(update, context)
+                    new_level = 1  # Cap at level 1 if not subscribed
+                else:
+                    level_name = get_level_name(new_zen_points)
+                    await update.message.reply_text(f"Congratulations! You've reached a new level: {level_name}")
+
             cursor.execute("""
-                INSERT INTO users (user_id, total_minutes, zen_points) 
-                VALUES (%s, %s, %s) 
-                ON DUPLICATE KEY UPDATE 
-                total_minutes = total_minutes + %s, 
-                zen_points = zen_points + %s
-            """, (user_id, duration, zen_points, duration, zen_points))
+                UPDATE users 
+                SET total_minutes = total_minutes + %s, 
+                    zen_points = %s,
+                    level = %s
+                WHERE user_id = %s
+            """, (duration, new_zen_points, new_level, user_id))
             db.commit()
+
             await update.message.reply_text(f"Your meditation session is over. You earned {zen_points} Zen points!")
+
         except Error as e:
             print(f"Database error: {e}")
             await update.message.reply_text("I'm sorry, there was an issue logging your meditation session.")
@@ -204,6 +280,72 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, there was an issue logging your meditation session.")
 
+async def prompt_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[InlineKeyboardButton("Subscribe Now", callback_data="subscribe")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "To advance beyond Level 1, you need to subscribe for $1 per month. "
+        "This subscription allows you to access higher levels and unlock more features.",
+        reply_markup=reply_markup
+    )
+
+async def subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    chat_id = query.message.chat_id
+    title = "Zen Monk Bot Subscription"
+    description = "Monthly subscription to access advanced levels"
+    payload = "Monthly_Sub"
+    currency = "USD"
+    price = 100  # $1.00
+    prices = [LabeledPrice("Monthly Subscription", price)]
+
+    await context.bot.send_invoice(
+        chat_id, title, description, payload,
+        PAYMENT_PROVIDER_TOKEN, currency, prices
+    )
+
+async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    title = "Zen Monk Bot Subscription"
+    description = "Monthly subscription to access advanced levels"
+    payload = "Monthly_Sub"
+    currency = "USD"
+    price = 100  # $1.00
+    prices = [LabeledPrice("Monthly Subscription", price)]
+
+    await context.bot.send_invoice(
+        chat_id, title, description, payload,
+        PAYMENT_PROVIDER_TOKEN, currency, prices
+    )
+
+async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.pre_checkout_query
+    if query.invoice_payload != "Monthly_Sub":
+        await query.answer(ok=False, error_message="Something went wrong...")
+    else:
+        await query.answer(ok=True)
+
+async def successful_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor()
+            cursor.execute("UPDATE users SET subscription_status = TRUE WHERE user_id = %s", (user_id,))
+            db.commit()
+            await update.message.reply_text("Thank you for your subscription! You now have access to all levels.")
+        except Error as e:
+            print(f"Database error: {e}")
+            await update.message.reply_text("There was an error processing your subscription. Please contact support.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        await update.message.reply_text("There was an error processing your subscription. Please try again later.")
+
 async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_type = update.message.chat.type
@@ -212,12 +354,14 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db:
         try:
             cursor = db.cursor(dictionary=True)
-            cursor.execute("SELECT total_minutes, zen_points FROM users WHERE user_id = %s", (user_id,))
+            cursor.execute("SELECT total_minutes, zen_points, level FROM users WHERE user_id = %s", (user_id,))
             result = cursor.fetchone()
             if result:
                 total_minutes = result['total_minutes']
                 zen_points = result['zen_points']
-                message = f"Your Zen journey:\nTotal meditation time: {total_minutes} minutes\nZen points: {zen_points}"
+                level = result['level']
+                level_name = get_level_name(zen_points)
+                message = f"Your Zen journey:\nLevel: {level_name}\nTotal meditation time: {total_minutes} minutes\nZen points: {zen_points}"
                 if chat_type == 'private':
                     mini_app_url = "https://zenconnectbot-production.up.railway.app/"
                     keyboard = [[InlineKeyboardButton("Open Zen Stats", web_app=WebAppInfo(url=mini_app_url))]]
@@ -236,25 +380,6 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.close()
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
-
-async def zen_quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    quote = await generate_response("Give me a Zen quote.")
-    await update.message.reply_text(quote)
-
-async def zen_advice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    advice = await generate_response("Give me practical Zen advice for daily life.")
-    await update.message.reply_text(advice)
-
-async def random_wisdom(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    wisdom = await generate_response("Share a random piece of Zen wisdom.")
-    await update.message.reply_text(wisdom)
-
-def check_rate_limit(user_id):
-    now = datetime.now()
-    user_messages = rate_limit_dict[user_id]
-    user_messages = [time for time in user_messages if now - time < timedelta(minutes=1)]
-    rate_limit_dict[user_id] = user_messages
-    return len(user_messages) < RATE_LIMIT
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -344,85 +469,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.close()
             db.close()
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text('Greetings, seeker of wisdom. I am a Zen monk here to guide you on your path to enlightenment. How may I assist you today?')
+def check_rate_limit(user_id):
+    now = datetime.now()
+    user_messages = rate_limit_dict[user_id]
+    user_messages = [time for time in user_messages if now - time < timedelta(minutes=1)]
+    rate_limit_dict[user_id] = user_messages
+    return len(user_messages) < RATE_LIMIT
 
-async def togglequote(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    chat_type = update.message.chat.type
-    
-    if chat_type != 'private':
-        await update.message.reply_text("This command can only be used in private chats. Please message me directly to toggle your daily quote subscription.")
-        return
-
-    db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor()
-            cursor.execute("SELECT daily_quote FROM users WHERE user_id = %s", (user_id,))
-            result = cursor.fetchone()
-            if result is None:
-                new_status = 1
-                cursor.execute("INSERT INTO users (user_id, daily_quote) VALUES (%s, %s)", (user_id, new_status))
-            else:
-                new_status = 1 if result[0] == 0 else 0
-                cursor.execute("UPDATE users SET daily_quote = %s WHERE user_id = %s", (new_status, user_id))
-            db.commit()
-            if new_status == 1:
-                await update.message.reply_text("You have chosen to receive daily nuggets of Zen wisdom. May they light your path.")
-            else:
-                await update.message.reply_text("You have chosen to pause the daily Zen quotes. Remember, wisdom is all around us, even in silence.")
-        except Error as e:
-            print(f"Database error: {e}")
-            await update.message.reply_text("I apologize, I'm having trouble updating your preferences. Please try again later.")
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
-
-async def getchatid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"Your unique identifier in this realm is: {update.effective_chat.id}")
-
-async def delete_user_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor()
-            cursor.execute("DELETE FROM user_memory WHERE user_id = %s", (user_id,))
-            cursor.execute("DELETE FROM meditation_log WHERE user_id = %s", (user_id,))
-            cursor.execute("DELETE FROM group_memberships WHERE user_id = %s", (user_id,))
-            cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
-            db.commit()
-            await update.message.reply_text("Your data has been deleted from my memory. Your journey continues anew.")
-        except Error as e:
-            print(f"Database error: {e}")
-            await update.message.reply_text("I apologize, I'm having trouble deleting your data. Please try again later.")
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = """
-    Available commands:
-    /start - Start interacting with the Zen Monk bot
-    /togglequote - Subscribe/Unsubscribe to daily Zen quotes (private chat only)
-    /zenstory - Hear a Zen story
-    /meditate [minutes] - Start a meditation timer (default is 5 minutes)
-    /zenquote - Receive a Zen quote
-    /zenadvice - Get practical Zen advice
-    /randomwisdom - Get a random piece of Zen wisdom
-    /checkpoints - Check your meditation minutes and Zen points progress
-    /getchatid - Get your unique Chat ID
-    /deletedata - Delete all your data from the bot
-    /help - Display this help message
-    """
-    await update.message.reply_text(help_text)
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    print(f"Exception while handling an update: {context.error}")
+    if update and isinstance(update, Update) and update.effective_message:
+        await update.effective_message.reply_text("An error occurred while processing your request. Please try again later.")
 
 async def serve_mini_app(request):
     return web.FileResponse('./zen_stats.html')
@@ -438,7 +495,8 @@ async def get_user_stats(request):
                 SELECT total_minutes, zen_points, 
                        COALESCE(username, '') as username, 
                        COALESCE(first_name, '') as first_name, 
-                       COALESCE(last_name, '') as last_name
+                       COALESCE(last_name, '') as last_name,
+                       level
                 FROM users
                 WHERE user_id = %s
             """
@@ -462,12 +520,7 @@ async def get_user_stats(request):
         print("Failed to connect to database")  # Debug log
         return web.json_response({"error": "Database connection failed"}, status=500)
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    print(f"Exception while handling an update: {context.error}")
-    if update and isinstance(update, Update) and update.effective_message:
-        await update.effective_message.reply_text("An error occurred while processing your request. Please try again later.")
-
-def main():
+async def main():
     # File-based lock
     lock_file = '/tmp/zenconnect_bot.lock'
     
@@ -484,17 +537,11 @@ def main():
     application = Application.builder().token(token).build()
     
     # Command handlers
-    application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("togglequote", togglequote))
-    application.add_handler(CommandHandler("getchatid", getchatid))
     application.add_handler(CommandHandler("zenstory", zen_story))
     application.add_handler(CommandHandler("meditate", meditate))
-    application.add_handler(CommandHandler("zenquote", zen_quote))
-    application.add_handler(CommandHandler("zenadvice", zen_advice))
-    application.add_handler(CommandHandler("randomwisdom", random_wisdom))
     application.add_handler(CommandHandler("checkpoints", check_points))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("deletedata", delete_user_data))
+    application.add_handler(CommandHandler("subscribe", subscribe_command))
     
     # Message handler with custom filters
     application.add_handler(MessageHandler(
@@ -507,6 +554,13 @@ def main():
         ),
         handle_message
     ))
+    
+    # Callback query handler
+    application.add_handler(CallbackQueryHandler(subscribe_callback, pattern="^subscribe$"))
+    
+    # Pre-checkout and successful payment handlers
+    application.add_pre_checkout_query_handler(precheckout_callback)
+    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     
     application.add_error_handler(error_handler)
     

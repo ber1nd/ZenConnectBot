@@ -36,19 +36,30 @@
             position: absolute;
             top: -10px;
             left: 25%;
-            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            box-shadow: 0 0 10px rgba(255,255,255,0.5);
         }
         .container:after {
             top: unset;
             bottom: -10px;
         }
-        img {
+        .zen-circle {
             width: 100px;
             height: 100px;
-            object-fit: contain;
-            margin-bottom: 10px;
             border-radius: 50%;
             background-color: #000000;
+            margin: 0 auto 20px;
+            position: relative;
+            overflow: hidden;
+        }
+        .zen-circle img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        .level-name {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 10px;
         }
         .progress-bar {
             width: 100%;
@@ -77,11 +88,13 @@
 </head>
 <body>
     <div class="container">
-        <img src="https://github.com/ber1nd/ZenConnectBot/blob/main/assets/monk_image.png?raw=true" alt="Zen Circle">
+        <div class="zen-circle">
+            <img src="https://github.com/ber1nd/ZenConnectBot/blob/main/assets/monk_image.png?raw=true" alt="Zen Circle">
+        </div>
         <h1>Your Zen Journey</h1>
+        <p class="level-name" id="level-name"></p>
         <p id="total-minutes"></p>
         <p id="zen-points"></p>
-        <p id="level"></p>
         <div class="progress-bar">
             <div id="progress" class="progress"></div>
         </div>
@@ -105,14 +118,15 @@
                 console.log("Received stats:", stats);
                 document.getElementById('total-minutes').textContent = `Total Meditation Time: ${stats.total_minutes || 0} minutes`;
                 document.getElementById('zen-points').textContent = `Zen Points: ${stats.zen_points || 0}`;
-                document.getElementById('level').textContent = `Current Level: ${getLevelName(stats.zen_points || 0)}`;
+                const levelName = getLevelName(stats.zen_points || 0);
+                document.getElementById('level-name').textContent = levelName;
                 const progress = ((stats.zen_points || 0) % 100);
                 document.getElementById('progress').style.width = `${progress}%`;
             } catch (error) {
                 console.error('Error fetching stats:', error);
                 document.getElementById('total-minutes').textContent = 'Unable to fetch meditation time';
                 document.getElementById('zen-points').textContent = 'Unable to fetch Zen points';
-                document.getElementById('level').textContent = 'Level: Unknown';
+                document.getElementById('level-name').textContent = 'Level: Unknown';
                 document.getElementById('progress').style.width = '0%';
                 document.getElementById('error-message').textContent = `Error: ${error.message}`;
             }
@@ -121,7 +135,8 @@
         function getLevelName(points) {
             if (points < 100) return "Beginner";
             if (points < 200) return "Novice";
-            if (points < 300) return "Adept";
+            if (points < 300) return "Apprentice";
+            if (points < 400) return "Adept";
             return "Master";
         }
 
