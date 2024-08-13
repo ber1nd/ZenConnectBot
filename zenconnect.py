@@ -61,16 +61,6 @@ def setup_database():
                 )
                 """)
                 
-                # Check if 'level' column exists, if not, add it
-                cursor.execute("SHOW COLUMNS FROM users LIKE 'level'")
-                if cursor.fetchone() is None:
-                    cursor.execute("ALTER TABLE users ADD COLUMN level INT DEFAULT 0")
-                
-                # Check if 'subscription_status' column exists, if not, add it
-                cursor.execute("SHOW COLUMNS FROM users LIKE 'subscription_status'")
-                if cursor.fetchone() is None:
-                    cursor.execute("ALTER TABLE users ADD COLUMN subscription_status BOOLEAN DEFAULT FALSE")
-                
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_memory (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -353,10 +343,14 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     price = 100  # $1.00
     prices = [LabeledPrice("Monthly Subscription", price)]
 
-    await context.bot.send_invoice(
-        chat_id, title, description, payload,
-        PAYMENT_PROVIDER_TOKEN, currency, prices
-    )
+    try:
+        await context.bot.send_invoice(
+            chat_id, title, description, payload,
+            PAYMENT_PROVIDER_TOKEN, currency, prices
+        )
+    except BadRequest as e:
+        logger.error(f"Error sending invoice: {e}")
+        await update.message.reply_text("There was an error processing your subscription request. Please try again later.")
 
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.pre_checkout_query
@@ -371,10 +365,20 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     if db:
         try:
             cursor = db.cursor()
+            
+            # Update user's subscription status
             cursor.execute("UPDATE users SET subscription_status = TRUE WHERE user_id = %s", (user_id,))
+            
+            # Add subscription record
+            end_date = datetime.now() + timedelta(days=30)  # Subscription for 30 days
+            cursor.execute("""
+                INSERT INTO subscriptions (user_id, start_date, end_date, status)
+                VALUES (%s, NOW(), %s, 'active')
+            """, (user_id, end_date))
+            
             db.commit()
-            logger.info(f"Subscription updated for user {user_id}")
-            await update.message.reply_text("Thank you for your subscription! You now have access to all levels.")
+            logger.info(f"Subscription activated for user {user_id}")
+            await update.message.reply_text("Thank you for your subscription! You now have access to all levels for the next 30 days.")
         except Error as e:
             logger.error(f"Database error in successful_payment_callback: {e}")
             await update.message.reply_text("There was an error processing your subscription. Please contact support.")
@@ -385,6 +389,83 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     else:
         logger.error("Failed to connect to database in successful_payment_callback")
         await update.message.reply_text("There was an error processing your subscription. Please try again later.")
+
+async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor()
+            
+            # Check if user is subscribed
+            cursor.execute("SELECT subscription_status FROM users WHERE user_id = %s", (user_id,))
+            result = cursor.fetchone()
+            
+            if result and result[0]:
+                # Update user's subscription status
+                cursor.execute("UPDATE users SET subscription_status = FALSE WHERE user_id = %s", (user_id,))
+                
+                # Update subscription record
+                cursor.execute("""
+                    UPDATE subscriptions 
+                    SET status = 'cancelled', end_date = NOW()
+                    WHERE user_id = %s AND status = 'active'
+                """, (user_id,))
+                
+                db.commit()
+                logger.info(f"Subscription cancelled for user {user_id}")
+                await update.message.reply_text("Your subscription has been cancelled. You will have access to premium features until the end of your current billing cycle.")
+            else:
+                await update.message.reply_text("You don't have an active subscription to cancel.")
+        except Error as e:
+            logger.error(f"Database error in unsubscribe_command: {e}")
+            await update.message.reply_text("There was an error processing your unsubscription request. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        logger.error("Failed to connect to database in unsubscribe_command")
+        await update.message.reply_text("There was an error processing your request. Please try again later.")
+
+async def subscription_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor(dictionary=True)
+            cursor.execute("""
+                SELECT u.subscription_status, s.end_date, u.level
+                FROM users u
+                LEFT JOIN subscriptions s ON u.user_id = s.user_id AND s.status = 'active'
+                WHERE u.user_id = %s
+            """, (user_id,))
+            result = cursor.fetchone()
+            
+            if result:
+                subscription_status = result['subscription_status']
+                end_date = result['end_date']
+                level = result['level']
+                
+                if subscription_status:
+                    status_message = f"Your subscription is active until {end_date.strftime('%Y-%m-%d')}."
+                else:
+                    status_message = "You don't have an active subscription."
+                
+                level_name = get_level_name(level * 100)  # Assuming 100 points per level
+                await update.message.reply_text(f"{status_message}\nYour current level: {level_name} (Level {level})")
+            else:
+                await update.message.reply_text("You don't have any subscription information.")
+        except Error as e:
+            logger.error(f"Database error in subscription_status_command: {e}")
+            await update.message.reply_text("There was an error retrieving your subscription status. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        logger.error("Failed to connect to database in subscription_status_command")
+        await update.message.reply_text("There was an error retrieving your subscription status. Please try again later.")
 
 async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -602,6 +683,8 @@ async def main():
     application.add_handler(CommandHandler("meditate", meditate))
     application.add_handler(CommandHandler("checkpoints", check_points))
     application.add_handler(CommandHandler("subscribe", subscribe_command))
+    application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
+    application.add_handler(CommandHandler("subscriptionstatus", subscription_status_command))
     application.add_handler(CommandHandler("deletedata", delete_data))
     
     application.add_handler(MessageHandler(
