@@ -41,6 +41,48 @@ def get_db_connection():
         logger.error(f"Error connecting to MySQL database: {e}")
         return None
 
+async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor()
+            
+            # Start a transaction
+            cursor.execute("START TRANSACTION")
+            
+            # Delete user data from all related tables
+            tables = [
+                "pvp_cooldowns",
+                "pvp_battles",
+                "subscriptions",
+                "group_memberships",
+                "meditation_log",
+                "user_memory",
+                "users"
+            ]
+            
+            for table in tables:
+                if table == "pvp_battles":
+                    cursor.execute(f"DELETE FROM {table} WHERE challenger_id = %s OR opponent_id = %s", (user_id, user_id))
+                else:
+                    cursor.execute(f"DELETE FROM {table} WHERE user_id = %s", (user_id,))
+            
+            # Commit the transaction
+            cursor.execute("COMMIT")
+            
+            await update.message.reply_text("Your data has been deleted, including any active subscriptions. Your journey with us ends here, but remember that every ending is a new beginning.")
+        except Error as e:
+            # Rollback in case of error
+            cursor.execute("ROLLBACK")
+            logger.error(f"Database error in delete_data: {e}")
+            await update.message.reply_text("I apologize, I'm having trouble deleting your data. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 def setup_database():
     connection = get_db_connection()
     if connection:
