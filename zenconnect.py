@@ -185,7 +185,7 @@ async def generate_response(prompt, elaborate=False):
     try:
         max_tokens = 150 if elaborate else 50
         response = await client.chat.completions.create(
-            model="gpt-4-0613",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a wise Zen monk. Provide concise, insightful responses unless asked for elaboration."},
                 {"role": "user", "content": prompt}
@@ -400,7 +400,7 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id, title, description, payload,
             PAYMENT_PROVIDER_TOKEN, currency, prices
         )
-    except BadRequest as e:
+    except Exception as e:
         logger.error(f"Error sending invoice: {e}")
         await update.message.reply_text("There was an error processing your subscription request. Please try again later.")
 
@@ -1085,13 +1085,20 @@ Remember, the path to enlightenment is not just in these commands, but in how yo
     await update.message.reply_text(help_text)
 
 async def run_web_app():
-    app = web.Application()
-    app.router.add_get('/zen_stats', serve_mini_app)
-    app.router.add_get('/user_stats', get_user_stats)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', int(os.getenv('PORT', 8080)))
-    await site.start()
+    try:
+        app = web.Application()
+        app.router.add_get('/zen_stats', serve_mini_app)
+        app.router.add_get('/user_stats', get_user_stats)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        port = int(os.getenv('PORT', 8080))
+        logger.info(f"Starting web application on port {port}")
+        site = web.TCPSite(runner, '0.0.0.0', port)
+        await site.start()
+        logger.info("Web application started successfully")
+    except Exception as e:
+        logger.error(f"Error starting web application: {e}")
+        raise
 
 async def run_bot():
     application = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
@@ -1130,15 +1137,25 @@ async def run_bot():
     # Start the bot
     await application.initialize()
     await application.start()
-    await application.run_polling()
+    await application.updater.start_polling()
+    logger.info("Bot started successfully")
+    await application.updater.idle()
 
 async def main():
     logger.info("Starting the Zen Monk bot...")
     setup_database()
-    await asyncio.gather(
-        run_web_app(),
-        run_bot()
-    )
+    
+    bot_task = asyncio.create_task(run_bot())
+    web_task = asyncio.create_task(run_web_app())
+    
+    try:
+        await asyncio.gather(bot_task, web_task)
+    except asyncio.CancelledError:
+        logger.info("Application is shutting down...")
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
+    finally:
+        logger.info("Application has shut down.")
 
 if __name__ == '__main__':
     asyncio.run(main())
