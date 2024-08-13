@@ -1086,11 +1086,10 @@ async def main():
     logger.info("Starting the bot...")
     await application.initialize()
     await application.start()
-
-    try:
-        await application.run_polling(allowed_updates=Update.ALL_TYPES)
-    finally:
-        await application.stop()
+    await application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot stopped!")
