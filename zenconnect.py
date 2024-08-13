@@ -3,7 +3,7 @@ import asyncio
 import sys
 import logging
 from openai import AsyncOpenAI
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, LabeledPrice
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, LabeledPrice, ForceReply
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes, PreCheckoutQueryHandler
 from datetime import time, timezone, datetime, timedelta
 import mysql.connector
@@ -285,27 +285,9 @@ async def togglequote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
-async def zen_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    story = await generate_response("Tell me a short Zen story.")
-    await update.message.reply_text(story)
-
 async def zen_quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     quote = await generate_response("Give me a short Zen quote.")
     await update.message.reply_text(quote)
-
-async def zen_advice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    advice = await generate_response("Provide a piece of Zen advice for daily life.")
-    await update.message.reply_text(advice)
-
-async def random_wisdom(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    wisdom_type = random.choice(["quote", "advice", "story"])
-    if wisdom_type == "quote":
-        wisdom = await generate_response("Give me a short Zen quote.")
-    elif wisdom_type == "advice":
-        wisdom = await generate_response("Provide a piece of Zen advice for daily life.")
-    else:
-        wisdom = await generate_response("Tell me a short Zen story.")
-    await update.message.reply_text(wisdom)
 
 async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -1074,46 +1056,33 @@ async def get_user_stats(request):
         logger.error("Failed to connect to database")
         return web.json_response({"error": "Database connection failed"}, status=500)
 
-def main():
-    setup_database()
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    await update.message.reply_html(
+        f"Hello {user.mention_html()}! I am your Zen Monk bot. How may I assist you on your path to enlightenment?",
+        reply_markup=ForceReply(selective=True),
+    )
 
-    application = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = """
+Here are the commands I understand:
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("zenstory", zen_story))
-    application.add_handler(CommandHandler("zenquote", zen_quote))
-    application.add_handler(CommandHandler("zenadvice", zen_advice))
-    application.add_handler(CommandHandler("randomwisdom", random_wisdom))
-    application.add_handler(CommandHandler("meditate", meditate))
-    application.add_handler(CommandHandler("checkpoints", check_points))
-    application.add_handler(CommandHandler("togglequote", togglequote))
-    application.add_handler(CommandHandler("subscribe", subscribe_command))
-    application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
-    application.add_handler(CommandHandler("subscriptionstatus", subscription_status_command))
-    application.add_handler(CommandHandler("challenge", challenge))
-    application.add_handler(CommandHandler("cancelbattle", cancel_battle))
-    application.add_handler(CommandHandler("deletedata", delete_data))
+/start - Begin your journey with the Zen Monk bot
+/help - Display this help message
+/meditate <minutes> - Start a meditation session
+/zenquote - Receive a Zen quote
+/checkpoints - Check your Zen points and level
+/togglequote - Toggle daily Zen quote subscription
+/subscribe - Subscribe to premium features
+/unsubscribe - Cancel your subscription
+/subscriptionstatus - Check your subscription status
+/challenge @username - Challenge another user to a Zen battle (in group chats)
+/cancelbattle - Cancel an active battle (in group chats)
+/deletedata - Delete all your data from the bot
 
-    application.add_handler(CallbackQueryHandler(handle_challenge_response, pattern="^(accept_challenge|decline_challenge):"))
-    application.add_handler(CallbackQueryHandler(handle_battle_move, pattern="^battle_move:"))
-    application.add_handler(CallbackQueryHandler(subscribe_callback, pattern="^subscribe$"))
+Remember, the path to enlightenment is not just in these commands, but in how you apply their wisdom to your life.
+    """
+    await update.message.reply_text(help_text)
 
-    application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
-    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
-
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    application.add_error_handler(error_handler)
-
-    app = web.Application()
-    app.router.add_get('/', serve_mini_app)
-    app.router.add_get('/user_stats', get_user_stats)
-
-    web.run_app(app, host='0.0.0.0', port=8080)
-
-    application.run_polling()
-
-if __name__ == '__main__':
-    setup_database()  # Ensure the database is set up before starting the bot
-    asyncio.run(main())
+async def main():
+    setup
