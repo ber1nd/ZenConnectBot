@@ -67,6 +67,11 @@ def setup_database():
                 if cursor.fetchone() is None:
                     cursor.execute("ALTER TABLE users ADD COLUMN level INT DEFAULT 0")
                 
+                # Check if 'subscription_status' column exists, if not, add it
+                cursor.execute("SHOW COLUMNS FROM users LIKE 'subscription_status'")
+                if cursor.fetchone() is None:
+                    cursor.execute("ALTER TABLE users ADD COLUMN subscription_status BOOLEAN DEFAULT FALSE")
+                
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_memory (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -252,19 +257,6 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Invalid duration: {str(e)}. Please provide a positive number of minutes.")
         return
 
-    await update.message.reply_text(f"Start meditating for {duration} minutes. Focus on your breath.")
-    
-    interval = 2  # Interval in minutes
-    total_intervals = duration // interval
-    
-    for i in range(total_intervals):
-        await asyncio.sleep(interval * 60)  # Wait for the interval duration
-        motivational_message = await generate_response("Give me a short Zen meditation guidance message.")
-        await update.message.reply_text(motivational_message)
-    
-    await asyncio.sleep((duration % interval) * 60)  # Sleep for the remaining time
-    zen_points = duration + (5 if duration > 15 else 0)  # 1 point per minute, +5 for sessions > 15 minutes
-    
     user_id = update.effective_user.id
     db = get_db_connection()
     if db:
@@ -274,8 +266,26 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data = cursor.fetchone()
             
             if not user_data:
-                await update.message.reply_text("Error: User data not found.")
-                return
+                cursor.execute("INSERT INTO users (user_id, zen_points, level, subscription_status) VALUES (%s, 0, 0, FALSE)", (user_id,))
+                db.commit()
+                user_data = {'zen_points': 0, 'level': 0, 'subscription_status': False}
+
+            if user_data['level'] == 0 and duration > 5:
+                await update.message.reply_text("As a beginner, you can only meditate for up to 5 minutes at a time. Let's start with 5 minutes.")
+                duration = 5
+
+            await update.message.reply_text(f"Start meditating for {duration} minutes. Focus on your breath.")
+    
+            interval = 2  # Interval in minutes
+            total_intervals = duration // interval
+    
+            for i in range(total_intervals):
+                await asyncio.sleep(interval * 60)  # Wait for the interval duration
+                motivational_message = await generate_response("Give me a short Zen meditation guidance message.")
+                await update.message.reply_text(motivational_message)
+    
+            await asyncio.sleep((duration % interval) * 60)  # Sleep for the remaining time
+            zen_points = duration + (5 if duration > 15 else 0)  # 1 point per minute, +5 for sessions > 15 minutes
 
             new_zen_points = user_data['zen_points'] + zen_points
             new_level = min(new_zen_points // 100, 4)
@@ -573,22 +583,16 @@ async def get_user_stats(request):
         return web.json_response({"error": "Database connection failed"}, status=500)
 
 async def main():
-    # File-based lock
-    lock_file = '/tmp/zenconnect_bot.lock'
-    
-    try:
-        lock_file_fd = open(lock_file, 'w')
-        fcntl.lockf(lock_file_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except IOError:
-        logger.error("Another instance of this bot is already running. Exiting.")
-        sys.exit(1)
+    # Use environment variable to determine webhook or polling
+    use_webhook = os.getenv('USE_WEBHOOK', 'false').lower() == 'true'
 
-    setup_database()
+    token = os.getenv("BOT_TOKEN")
+    port = int(os.environ.get('PORT', 8080))
 
-    token = os.getenv("BOT_TOKEN")  # Use environment variable for the Telegram bot token
+    # Initialize bot
     application = Application.builder().token(token).build()
-    
-    # Command handlers
+
+    # Add handlers
     application.add_handler(CommandHandler("togglequote", togglequote))
     application.add_handler(CommandHandler("zenstory", zen_story))
     application.add_handler(CommandHandler("zenquote", zen_quote))
@@ -599,68 +603,82 @@ async def main():
     application.add_handler(CommandHandler("subscribe", subscribe_command))
     application.add_handler(CommandHandler("deletedata", delete_data))
     
-    # Message handler with custom filters
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & (
             filters.ChatType.PRIVATE |
             (filters.ChatType.GROUPS & (
                 filters.Regex(r'(?i)\bzen\b') |
-                filters.Regex(r'@\w+')  # This will match any mention, we'll check for the bot's username in handle_message
+                filters.Regex(r'@\w+')
             ))
         ),
         handle_message
     ))
-    
+
     # Callback query handler
     application.add_handler(CallbackQueryHandler(subscribe_callback, pattern="^subscribe$"))
     
     # Pre-checkout and successful payment handlers
     application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
-    
+
     application.add_error_handler(error_handler)
-    
-    # Schedule the daily quote at a specific time (e.g., 8:00 AM UTC)
+
+    # Schedule daily quote
     if application.job_queue:
         application.job_queue.run_daily(send_daily_quote, time=time(hour=8, minute=0, tzinfo=timezone.utc))
     else:
         logger.warning("JobQueue is not available. Daily quotes will not be scheduled.")
-    
-    # Set up web app
+
+    # Set up web app for stats
     app = web.Application()
     app.router.add_get('/', serve_mini_app)
     app.router.add_get('/api/stats', get_user_stats)
 
-    # Create a runner for the web app
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', int(os.environ.get('PORT', 8080)))
-    
-    async def start_webapp():
+    if use_webhook:
+        # Webhook settings
+        webhook_url = os.getenv('WEBHOOK_URL')
+        if not webhook_url:
+            logger.error("Webhook URL not set. Please set the WEBHOOK_URL environment variable.")
+            return
+
+        await application.bot.set_webhook(url=webhook_url)
+        
+        async def webhook_handler(request):
+            update = await application.update_queue.put(
+                Update.de_json(await request.json(), application.bot)
+            )
+            return web.Response()
+
+        app.router.add_post(f'/{token}', webhook_handler)
+
+        # Start the web application
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', port)
         await site.start()
-        logger.info("Web application started")
-    
-    async def start_bot():
+
+        logger.info(f"Webhook set up on port {port}")
+        
+        # Keep the script running
+        while True:
+            await asyncio.sleep(3600)
+    else:
+        # Polling mode
         await application.initialize()
         await application.start()
         await application.updater.start_polling()
-        logger.info("Telegram bot started")
-    
-    async def shutdown():
-        await application.stop()
-        await application.shutdown()
-        await runner.cleanup()
-    
-    try:
+
+        # Start the web application in a separate task
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', port)
+        await site.start()
+
         logger.info("Zen Monk Bot and Web App are awakening. Press Ctrl+C to return to silence.")
-        await asyncio.gather(start_webapp(), start_bot())
+        
         # Keep the script running
         while True:
             await asyncio.sleep(1)
-    except KeyboardInterrupt:
-        logger.info("Shutting down...")
-    finally:
-        await shutdown()
 
 if __name__ == '__main__':
     asyncio.run(main())
