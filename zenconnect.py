@@ -367,7 +367,7 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 level = result['level']
                 level_name = get_level_name(zen_points)
                 message = f"Your Zen journey:\nLevel: {level_name}\nTotal meditation time: {total_minutes} minutes\nZen points: {zen_points}"
-                if chat_type == 'private':
+               if chat_type == 'private':
                     mini_app_url = "https://zenconnectbot-production.up.railway.app/"
                     keyboard = [[InlineKeyboardButton("Open Zen Stats", web_app=WebAppInfo(url=mini_app_url))]]
                     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -564,7 +564,7 @@ async def main():
     application.add_handler(CallbackQueryHandler(subscribe_callback, pattern="^subscribe$"))
     
     # Pre-checkout and successful payment handlers
-    application.add_pre_checkout_query_handler(precheckout_callback)
+    application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
     
     application.add_error_handler(error_handler)
