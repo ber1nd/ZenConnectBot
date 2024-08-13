@@ -26,7 +26,7 @@ RATE_LIMIT = 5
 rate_limit_dict = defaultdict(list)
 
 # Telegram payment provider token
-PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN")
+PAYMENT_PROVIDER_TOKEN = os.getenv("284685063:TEST:Yzg1M2NlZDYyNDc0")
 
 def get_db_connection():
     try:
