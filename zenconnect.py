@@ -13,6 +13,7 @@ from aiohttp import web
 import json
 from dotenv import load_dotenv
 from collections import defaultdict
+import random
 
 # Set up logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -60,6 +61,11 @@ def setup_database():
                     subscription_status BOOLEAN DEFAULT FALSE
                 )
                 """)
+                
+                # Check if 'level' column exists, if not, add it
+                cursor.execute("SHOW COLUMNS FROM users LIKE 'level'")
+                if cursor.fetchone() is None:
+                    cursor.execute("ALTER TABLE users ADD COLUMN level INT DEFAULT 0")
                 
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_memory (
@@ -219,6 +225,24 @@ async def zen_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
     story = await generate_response("Tell me a short Zen story.")
     await update.message.reply_text(story)
 
+async def zen_quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    quote = await generate_response("Give me a short Zen quote.")
+    await update.message.reply_text(quote)
+
+async def zen_advice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    advice = await generate_response("Provide a piece of Zen advice for daily life.")
+    await update.message.reply_text(advice)
+
+async def random_wisdom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    wisdom_type = random.choice(["quote", "advice", "story"])
+    if wisdom_type == "quote":
+        wisdom = await generate_response("Give me a short Zen quote.")
+    elif wisdom_type == "advice":
+        wisdom = await generate_response("Provide a piece of Zen advice for daily life.")
+    else:
+        wisdom = await generate_response("Tell me a short Zen story.")
+    await update.message.reply_text(wisdom)
+
 async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         duration = int(context.args[0]) if context.args else 5  # Default to 5 minutes
@@ -366,7 +390,7 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 zen_points = result['zen_points']
                 level = result['level']
                 level_name = get_level_name(zen_points)
-                message = f"Your Zen journey:\nLevel: {level_name}\nTotal meditation time: {total_minutes} minutes\nZen points: {zen_points}"
+                message = f"Your Zen journey:\nLevel: {level_name} (Level {level})\nTotal meditation time: {total_minutes} minutes\nZen points: {zen_points}"
                 if chat_type == 'private':
                     mini_app_url = "https://zenconnectbot-production.up.railway.app/"
                     keyboard = [[InlineKeyboardButton("Open Zen Stats", web_app=WebAppInfo(url=mini_app_url))]]
@@ -379,6 +403,29 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Error as e:
             logger.error(f"Database error in check_points: {e}")
             await update.message.reply_text("I apologize, I'm having trouble accessing your stats right now. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+
+async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor()
+            cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM user_memory WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM meditation_log WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM group_memberships WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM subscriptions WHERE user_id = %s", (user_id,))
+            db.commit()
+            await update.message.reply_text("Your data has been deleted. Your journey with us ends here, but remember that every ending is a new beginning.")
+        except Error as e:
+            logger.error(f"Database error in delete_data: {e}")
+            await update.message.reply_text("I apologize, I'm having trouble deleting your data. Please try again later.")
         finally:
             if db.is_connected():
                 cursor.close()
@@ -544,9 +591,13 @@ async def main():
     # Command handlers
     application.add_handler(CommandHandler("togglequote", togglequote))
     application.add_handler(CommandHandler("zenstory", zen_story))
+    application.add_handler(CommandHandler("zenquote", zen_quote))
+    application.add_handler(CommandHandler("zenadvice", zen_advice))
+    application.add_handler(CommandHandler("randomwisdom", random_wisdom))
     application.add_handler(CommandHandler("meditate", meditate))
     application.add_handler(CommandHandler("checkpoints", check_points))
     application.add_handler(CommandHandler("subscribe", subscribe_command))
+    application.add_handler(CommandHandler("deletedata", delete_data))
     
     # Message handler with custom filters
     application.add_handler(MessageHandler(
