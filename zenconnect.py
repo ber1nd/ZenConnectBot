@@ -4,7 +4,7 @@ import sys
 import logging
 from datetime import time, timezone, datetime, timedelta
 import random
-from typing import Dict, Any, Tuple, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 import aiohttp
 from aiohttp import web
@@ -254,7 +254,7 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         interval = 2  # Interval in minutes
         total_intervals = duration // interval
     
-        for i in range(total_intervals):
+        for _ in range(total_intervals):
             await asyncio.sleep(interval * 60)  # Wait for the interval duration
             motivational_message = await generate_response("Give me a short Zen meditation guidance message.")
             await update.message.reply_text(motivational_message)
@@ -648,7 +648,7 @@ async def start_battle(bot, chat_id, challenger_id, opponent_id, battle_id):
     keyboard = [
         [InlineKeyboardButton("Attack", callback_data=f"battle_move:attack:{battle_id}")],
         [InlineKeyboardButton("Defend", callback_data=f"battle_move:defend:{battle_id}")],
-        [InlineKeyboardButton("Special Move", callback_data=f"battle_move:special:{battle_id}")],
+                [InlineKeyboardButton("Special Move", callback_data=f"battle_move:special:{battle_id}")],
         [InlineKeyboardButton("Focus", callback_data=f"battle_move:focus:{battle_id}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
