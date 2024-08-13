@@ -1,6 +1,6 @@
 python-telegram-bot[job-queue]==20.6
 openai==1.40.3
-mysql-connector-python==8.0.33
+aiomysql==0.0.21
 aiohttp==3.8.5
 python-dotenv==1.0.0
 stripe==5.4.0
