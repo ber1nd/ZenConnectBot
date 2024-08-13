@@ -1,6 +1,5 @@
 import os
 import asyncio
-import fcntl
 import sys
 import logging
 from openai import AsyncOpenAI
@@ -27,7 +26,7 @@ RATE_LIMIT = 5
 rate_limit_dict = defaultdict(list)
 
 # Telegram payment provider token
-PAYMENT_PROVIDER_TOKEN = "284685063:TEST:Yzg1M2NlZDYyNDc0"
+PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN")
 
 def get_db_connection():
     try:
@@ -374,6 +373,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
             cursor = db.cursor()
             cursor.execute("UPDATE users SET subscription_status = TRUE WHERE user_id = %s", (user_id,))
             db.commit()
+            logger.info(f"Subscription updated for user {user_id}")
             await update.message.reply_text("Thank you for your subscription! You now have access to all levels.")
         except Error as e:
             logger.error(f"Database error in successful_payment_callback: {e}")
@@ -383,6 +383,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
                 cursor.close()
                 db.close()
     else:
+        logger.error("Failed to connect to database in successful_payment_callback")
         await update.message.reply_text("There was an error processing your subscription. Please try again later.")
 
 async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -681,4 +682,5 @@ async def main():
             await asyncio.sleep(1)
 
 if __name__ == '__main__':
+    setup_database()  # Ensure the database is set up before starting the bot
     asyncio.run(main())
