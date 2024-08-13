@@ -739,9 +739,10 @@ async def challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(
-            f"@{challenger.username} has challenged @{opponent_username} to a Zen battle! "
-            f"@{opponent_username}, do you accept?",
-            reply_markup=reply_markup
+            f"{challenger.mention_html()} has challenged {context.args[0]} to a Zen battle! "
+            f"{context.args[0]}, do you accept?",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
         )
 
     except Error as e:
@@ -815,10 +816,13 @@ async def start_battle(bot, chat_id, challenger_id, opponent_id, battle_id):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
+    challenger = await bot.get_chat_member(chat_id, challenger_id)
+    opponent = await bot.get_chat_member(chat_id, opponent_id)
+    
     await bot.send_message(
         chat_id=chat_id,
-        text=f"The Zen battle between <@{challenger_id}> and <@{opponent_id}> begins!\n"
-             f"<@{challenger_id}>, it's your turn. Choose your move:",
+        text=f"The Zen battle between {challenger.user.mention_html()} and {opponent.user.mention_html()} begins!\n"
+             f"{challenger.user.mention_html()}, it's your turn. Choose your move:",
         reply_markup=reply_markup,
         parse_mode='HTML'
     )
@@ -889,11 +893,14 @@ async def handle_battle_move(update: Update, context: ContextTypes.DEFAULT_TYPE)
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
+            current_player = await context.bot.get_chat_member(battle['group_id'], current_player_id)
+            next_player = await context.bot.get_chat_member(battle['group_id'], new_turn)
+
             await query.edit_message_text(
                 text=f"{message}\n\n"
                      f"Challenger HP: {updated_battle['challenger_hp']}\n"
                      f"Opponent HP: {updated_battle['opponent_hp']}\n\n"
-                     f"<@{new_turn}>, it's your turn. Choose your move:",
+                     f"{next_player.user.mention_html()}, it's your turn. Choose your move:",
                 reply_markup=reply_markup,
                 parse_mode='HTML'
             )
@@ -918,14 +925,14 @@ def process_move(move, player_id, battle):
     damage = random.randint(min_damage, max_damage)
 
     if move == 'defend':
-        message = f"<@{player_id}> used Defend, reducing incoming damage and counter-attacking for {damage} damage!"
+        message = f"Player {player_id} used Defend, reducing incoming damage and counter-attacking for {damage} damage!"
     elif move == 'special':
-        message = f"<@{player_id}> used a Special Move, dealing {damage} damage!"
+        message = f"Player {player_id} used a Special Move, dealing {damage} damage!"
     elif move == 'focus':
-        message = f"<@{player_id}> used Focus, preparing for a stronger attack next turn!"
+        message = f"Player {player_id} used Focus, preparing for a stronger attack next turn!"
         damage = 0
     else:  # attack
-        message = f"<@{player_id}> attacked, dealing {damage} damage!"
+        message = f"Player {player_id} attacked, dealing {damage} damage!"
 
     return damage, message
 
@@ -966,9 +973,12 @@ async def end_battle(bot, chat_id, battle):
 
         db.commit()
 
+        winner = await bot.get_chat_member(chat_id, winner_id)
+        loser = await bot.get_chat_member(chat_id, loser_id)
+
         await bot.send_message(
             chat_id=chat_id,
-            text=f"The Zen battle has ended! <@{winner_id}> is victorious and gains {points_transfer} Zen points from <@{loser_id}>.",
+            text=f"The Zen battle has ended! {winner.user.mention_html()} is victorious and gains {points_transfer} Zen points from {loser.user.mention_html()}.",
             parse_mode='HTML'
         )
 
@@ -1064,109 +1074,45 @@ async def get_user_stats(request):
         logger.error("Failed to connect to database")
         return web.json_response({"error": "Database connection failed"}, status=500)
 
-async def main():
-    # Use environment variable to determine webhook or polling
-    use_webhook = os.getenv('USE_WEBHOOK', 'false').lower() == 'true'
+def main():
+    setup_database()
 
-    token = os.getenv("BOT_TOKEN")
-    port = int(os.environ.get('PORT', 8080))
+    application = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
 
-    # Initialize bot
-    application = Application.builder().token(token).build()
-
-    # Add handlers
-    application.add_handler(CommandHandler("togglequote", togglequote))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("zenstory", zen_story))
     application.add_handler(CommandHandler("zenquote", zen_quote))
     application.add_handler(CommandHandler("zenadvice", zen_advice))
     application.add_handler(CommandHandler("randomwisdom", random_wisdom))
     application.add_handler(CommandHandler("meditate", meditate))
     application.add_handler(CommandHandler("checkpoints", check_points))
+    application.add_handler(CommandHandler("togglequote", togglequote))
     application.add_handler(CommandHandler("subscribe", subscribe_command))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     application.add_handler(CommandHandler("subscriptionstatus", subscription_status_command))
-    application.add_handler(CommandHandler("deletedata", delete_data))
     application.add_handler(CommandHandler("challenge", challenge))
     application.add_handler(CommandHandler("cancelbattle", cancel_battle))
-    
-    application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & (
-            filters.ChatType.PRIVATE |
-            (filters.ChatType.GROUPS & (
-                filters.Regex(r'(?i)\bzen\b') |
-                filters.Regex(r'@\w+')
-            ))
-        ),
-        handle_message
-    ))
+    application.add_handler(CommandHandler("deletedata", delete_data))
 
-    # Callback query handlers
-    application.add_handler(CallbackQueryHandler(subscribe_callback, pattern="^subscribe$"))
-    application.add_handler(CallbackQueryHandler(handle_challenge_response, pattern="^(accept|decline)_challenge:"))
+    application.add_handler(CallbackQueryHandler(handle_challenge_response, pattern="^(accept_challenge|decline_challenge):"))
     application.add_handler(CallbackQueryHandler(handle_battle_move, pattern="^battle_move:"))
-    
-    # Pre-checkout and successful payment handlers
+    application.add_handler(CallbackQueryHandler(subscribe_callback, pattern="^subscribe$"))
+
     application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
     application.add_error_handler(error_handler)
 
-    # Schedule daily quote
-    if application.job_queue:
-        application.job_queue.run_daily(send_daily_quote, time=time(hour=8, minute=0, tzinfo=timezone.utc))
-    else:
-        logger.warning("JobQueue is not available. Daily quotes will not be scheduled.")
-
-    # Set up web app for stats
     app = web.Application()
     app.router.add_get('/', serve_mini_app)
-    app.router.add_get('/api/stats', get_user_stats)
+    app.router.add_get('/user_stats', get_user_stats)
 
-    if use_webhook:
-        # Webhook settings
-        webhook_url = os.getenv('WEBHOOK_URL')
-        if not webhook_url:
-            logger.error("Webhook URL not set. Please set the WEBHOOK_URL environment variable.")
-            return
+    web.run_app(app, host='0.0.0.0', port=8080)
 
-        await application.bot.set_webhook(url=webhook_url)
-        
-        async def webhook_handler(request):
-            update = await application.update_queue.put(
-                Update.de_json(await request.json(), application.bot)
-            )
-            return web.Response()
-
-        app.router.add_post(f'/{token}', webhook_handler)
-
-        # Start the web application
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, '0.0.0.0', port)
-        await site.start()
-
-        logger.info(f"Webhook set up on port {port}")
-        
-        # Keep the script running
-        while True:
-            await asyncio.sleep(3600)
-    else:
-        # Polling mode
-        await application.initialize()
-        await application.start()
-        await application.updater.start_polling()
-
-        # Start the web application in a separate task
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, '0.0.0.0', port)
-        await site.start()
-
-        logger.info("Zen Monk Bot and Web App are awakening. Press Ctrl+C to return to silence.")
-        
-        # Keep the script running
-        while True:
-            await asyncio.sleep(1)
+    application.run_polling()
 
 if __name__ == '__main__':
     setup_database()  # Ensure the database is set up before starting the bot
