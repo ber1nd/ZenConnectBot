@@ -3,7 +3,7 @@ import asyncio
 import sys
 import logging
 from openai import AsyncOpenAI
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, LabeledPrice, ForceReply
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, LabeledPrice
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes, PreCheckoutQueryHandler
 from datetime import time, timezone, datetime, timedelta
 import mysql.connector
@@ -40,49 +40,6 @@ def get_db_connection():
     except Error as e:
         logger.error(f"Error connecting to MySQL database: {e}")
         return None
-
-async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor()
-            
-            # Start a transaction
-            cursor.execute("START TRANSACTION")
-            
-            # Delete user data from all related tables
-            tables = [
-                "pvp_cooldowns",
-                "pvp_battles",
-                "subscriptions",
-                "group_memberships",
-                "meditation_log",
-                "user_memory",
-                "users"
-            ]
-            
-            for table in tables:
-                if table == "pvp_battles":
-                    cursor.execute(f"DELETE FROM {table} WHERE challenger_id = %s OR opponent_id = %s", (user_id, user_id))
-                else:
-                    cursor.execute(f"DELETE FROM {table} WHERE user_id = %s", (user_id,))
-            
-            # Commit the transaction
-            cursor.execute("COMMIT")
-            
-            await update.message.reply_text("Your data has been deleted, including any active subscriptions. Your journey with us ends here, but remember that every ending is a new beginning.")
-        except Error as e:
-            # Rollback in case of error
-            cursor.execute("ROLLBACK")
-            logger.error(f"Database error in delete_data: {e}")
-            await update.message.reply_text("I apologize, I'm having trouble deleting your data. Please try again later.")
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 def setup_database():
     connection = get_db_connection()
@@ -145,33 +102,6 @@ def setup_database():
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
                 """)
-
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS pvp_battles (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    challenger_id BIGINT,
-                    opponent_id BIGINT,
-                    group_id BIGINT,
-                    status ENUM('pending', 'in_progress', 'completed') DEFAULT 'pending',
-                    current_turn BIGINT,
-                    challenger_hp INT DEFAULT 100,
-                    opponent_hp INT DEFAULT 100,
-                    last_move_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (challenger_id) REFERENCES users(user_id),
-                    FOREIGN KEY (opponent_id) REFERENCES users(user_id)
-                )
-                """)
-
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS pvp_cooldowns (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id BIGINT,
-                    move_name VARCHAR(50),
-                    cooldown_end TIMESTAMP,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
-                )
-                """)
-
             connection.commit()
             logger.info("Database setup completed successfully.")
         except Error as e:
@@ -285,9 +215,27 @@ async def togglequote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
+async def zen_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    story = await generate_response("Tell me a short Zen story.")
+    await update.message.reply_text(story)
+
 async def zen_quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     quote = await generate_response("Give me a short Zen quote.")
     await update.message.reply_text(quote)
+
+async def zen_advice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    advice = await generate_response("Provide a piece of Zen advice for daily life.")
+    await update.message.reply_text(advice)
+
+async def random_wisdom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    wisdom_type = random.choice(["quote", "advice", "story"])
+    if wisdom_type == "quote":
+        wisdom = await generate_response("Give me a short Zen quote.")
+    elif wisdom_type == "advice":
+        wisdom = await generate_response("Provide a piece of Zen advice for daily life.")
+    else:
+        wisdom = await generate_response("Tell me a short Zen story.")
+    await update.message.reply_text(wisdom)
 
 async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -400,7 +348,7 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id, title, description, payload,
             PAYMENT_PROVIDER_TOKEN, currency, prices
         )
-    except Exception as e:
+    except BadRequest as e:
         logger.error(f"Error sending invoice: {e}")
         await update.message.reply_text("There was an error processing your subscription request. Please try again later.")
 
@@ -554,6 +502,29 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
+async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor()
+            cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM user_memory WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM meditation_log WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM group_memberships WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM subscriptions WHERE user_id = %s", (user_id,))
+            db.commit()
+            await update.message.reply_text("Your data has been deleted. Your journey with us ends here, but remember that every ending is a new beginning.")
+        except Error as e:
+            logger.error(f"Database error in delete_data: {e}")
+            await update.message.reply_text("I apologize, I'm having trouble deleting your data. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.message.text
@@ -649,447 +620,150 @@ def check_rate_limit(user_id):
     rate_limit_dict[user_id] = user_messages
     return len(user_messages) < RATE_LIMIT
 
-# PvP-related functions
-async def challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    challenger = update.effective_user
-    chat_id = update.effective_chat.id
-    chat_type = update.message.chat.type
-
-    if chat_type == 'private':
-        await update.message.reply_text("You can only challenge others in group chats.")
-        return
-
-    if not context.args:
-        await update.message.reply_text("Please mention the user you want to challenge.")
-        return
-
-    opponent_username = context.args[0].replace("@", "")
-    
-    db = get_db_connection()
-    if not db:
-        await update.message.reply_text("Unable to process your challenge right now. Please try again later.")
-        return
-
-    try:
-        cursor = db.cursor(dictionary=True)
-        
-        # Get challenger's info
-        cursor.execute("SELECT user_id, zen_points FROM users WHERE user_id = %s", (challenger.id,))
-        challenger_info = cursor.fetchone()
-        
-        if not challenger_info:
-            await update.message.reply_text("You need to start your Zen journey before challenging others.")
-            return
-
-        # Get opponent's info
-        cursor.execute("SELECT user_id, zen_points FROM users WHERE username = %s", (opponent_username,))
-        opponent_info = cursor.fetchone()
-        
-        if not opponent_info:
-            await update.message.reply_text(f"User @{opponent_username} is not found in our records.")
-            return
-
-        # Check for existing battles for both challenger and opponent
-        cursor.execute("""
-            SELECT * FROM pvp_battles 
-            WHERE (challenger_id IN (%s, %s) OR opponent_id IN (%s, %s))
-            AND status != 'completed'
-        """, (challenger.id, opponent_info['user_id'], challenger.id, opponent_info['user_id']))
-        existing_battle = cursor.fetchone()
-
-        if existing_battle:
-            if existing_battle['challenger_id'] == challenger.id or existing_battle['opponent_id'] == challenger.id:
-                await update.message.reply_text("You are already in a battle. Complete it before starting a new one.")
-            else:
-                await update.message.reply_text(f"@{opponent_username} is already in a battle. Try challenging someone else.")
-            return
-
-        # Create a new battle
-        cursor.execute("""
-            INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, status, current_turn)
-            VALUES (%s, %s, %s, 'pending', %s)
-        """, (challenger.id, opponent_info['user_id'], chat_id, challenger.id))
-        
-        battle_id = cursor.lastrowid
-        db.commit()
-
-        # Create inline keyboard for opponent to accept or decline
-        keyboard = [
-            [InlineKeyboardButton("Accept", callback_data=f"accept_challenge:{battle_id}"),
-             InlineKeyboardButton("Decline", callback_data=f"decline_challenge:{battle_id}")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        await update.message.reply_text(
-            f"{challenger.mention_html()} has challenged {context.args[0]} to a Zen battle! "
-            f"{context.args[0]}, do you accept?",
-            reply_markup=reply_markup,
-            parse_mode='HTML'
-        )
-
-    except Error as e:
-        logger.error(f"Database error in challenge: {e}")
-        await update.message.reply_text("An error occurred while processing your challenge. Please try again later.")
-    finally:
-        if db.is_connected():
-            cursor.close()
-            db.close()
-
-async def handle_challenge_response(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    response, battle_id = query.data.split(':')
-    responder_id = query.from_user.id
-
-    db = get_db_connection()
-    if not db:
-        await query.edit_message_text("Unable to process your response right now. Please try again later.")
-        return
-
-    try:
-        cursor = db.cursor(dictionary=True)
-
-        # Fetch the battle information
-        cursor.execute("SELECT * FROM pvp_battles WHERE id = %s", (battle_id,))
-        battle = cursor.fetchone()
-
-        if not battle:
-            await query.edit_message_text("This challenge is no longer valid.")
-            return
-
-        if battle['status'] != 'pending':
-            await query.edit_message_text("This challenge has already been responded to.")
-            return
-
-        if responder_id != battle['opponent_id']:
-            await query.answer("You are not the challenged player!", show_alert=True)
-            return
-
-        if response == 'accept_challenge':
-            cursor.execute("""
-                UPDATE pvp_battles 
-                SET status = 'in_progress' 
-                WHERE id = %s
-            """, (battle_id,))
-            
-            db.commit()
-            await start_battle(context.bot, query.message.chat_id, battle['challenger_id'], battle['opponent_id'], battle_id)
-        else:  # decline_challenge
-            cursor.execute("DELETE FROM pvp_battles WHERE id = %s", (battle_id,))
-            
-            db.commit()
-            await query.edit_message_text("The challenge has been declined.")
-
-    except Error as e:
-        logger.error(f"Database error in handle_challenge_response: {e}")
-        await query.edit_message_text("An error occurred while processing your response. Please try again later.")
-    finally:
-        if db.is_connected():
-            cursor.close()
-            db.close()
-
-async def start_battle(bot, chat_id, challenger_id, opponent_id, battle_id):
-    keyboard = [
-        [InlineKeyboardButton("Attack", callback_data=f"battle_move:attack:{battle_id}")],
-        [InlineKeyboardButton("Defend", callback_data=f"battle_move:defend:{battle_id}")],
-        [InlineKeyboardButton("Special Move", callback_data=f"battle_move:special:{battle_id}")],
-        [InlineKeyboardButton("Focus", callback_data=f"battle_move:focus:{battle_id}")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    challenger = await bot.get_chat_member(chat_id, challenger_id)
-    opponent = await bot.get_chat_member(chat_id, opponent_id)
-    
-    await bot.send_message(
-        chat_id=chat_id,
-        text=f"The Zen battle between {challenger.user.mention_html()} and {opponent.user.mention_html()} begins!\n"
-             f"{challenger.user.mention_html()}, it's your turn. Choose your move:",
-        reply_markup=reply_markup,
-        parse_mode='HTML'
-    )
-
-async def handle_battle_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    move, battle_id = query.data.split(':')[1:]
-    current_player_id = query.from_user.id
-
-    db = get_db_connection()
-    if not db:
-        await query.edit_message_text("Unable to process your move right now. Please try again later.")
-        return
-
-    try:
-        cursor = db.cursor(dictionary=True)
-        
-        # Fetch battle information
-        cursor.execute("SELECT * FROM pvp_battles WHERE id = %s", (battle_id,))
-        battle = cursor.fetchone()
-
-        if not battle:
-            await query.edit_message_text("This battle is no longer active.")
-            return
-
-        if battle['status'] != 'in_progress':
-            await query.edit_message_text("This battle has already ended.")
-            return
-
-        if battle['current_turn'] != current_player_id:
-            await query.answer("It's not your turn!", show_alert=True)
-            return
-
-        # Process the move
-        damage, message = process_move(move, current_player_id, battle)
-
-        # Update battle state
-        new_hp = battle['opponent_hp'] - damage if current_player_id == battle['challenger_id'] else battle['challenger_hp'] - damage
-        new_turn = battle['opponent_id'] if current_player_id == battle['challenger_id'] else battle['challenger_id']
-
-        cursor.execute("""
-            UPDATE pvp_battles 
-            SET challenger_hp = CASE WHEN challenger_id = %s THEN challenger_hp ELSE GREATEST(challenger_hp - %s, 0) END,
-                opponent_hp = CASE WHEN opponent_id = %s THEN opponent_hp ELSE GREATEST(opponent_hp - %s, 0) END,
-                current_turn = %s, 
-                last_move_timestamp = NOW()
-            WHERE id = %s
-        """, (current_player_id, damage, current_player_id, damage, new_turn, battle['id']))
-
-        db.commit()
-
-        # Fetch updated battle info
-        cursor.execute("SELECT * FROM pvp_battles WHERE id = %s", (battle_id,))
-        updated_battle = cursor.fetchone()
-
-        # Check if the battle is over
-        if updated_battle['challenger_hp'] <= 0 or updated_battle['opponent_hp'] <= 0:
-            await end_battle(context.bot, battle['group_id'], updated_battle)
-        else:
-            # Prepare for the next turn
-            keyboard = [
-                [InlineKeyboardButton("Attack", callback_data=f"battle_move:attack:{battle_id}")],
-                [InlineKeyboardButton("Defend", callback_data=f"battle_move:defend:{battle_id}")],
-                [InlineKeyboardButton("Special Move", callback_data=f"battle_move:special:{battle_id}")],
-                [InlineKeyboardButton("Focus", callback_data=f"battle_move:focus:{battle_id}")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            current_player = await context.bot.get_chat_member(battle['group_id'], current_player_id)
-            next_player = await context.bot.get_chat_member(battle['group_id'], new_turn)
-
-            await query.edit_message_text(
-                text=f"{message}\n\n"
-                     f"Challenger HP: {updated_battle['challenger_hp']}\n"
-                     f"Opponent HP: {updated_battle['opponent_hp']}\n\n"
-                     f"{next_player.user.mention_html()}, it's your turn. Choose your move:",
-                reply_markup=reply_markup,
-                parse_mode='HTML'
-            )
-
-    except Error as e:
-        logger.error(f"Database error in handle_battle_move: {e}")
-        await query.edit_message_text("An error occurred while processing your move. Please try again later.")
-    finally:
-        if db.is_connected():
-            cursor.close()
-            db.close()
-
-def process_move(move, player_id, battle):
-    base_damage = {
-        'attack': (15, 25),
-        'defend': (5, 10),
-        'special': (20, 30),
-        'focus': (0, 0)
-    }
-
-    min_damage, max_damage = base_damage[move]
-    damage = random.randint(min_damage, max_damage)
-
-    if move == 'defend':
-        message = f"Player {player_id} used Defend, reducing incoming damage and counter-attacking for {damage} damage!"
-    elif move == 'special':
-        message = f"Player {player_id} used a Special Move, dealing {damage} damage!"
-    elif move == 'focus':
-        message = f"Player {player_id} used Focus, preparing for a stronger attack next turn!"
-        damage = 0
-    else:  # attack
-        message = f"Player {player_id} attacked, dealing {damage} damage!"
-
-    return damage, message
-
-async def end_battle(bot, chat_id, battle):
-    db = get_db_connection()
-    if not db:
-        await bot.send_message(chat_id, "Unable to end the battle. Please contact support.")
-        return
-
-    try:
-        cursor = db.cursor(dictionary=True)
-
-        # Determine the winner
-        if battle['challenger_hp'] <= 0:
-            winner_id = battle['opponent_id']
-            loser_id = battle['challenger_id']
-        else:
-            winner_id = battle['challenger_id']
-            loser_id = battle['opponent_id']
-
-        # Update battle status
-        cursor.execute("""
-            UPDATE pvp_battles 
-            SET status = 'completed'
-            WHERE id = %s
-        """, (battle['id'],))
-
-        # Fetch user data
-        cursor.execute("SELECT user_id, zen_points FROM users WHERE user_id IN (%s, %s)", (winner_id, loser_id))
-        user_data = {row['user_id']: row['zen_points'] for row in cursor.fetchall()}
-
-        # Calculate Zen points transfer
-        points_transfer = min(user_data[loser_id] // 10, 50)  # 10% of loser's points, max 50
-
-        # Update Zen points
-        cursor.execute("UPDATE users SET zen_points = zen_points + %s WHERE user_id = %s", (points_transfer, winner_id))
-        cursor.execute("UPDATE users SET zen_points = GREATEST(zen_points - %s, 0) WHERE user_id = %s", (points_transfer, loser_id))
-
-        db.commit()
-
-        winner = await bot.get_chat_member(chat_id, winner_id)
-        loser = await bot.get_chat_member(chat_id, loser_id)
-
-        await bot.send_message(
-            chat_id=chat_id,
-            text=f"The Zen battle has ended! {winner.user.mention_html()} is victorious and gains {points_transfer} Zen points from {loser.user.mention_html()}.",
-            parse_mode='HTML'
-        )
-
-    except Error as e:
-        logger.error(f"Database error in end_battle: {e}")
-        await bot.send_message(chat_id, "An error occurred while ending the battle. Please contact support.")
-    finally:
-        if db.is_connected():
-            cursor.close()
-            db.close()
-
-async def cancel_battle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-
-    db = get_db_connection()
-    if not db:
-        await update.message.reply_text("Unable to process your request right now. Please try again later.")
-        return
-
-    try:
-        cursor = db.cursor(dictionary=True)
-
-        # Check for active battles involving the user
-        cursor.execute("""
-            SELECT * FROM pvp_battles 
-            WHERE (challenger_id = %s OR opponent_id = %s)
-            AND status != 'completed'
-            AND group_id = %s
-        """, (user_id, user_id, chat_id))
-        
-        battle = cursor.fetchone()
-
-        if not battle:
-            await update.message.reply_text("You don't have any active battles in this group.")
-            return
-
-        # Cancel the battle
-        cursor.execute("DELETE FROM pvp_battles WHERE id = %s", (battle['id'],))
-        db.commit()
-
-        await update.message.reply_text("Your active battle has been cancelled.")
-
-    except Error as e:
-        logger.error(f"Database error in cancel_battle: {e}")
-        await update.message.reply_text("An error occurred while cancelling the battle. Please try again later.")
-    finally:
-        if db.is_connected():
-            cursor.close()
-            db.close()
-
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(f"Exception while handling an update: {context.error}")
     if update and isinstance(update, Update) and update.effective_message:
         await update.effective_message.reply_text("An error occurred while processing your request. Please try again later.")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    await update.message.reply_html(
-        f"Hello {user.mention_html()}! I am your Zen Monk bot. How may I assist you on your path to enlightenment?",
-        reply_markup=ForceReply(selective=True),
-    )
+async def serve_mini_app(request):
+    return web.FileResponse('./zen_stats.html')
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = """
-Here are the commands I understand:
-
-/start - Begin your journey with the Zen Monk bot
-/help - Display this help message
-/meditate <minutes> - Start a meditation session
-/zenquote - Receive a Zen quote
-/checkpoints - Check your Zen points and level
-/togglequote - Toggle daily Zen quote subscription
-/subscribe - Subscribe to premium features
-/unsubscribe - Cancel your subscription
-/subscriptionstatus - Check your subscription status
-/challenge @username - Challenge another user to a Zen battle (in group chats)
-/cancelbattle - Cancel an active battle (in group chats)
-/deletedata - Delete all your data from the bot
-
-Remember, the path to enlightenment is not just in these commands, but in how you apply their wisdom to your life.
-    """
-    await update.message.reply_text(help_text)
+async def get_user_stats(request):
+    user_id = request.query.get('user_id')
+    logger.info(f"Fetching stats for user_id: {user_id}")
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor(dictionary=True)
+            query = """
+                SELECT total_minutes, zen_points, 
+                       COALESCE(username, '') as username, 
+                       COALESCE(first_name, '') as first_name, 
+                       COALESCE(last_name, '') as last_name,
+                       level
+                FROM users
+                WHERE user_id = %s
+            """
+            logger.info(f"Executing query: {query}")
+            cursor.execute(query, (user_id,))
+            result = cursor.fetchone()
+            logger.info(f"Query result: {result}")
+            if result:
+                return web.json_response(result)
+            else:
+                logger.warning(f"User not found: {user_id}")
+                return web.json_response({"error": "User not found", "user_id": user_id}, status=404)
+        except Error as e:
+            logger.error(f"Database error: {e}")
+            return web.json_response({"error": "Database error", "details": str(e)}, status=500)
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        logger.error("Failed to connect to database")
+        return web.json_response({"error": "Database connection failed"}, status=500)
 
 async def main():
-    logger.info("Starting the Zen Monk bot...")
-    setup_database()
-    
-    application = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
-    
-    # Command handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("meditate", meditate))
-    application.add_handler(CommandHandler("zenquote", zen_quote))
-    application.add_handler(CommandHandler("checkpoints", check_points))
+    # Use environment variable to determine webhook or polling
+    use_webhook = os.getenv('USE_WEBHOOK', 'false').lower() == 'true'
+
+    token = os.getenv("TELEGRAM_TOKEN")
+    port = int(os.environ.get('PORT', 8080))
+
+    # Initialize bot
+    application = Application.builder().token(token).build()
+
+    # Add handlers
     application.add_handler(CommandHandler("togglequote", togglequote))
+    application.add_handler(CommandHandler("zenstory", zen_story))
+    application.add_handler(CommandHandler("zenquote", zen_quote))
+    application.add_handler(CommandHandler("zenadvice", zen_advice))
+    application.add_handler(CommandHandler("randomwisdom", random_wisdom))
+    application.add_handler(CommandHandler("meditate", meditate))
+    application.add_handler(CommandHandler("checkpoints", check_points))
     application.add_handler(CommandHandler("subscribe", subscribe_command))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     application.add_handler(CommandHandler("subscriptionstatus", subscription_status_command))
-    application.add_handler(CommandHandler("challenge", challenge))
-    application.add_handler(CommandHandler("cancelbattle", cancel_battle))
     application.add_handler(CommandHandler("deletedata", delete_data))
+    
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & (
+            filters.ChatType.PRIVATE |
+            (filters.ChatType.GROUPS & (
+                filters.Regex(r'(?i)\bzen\b') |
+                filters.Regex(r'@\w+')
+            ))
+        ),
+        handle_message
+    ))
 
-    # Message handler
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    # Callback query handlers
+    # Callback query handler
     application.add_handler(CallbackQueryHandler(subscribe_callback, pattern="^subscribe$"))
-    application.add_handler(CallbackQueryHandler(handle_challenge_response, pattern="^(accept|decline)_challenge:"))
-    application.add_handler(CallbackQueryHandler(handle_battle_move, pattern="^battle_move:"))
-
-    # Pre-checkout handler
+    
+    # Pre-checkout and successful payment handlers
     application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
-
-    # Successful payment handler
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
-    # Error handler
     application.add_error_handler(error_handler)
 
-    # Start the bot
-    logger.info("Starting the bot...")
-    await application.initialize()
-    await application.start()
-    await application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Schedule daily quote
+    if application.job_queue:
+        application.job_queue.run_daily(send_daily_quote, time=time(hour=8, minute=0, tzinfo=timezone.utc))
+    else:
+        logger.warning("JobQueue is not available. Daily quotes will not be scheduled.")
+
+    # Set up web app for stats
+    app = web.Application()
+    app.router.add_get('/', serve_mini_app)
+    app.router.add_get('/api/stats', get_user_stats)
+
+    if use_webhook:
+        # Webhook settings
+        webhook_url = os.getenv('WEBHOOK_URL')
+        if not webhook_url:
+            logger.error("Webhook URL not set. Please set the WEBHOOK_URL environment variable.")
+            return
+
+        await application.bot.set_webhook(url=webhook_url)
+        
+        async def webhook_handler(request):
+            update = await application.update_queue.put(
+                Update.de_json(await request.json(), application.bot)
+            )
+            return web.Response()
+
+        app.router.add_post(f'/{token}', webhook_handler)
+
+        # Start the web application
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', port)
+        await site.start()
+
+        logger.info(f"Webhook set up on port {port}")
+        
+        # Keep the script running
+        while True:
+            await asyncio.sleep(3600)
+    else:
+        # Polling mode
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+
+        # Start the web application in a separate task
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', port)
+        await site.start()
+
+        logger.info("Zen Monk Bot and Web App are awakening. Press Ctrl+C to return to silence.")
+        
+        # Keep the script running
+        while True:
+            await asyncio.sleep(1)
 
 if __name__ == '__main__':
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot stopped!")
+    setup_database()  # Ensure the database is set up before starting the bot
+    asyncio.run(main())

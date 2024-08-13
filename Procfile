@@ -1,1 +1,1 @@
-worker: python zenconnect.py
+web: python zenconnect.py
