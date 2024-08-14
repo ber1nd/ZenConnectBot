@@ -725,9 +725,11 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
     # Define available moves
     valid_moves = ["attack", "defend", "focus", "zenstrike"]
 
+    # Debug log to check the action received
+    logger.info(f"Received action: {action}")
+
     # Check for valid move
     if not action or action not in valid_moves:
-        logger.error(f"Invalid move detected: {action}")
         if not bot_mode:
             await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
         return
@@ -875,7 +877,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
                 db.close()
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
-
 
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
