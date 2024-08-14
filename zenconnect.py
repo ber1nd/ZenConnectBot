@@ -534,6 +534,8 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 # PvP Functionality
+from datetime import datetime, timezone
+
 async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not context.args or len(context.args) != 1:
@@ -549,23 +551,25 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Ensure the challenger is in the users table
             cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
             challenger = cursor.fetchone()
+            cursor.fetchall()
+            cursor.close()
+
             if not challenger:
+                cursor = db.cursor(dictionary=True)
                 cursor.execute("INSERT INTO users (user_id, username) VALUES (%s, %s)", (user_id, update.effective_user.username))
                 db.commit()
                 cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
                 challenger = cursor.fetchone()
-
-            # Ensure all results are fetched before closing the cursor
-            cursor.fetchall()
-            cursor.close()  # Close the cursor after fetching
+                cursor.fetchall()
+                cursor.close()
 
             # Ensure the opponent is in the users table
             cursor = db.cursor(dictionary=True)
             cursor.execute("SELECT * FROM users WHERE username = %s", (opponent_username,))
             opponent = cursor.fetchone()
-            cursor.fetchall()  # Ensure all results are fetched
+            cursor.fetchall()
             cursor.close()
-            
+
             if not opponent:
                 await update.message.reply_text(f"Could not find user with username @{opponent_username}. Please make sure they have interacted with the bot.")
                 return
@@ -584,7 +588,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 AND status = 'in_progress'
             """, (user_id, opponent_id, opponent_id, user_id))
             battle = cursor.fetchone()
-            cursor.fetchall()  # Ensure all results are fetched
+            cursor.fetchall()
             cursor.close()
 
             if battle:
@@ -601,13 +605,15 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ORDER BY last_move_timestamp DESC
             """, (user_id, opponent_id, opponent_id, user_id))
             recent_battle = cursor.fetchone()
-            cursor.fetchall()  # Ensure all results are fetched
+            cursor.fetchall()
             cursor.close()
 
             if recent_battle:
                 logger.info(f"Previous battle found: {recent_battle}")
-                # If the last completed battle is recent, we might need to wait before starting a new one.
-                time_since_last_move = datetime.now(timezone.utc) - recent_battle['last_move_timestamp']
+                # Convert the database timestamp to an offset-aware datetime
+                last_move_time = recent_battle['last_move_timestamp'].replace(tzinfo=timezone.utc)
+                time_since_last_move = datetime.now(timezone.utc) - last_move_time
+
                 if time_since_last_move < timedelta(minutes=1):  # Example cooldown period
                     await update.message.reply_text("You must wait before challenging the same opponent again. Please try again later.")
                     return
@@ -619,7 +625,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 VALUES (%s, %s, %s, %s, 'pending')
             """, (user_id, opponent_id, update.effective_chat.id, user_id))
             db.commit()
-            cursor.fetchall()  # Ensure all results are fetched
+            cursor.fetchall()
             cursor.close()
             await update.message.reply_text(f"Challenge sent to @{opponent_username}! They need to accept the challenge by using /acceptpvp.")
         except Error as e:
