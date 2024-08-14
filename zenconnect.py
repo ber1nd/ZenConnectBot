@@ -554,13 +554,18 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.commit()
                 cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
                 challenger = cursor.fetchone()
+
+            # Ensure all results are fetched before closing the cursor
+            cursor.fetchall()
             cursor.close()  # Close the cursor after fetching
 
             # Ensure the opponent is in the users table
             cursor = db.cursor(dictionary=True)
             cursor.execute("SELECT * FROM users WHERE username = %s", (opponent_username,))
             opponent = cursor.fetchone()
+            cursor.fetchall()  # Ensure all results are fetched
             cursor.close()
+            
             if not opponent:
                 await update.message.reply_text(f"Could not find user with username @{opponent_username}. Please make sure they have interacted with the bot.")
                 return
@@ -579,6 +584,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 AND status = 'in_progress'
             """, (user_id, opponent_id, opponent_id, user_id))
             battle = cursor.fetchone()
+            cursor.fetchall()  # Ensure all results are fetched
             cursor.close()
 
             if battle:
@@ -595,6 +601,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ORDER BY last_move_timestamp DESC
             """, (user_id, opponent_id, opponent_id, user_id))
             recent_battle = cursor.fetchone()
+            cursor.fetchall()  # Ensure all results are fetched
             cursor.close()
 
             if recent_battle:
@@ -612,6 +619,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 VALUES (%s, %s, %s, %s, 'pending')
             """, (user_id, opponent_id, update.effective_chat.id, user_id))
             db.commit()
+            cursor.fetchall()  # Ensure all results are fetched
             cursor.close()
             await update.message.reply_text(f"Challenge sent to @{opponent_username}! They need to accept the challenge by using /acceptpvp.")
         except Error as e:
