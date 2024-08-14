@@ -692,6 +692,9 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
     """
 
     try:
+        # Log the prompt before making the AI call
+        logger.info(f"Sending prompt to AI: {prompt}")
+
         response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -724,7 +727,7 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
         action = random.choice(["attack", "defend", "focus"])
         logger.info(f"Random action chosen due to error: {action}")
         await execute_pvp_move(update, context, bot_mode=True, action=action)
-
+        
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id  # If bot_mode, use bot's user ID
     db = get_db_connection()
