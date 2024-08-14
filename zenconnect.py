@@ -546,11 +546,24 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     opponent_id = None
-    is_bot_opponent = False
-
     if opponent_username == 'bot':
         opponent_id = 7283636452  # The bot's user ID
-        is_bot_opponent = True
+        # Ensure the bot is in the users table
+        if db:
+            try:
+                cursor = db.cursor(dictionary=True)
+                cursor.execute("SELECT * FROM users WHERE user_id = %s", (opponent_id,))
+                bot_user = cursor.fetchone()
+                if not bot_user:
+                    cursor.execute("INSERT INTO users (user_id, username) VALUES (%s, %s)", (opponent_id, 'ZenMonkBot'))
+                    db.commit()
+            except Error as e:
+                logger.error(f"Database error in start_pvp: {e}")
+                await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
+                return
+            finally:
+                if db.is_connected():
+                    cursor.close()
     else:
         # Look up the opponent in the database
         if db:
@@ -592,24 +605,6 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
             return
 
-        # Check if there's a recently completed battle that might be causing confusion.
-        cursor.execute("""
-            SELECT * FROM pvp_battles 
-            WHERE ((challenger_id = %s AND opponent_id = %s) 
-            OR (challenger_id = %s AND opponent_id = %s)) 
-            AND status = 'completed'
-            ORDER BY last_move_timestamp DESC
-        """, (user_id, opponent_id, opponent_id, user_id))
-        recent_battle = cursor.fetchone()
-
-        if recent_battle:
-            logger.info(f"Previous battle found: {recent_battle}")
-            # If the last completed battle is recent, we might need to wait before starting a new one.
-            time_since_last_move = datetime.now(timezone.utc) - recent_battle['last_move_timestamp']
-            if time_since_last_move < timedelta(minutes=1):  # Example cooldown period
-                await update.message.reply_text("You must wait before challenging the same opponent again. Please try again later.")
-                return
-
         # Create a new PvP battle
         cursor.execute("""
             INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
@@ -617,7 +612,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """, (user_id, opponent_id, update.effective_chat.id, user_id))
         db.commit()
 
-        if is_bot_opponent:
+        if opponent_id == 7283636452:
             await update.message.reply_text("You have challenged the bot! The battle will begin now.")
             await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
         else:
