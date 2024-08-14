@@ -15,10 +15,7 @@ from collections import defaultdict
 import random
 
 # Set up logging
-logging.basicConfig(
-    format='%(asctime)s - %(levelname)s - %(message)s',  # Removed '%(name)s' to simplify
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
@@ -122,6 +119,13 @@ def setup_database():
                     FOREIGN KEY (opponent_id) REFERENCES users(user_id)
                 )
                 """)
+                
+                # Check if 'winner_id' column exists, and if not, add it
+                cursor.execute("SHOW COLUMNS FROM pvp_battles LIKE 'winner_id'")
+                result = cursor.fetchone()
+                if not result:
+                    cursor.execute("ALTER TABLE pvp_battles ADD COLUMN winner_id BIGINT NULL")
+                    logger.info("Added 'winner_id' column to 'pvp_battles' table.")
                 
             connection.commit()
             logger.info("Database setup completed successfully.")
@@ -478,7 +482,7 @@ async def check_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db:
         try:
             cursor = db.cursor(dictionary=True)
-            cursor.execute("SELECT total_minutes, zen_points, level FROM users WHERE user_id = %s", (user_id,))
+            cursor.execute("SELECT total_minutes, zen_points, level FROM users WHERE user_id = %s",(user_id,))
             result = cursor.fetchone()
             if result:
                 total_minutes = result['total_minutes']
@@ -511,22 +515,113 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db:
         try:
             cursor = db.cursor()
-
-            # Delete related records in other tables first
-            cursor.execute("DELETE FROM group_memberships WHERE user_id = %s", (user_id,))
-            cursor.execute("DELETE FROM user_memory WHERE user_id = %s", (user_id,))
-            cursor.execute("DELETE FROM meditation_log WHERE user_id = %s", (user_id,))
-            cursor.execute("DELETE FROM subscriptions WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM pvp_battles WHERE challenger_id = %s OR opponent_id = %s", (user_id, user_id))
-
-            # Now delete the user record
+            cursor.execute("DELETE FROM group_memberships WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM meditation_log WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM user_memory WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM subscriptions WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
-
             db.commit()
             await update.message.reply_text("Your data has been deleted. Your journey with us ends here, but remember that every ending is a new beginning.")
         except Error as e:
             logger.error(f"Database error in delete_data: {e}")
             await update.message.reply_text("I apologize, I'm having trouble deleting your data. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+
+# PvP Functionality
+async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("Please tag the person you'd like to challenge.")
+        return
+
+    opponent_username = context.args[0]
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor(dictionary=True)
+            cursor.execute("SELECT user_id FROM users WHERE username = %s", (opponent_username.lstrip('@'),))
+            opponent_data = cursor.fetchone()
+            if not opponent_data:
+                await update.message.reply_text(f"Could not find user with username {opponent_username}. Please make sure they have interacted with the bot.")
+                return
+
+            opponent_id = opponent_data['user_id']
+            if user_id == opponent_id:
+                await update.message.reply_text("You cannot challenge yourself to a battle.")
+                return
+
+            cursor.execute("""
+                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
+                VALUES (%s, %s, %s, %s, 'pending')
+            """, (user_id, opponent_id, update.effective_chat.id, user_id))
+            db.commit()
+            await update.message.reply_text(f"Challenge sent to {opponent_username}! They need to accept the challenge by using /acceptpvp.")
+        except Error as e:
+            logger.error(f"Database error in start_pvp: {e}")
+            await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+
+async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor(dictionary=True)
+            cursor.execute("""
+                SELECT id, challenger_id, opponent_id FROM pvp_battles 
+                WHERE opponent_id = %s AND status = 'pending'
+            """, (user_id,))
+            battle_data = cursor.fetchone()
+            if not battle_data:
+                await update.message.reply_text("No pending challenges found.")
+                return
+
+            cursor.execute("UPDATE pvp_battles SET status = 'in_progress' WHERE id = %s", (battle_data['id'],))
+            db.commit()
+            await update.message.reply_text("PvP battle accepted! Let the duel begin!")
+        except Error as e:
+            logger.error(f"Database error in accept_pvp: {e}")
+            await update.message.reply_text("An error occurred while accepting the PvP battle. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+
+async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor(dictionary=True)
+            cursor.execute("""
+                SELECT id, challenger_id, opponent_id FROM pvp_battles 
+                WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
+            """, (user_id, user_id))
+            battle_data = cursor.fetchone()
+            if not battle_data:
+                await update.message.reply_text("No active battles found to surrender.")
+                return
+
+            winner_id = battle_data['opponent_id'] if user_id == battle_data['challenger_id'] else battle_data['challenger_id']
+            cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle_data['id']))
+            db.commit()
+            await update.message.reply_text("You have surrendered the battle. Your opponent is victorious.")
+        except Error as e:
+            logger.error(f"Database error in surrender: {e}")
+            await update.message.reply_text("An error occurred while surrendering. Please try again later.")
         finally:
             if db.is_connected():
                 cursor.close()
@@ -629,155 +724,6 @@ def check_rate_limit(user_id):
     rate_limit_dict[user_id] = user_messages
     return len(user_messages) < RATE_LIMIT
 
-async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    challenger_id = update.effective_user.id
-    if not context.args:
-        await update.message.reply_text("You need to tag the person you want to challenge. Use the format: /startpvp @username")
-        return
-    
-    opponent_username = context.args[0].lstrip('@')
-    db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
-
-            # Ensure challenger is in the users table
-            cursor.execute("SELECT * FROM users WHERE user_id = %s", (challenger_id,))
-            if cursor.fetchone() is None:
-                cursor.execute("INSERT INTO users (user_id, username) VALUES (%s, %s)", (challenger_id, update.effective_user.username))
-                db.commit()
-
-            # Look up opponent's user_id
-            cursor.execute("SELECT user_id FROM users WHERE username = %s", (opponent_username,))
-            result = cursor.fetchone()
-            if result:
-                opponent_id = result['user_id']
-            else:
-                await update.message.reply_text(f"Could not find user with username @{opponent_username}. Please make sure they have interacted with the bot.")
-                return
-            
-            # Check if there is an existing pending or in-progress battle
-            cursor.execute("""
-                SELECT * FROM pvp_battles 
-                WHERE (challenger_id = %s AND opponent_id = %s) 
-                OR (challenger_id = %s AND opponent_id = %s)
-                AND status IN ('pending', 'in_progress')
-            """, (challenger_id, opponent_id, opponent_id, challenger_id))
-            
-            if cursor.fetchone():
-                await update.message.reply_text("A battle is already in progress or pending between you two.")
-                return
-
-            # Create new PvP battle
-            cursor.execute("""
-                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, status, current_turn) 
-                VALUES (%s, %s, %s, 'pending', %s)
-            """, (challenger_id, opponent_id, update.message.chat_id, challenger_id))
-            db.commit()
-
-            await update.message.reply_text(f"Challenge sent to @{opponent_username}! Waiting for them to accept.")
-        except Error as e:
-            logger.error(f"Database error in start_pvp: {e}")
-            await update.message.reply_text("There was an issue starting the PvP battle. Please try again later.")
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
-        await update.message.reply_text("I'm having trouble accessing the database. Please try again later.")
-
-async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    db = get_db_connection()
-    
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
-            cursor.execute("SELECT * FROM pvp_battles WHERE opponent_id = %s AND status = 'pending'", (user_id,))
-            battle = cursor.fetchone()
-            
-            if battle:
-                cursor.execute("UPDATE pvp_battles SET status = 'in_progress' WHERE id = %s", (battle['id'],))
-                db.commit()
-                
-                await update.message.reply_text(f"PvP battle started between you and {battle['challenger_id']}!")
-                await context.bot.send_message(chat_id=battle['challenger_id'], text="Your challenge has been accepted! The battle begins.")
-            else:
-                await update.message.reply_text("No pending PvP challenges found.")
-        except Error as e:
-            logger.error(f"Database error in accept_pvp: {e}")
-            await update.message.reply_text("An error occurred while accepting the PvP challenge. Please try again later.")
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
-        await update.message.reply_text("I'm having trouble accessing my memory right now. Please try again later.")
-
-async def pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if len(context.args) != 1 or context.args[0] not in ['attack', 'defend']:
-        await update.message.reply_text("Please use either 'attack' or 'defend' as your move.")
-        return
-
-    move = context.args[0]
-    db = get_db_connection()
-    
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
-            cursor.execute("SELECT * FROM pvp_battles WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'", (user_id, user_id))
-            battle = cursor.fetchone()
-            
-            if not battle:
-                await update.message.reply_text("No active PvP battle found.")
-                return
-            
-            if user_id != battle['current_turn']:
-                await update.message.reply_text("It's not your turn yet. Please wait for your opponent to make a move.")
-                return
-            
-            damage = random.randint(5, 15) if move == 'attack' else 0
-            if user_id == battle['challenger_id']:
-                if move == 'attack':
-                    battle['opponent_hp'] -= damage
-                else:
-                    battle['challenger_hp'] += random.randint(1, 5)  # Slight health recovery for defending
-            else:
-                if move == 'attack':
-                    battle['challenger_hp'] -= damage
-                else:
-                    battle['opponent_hp'] += random.randint(1, 5)  # Slight health recovery for defending
-
-            if battle['challenger_hp'] <= 0 or battle['opponent_hp'] <= 0:
-                winner_id = battle['challenger_id'] if battle['opponent_hp'] <= 0 else battle['opponent_id']
-                loser_id = battle['opponent_id'] if winner_id == battle['challenger_id'] else battle['challenger_id']
-                
-                cursor.execute("UPDATE pvp_battles SET status = 'completed', current_turn = NULL WHERE id = %s", (battle['id'],))
-                cursor.execute("UPDATE users SET zen_points = zen_points + 50 WHERE user_id = %s", (winner_id,))
-                db.commit()
-                
-                await update.message.reply_text(f"Battle is over! {'You' if winner_id == user_id else 'Your opponent'} won!")
-                await context.bot.send_message(chat_id=loser_id, text="You lost the PvP battle. Better luck next time!")
-            else:
-                # Switch turns
-                next_turn = battle['opponent_id'] if user_id == battle['challenger_id'] else battle['challenger_id']
-                cursor.execute("UPDATE pvp_battles SET challenger_hp = %s, opponent_hp = %s, current_turn = %s WHERE id = %s",
-                               (battle['challenger_hp'], battle['opponent_hp'], next_turn, battle['id']))
-                db.commit()
-
-                await update.message.reply_text(f"Move registered: {move.capitalize()}. Your turn is over.")
-                await context.bot.send_message(chat_id=next_turn, text=f"It's your turn! Current HP: You ({battle['challenger_hp']}), Opponent ({battle['opponent_hp']})")
-        except Error as e:
-            logger.error(f"Database error in pvp_move: {e}")
-            await update.message.reply_text("An error occurred while making your move. Please try again later.")
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
-        await update.message.reply_text("I'm having trouble accessing my memory right now. Please try again later.")
-
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(f"Exception while handling an update: {context.error}")
     if update and isinstance(update, Update) and update.effective_message:
@@ -841,9 +787,10 @@ async def main():
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     application.add_handler(CommandHandler("subscriptionstatus", subscription_status_command))
     application.add_handler(CommandHandler("deletedata", delete_data))
+    
     application.add_handler(CommandHandler("startpvp", start_pvp))
     application.add_handler(CommandHandler("acceptpvp", accept_pvp))
-    application.add_handler(CommandHandler("pvpmove", pvp_move))
+    application.add_handler(CommandHandler("surrender", surrender))
     
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & (
