@@ -714,10 +714,11 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
         action = random.choice(["attack", "defend", "focus"])
         await execute_pvp_move(update, context, bot_mode=True, action=action)
 
-
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_mode=False, action=None):
     user_id = update.effective_user.id
-    action = action or context.args[0].lower() if context.args else None
+    if not bot_mode:
+        action = context.args[0].lower() if context.args else None
+    
     db = get_db_connection()
 
     # Define available moves
@@ -848,20 +849,16 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
                 WHERE id = %s
             """, (user_hp if user_id == battle['challenger_id'] else opponent_hp,
                   opponent_hp if user_id == battle['challenger_id'] else user_hp,
-                  opponent_id, battle['id']))
+                  opponent_id if not bot_mode else user_id,  # Switch turns appropriately
+                  battle['id']))
             db.commit()
 
             # Notify players in the group chat
             await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
             
-            # Switch turns
-            if opponent_id == 7283636452:  # If the opponent is the bot
-                await bot_pvp_move(update, context, battle, user_hp, opponent_hp)
-            else:
-                cursor.execute("SELECT username FROM users WHERE user_id = %s", (opponent_id,))
-                opponent = cursor.fetchone()
-                next_turn_message = f"It is now @{opponent['username']}'s turn!"
-                await context.bot.send_message(chat_id=update.message.chat_id, text=next_turn_message)
+            # If it's the bot's turn next, call bot_pvp_move
+            if opponent_id == 7283636452:
+                await bot_pvp_move(update, context, battle, opponent_hp, user_hp)
 
         except Error as e:
             logger.error(f"Database error in execute_pvp_move: {e}")
