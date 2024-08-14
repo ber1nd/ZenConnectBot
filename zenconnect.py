@@ -571,8 +571,8 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Check if there's an ongoing PvP battle between these two users
             cursor.execute("""
                 SELECT * FROM pvp_battles 
-                WHERE (challenger_id = %s AND opponent_id = %s) 
-                OR (challenger_id = %s AND opponent_id = %s) 
+                WHERE ((challenger_id = %s AND opponent_id = %s) 
+                OR (challenger_id = %s AND opponent_id = %s)) 
                 AND status = 'in_progress'
             """, (user_id, opponent_id, opponent_id, user_id))
             battle = cursor.fetchone()
@@ -581,11 +581,11 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
                 return
 
-            # Check if there's a recently completed battle that might be causing confusion, test.
+            # Check if there's a recently completed battle that might be causing confusion.
             cursor.execute("""
                 SELECT * FROM pvp_battles 
-                WHERE (challenger_id = %s AND opponent_id = %s) 
-                OR (challenger_id = %s AND opponent_id = %s) 
+                WHERE ((challenger_id = %s AND opponent_id = %s) 
+                OR (challenger_id = %s AND opponent_id = %s)) 
                 AND status = 'completed'
                 ORDER BY last_move_timestamp DESC
             """, (user_id, opponent_id, opponent_id, user_id))
