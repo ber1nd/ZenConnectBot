@@ -670,10 +670,50 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
+import random
+import asyncio
 
-async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battle, user_hp, opponent_hp):
+    await asyncio.sleep(2)  # Delay for realism
+
+    # Generate a prompt based on the game state
+    prompt = f"""
+    You are playing a turn-based combat game as a bot. Here are the current stats:
+    Your HP: {opponent_hp}
+    Opponent's HP: {user_hp}
+    You have access to four moves: attack, defend, focus, zenstrike. 
+    'zenstrike' has a cooldown of 2 turns and should not be used if it's on cooldown.
+    Please choose your next move strategically.
+    """
+
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a strategic AI bot in a turn-based combat game."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=10,
+            temperature=0.7
+        )
+
+        action = response.choices[0].message.content.strip().lower()
+
+        if action not in ["attack", "defend", "focus", "zenstrike"]:
+            action = random.choice(["attack", "defend", "focus"])
+
+        # Execute the chosen move
+        await execute_pvp_move(update, context, bot_mode=True, action=action)
+
+    except Exception as e:
+        logger.error(f"Error generating AI move: {e}")
+        action = random.choice(["attack", "defend", "focus"])
+        await execute_pvp_move(update, context, bot_mode=True, action=action)
+
+
+async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_mode=False, action=None):
     user_id = update.effective_user.id
-    action = context.args[0].lower() if context.args else None
+    action = action or context.args[0].lower() if context.args else None
     db = get_db_connection()
 
     # Define available moves
@@ -699,7 +739,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             
             # Check if it's the user's turn
-            if battle['current_turn'] != user_id:
+            if battle['current_turn'] != user_id and not bot_mode:
                 await update.message.reply_text("It's not your turn.")
                 return
 
@@ -811,8 +851,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
             
             # Switch turns
-            if opponent_id == 7283636452:  # If the opponent is the bot, simulate the bot's move
-                await simulate_bot_move(update, context, battle, cursor)
+            if opponent_id == 7283636452:  # If the opponent is the bot
+                await bot_pvp_move(update, context, battle, user_hp, opponent_hp)
             else:
                 cursor.execute("SELECT username FROM users WHERE user_id = %s", (opponent_id,))
                 opponent = cursor.fetchone()
@@ -829,14 +869,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
-async def simulate_bot_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battle, cursor):
-    # Simulate a random move by the bot
-    bot_moves = ["attack", "defend", "focus", "zenstrike"]
-    bot_action = random.choice(bot_moves)
-
-    # Execute the bot's move
-    context.args = [bot_action]
-    await execute_pvp_move(update, context)
 
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
