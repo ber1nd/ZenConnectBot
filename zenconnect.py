@@ -15,7 +15,10 @@ from collections import defaultdict
 import random
 
 # Set up logging
-logging.basicConfig(format='%(asctime)s - %(name=s) - %(levelname=s) - %(message=s)', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(levelname)s - %(message)s',  # Removed '%(name)s' to simplify
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
