@@ -546,8 +546,11 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     opponent_id = None
+    is_bot_opponent = False
+
     if opponent_username == 'bot':
-        opponent_id = -1  # Special ID for the bot
+        opponent_id = 7283636452  # The bot's user ID
+        is_bot_opponent = True
     else:
         # Look up the opponent in the database
         if db:
@@ -589,6 +592,24 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
             return
 
+        # Check if there's a recently completed battle that might be causing confusion.
+        cursor.execute("""
+            SELECT * FROM pvp_battles 
+            WHERE ((challenger_id = %s AND opponent_id = %s) 
+            OR (challenger_id = %s AND opponent_id = %s)) 
+            AND status = 'completed'
+            ORDER BY last_move_timestamp DESC
+        """, (user_id, opponent_id, opponent_id, user_id))
+        recent_battle = cursor.fetchone()
+
+        if recent_battle:
+            logger.info(f"Previous battle found: {recent_battle}")
+            # If the last completed battle is recent, we might need to wait before starting a new one.
+            time_since_last_move = datetime.now(timezone.utc) - recent_battle['last_move_timestamp']
+            if time_since_last_move < timedelta(minutes=1):  # Example cooldown period
+                await update.message.reply_text("You must wait before challenging the same opponent again. Please try again later.")
+                return
+
         # Create a new PvP battle
         cursor.execute("""
             INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
@@ -596,7 +617,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """, (user_id, opponent_id, update.effective_chat.id, user_id))
         db.commit()
 
-        if opponent_id == -1:
+        if is_bot_opponent:
             await update.message.reply_text("You have challenged the bot! The battle will begin now.")
             await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
         else:
@@ -789,9 +810,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
             
             # Switch turns
-            if opponent_id == -1:
-                # If playing against the bot, make the bot's move immediately
-                await execute_pvp_move(update, context)
+            if opponent_id == 7283636452:  # If the opponent is the bot, simulate the bot's move
+                await simulate_bot_move(update, context, battle, cursor)
             else:
                 cursor.execute("SELECT username FROM users WHERE user_id = %s", (opponent_id,))
                 opponent = cursor.fetchone()
@@ -807,6 +827,15 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.close()
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+
+async def simulate_bot_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battle, cursor):
+    # Simulate a random move by the bot
+    bot_moves = ["attack", "defend", "focus", "zenstrike"]
+    bot_action = random.choice(bot_moves)
+
+    # Execute the bot's move
+    context.args = [bot_action]
+    await execute_pvp_move(update, context)
 
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
