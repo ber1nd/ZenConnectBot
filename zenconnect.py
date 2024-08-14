@@ -257,7 +257,7 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not user_data:
                 cursor.execute("INSERT INTO users (user_id, zen_points, level, subscription_status) VALUES (%s, 0, 0, FALSE)", (user_id,))
                 db.commit()
-                                user_data = {'zen_points': 0, 'level': 0, 'subscription_status': False}
+                user_data = {'zen_points': 0, 'level': 0, 'subscription_status': False}
 
             if user_data['level'] == 0 and duration > 5:
                 await update.message.reply_text("As a beginner, you can only meditate for up to 5 minutes at a time. Let's start with 5 minutes.")
