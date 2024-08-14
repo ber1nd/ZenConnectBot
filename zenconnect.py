@@ -675,7 +675,7 @@ import asyncio
 
 async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battle, user_hp, opponent_hp):
     # Ensure it's the bot's turn
-    if battle['current_turn'] != 7283636452:  # Bot's user ID
+    if battle['current_turn'] != 7283636452:
         return
 
     await asyncio.sleep(random.uniform(2, 4))  # Delay for realism
@@ -702,9 +702,12 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
         )
 
         action = response.choices[0].message.content.strip().lower()
+        logger.info(f"Bot chose action: {action}")
 
         if action not in ["attack", "defend", "focus", "zenstrike"]:
+            logger.error(f"Invalid action detected from AI: {action}")
             action = random.choice(["attack", "defend", "focus"])
+            logger.info(f"Random action chosen: {action}")
 
         # Execute the chosen move
         await execute_pvp_move(update, context, bot_mode=True, action=action)
@@ -712,6 +715,7 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
     except Exception as e:
         logger.error(f"Error generating AI move: {e}")
         action = random.choice(["attack", "defend", "focus"])
+        logger.info(f"Random action chosen due to error: {action}")
         await execute_pvp_move(update, context, bot_mode=True, action=action)
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_mode=False, action=None):
