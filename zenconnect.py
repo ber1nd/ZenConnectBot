@@ -557,14 +557,14 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if not opponent:
                     await update.message.reply_text(f"Could not find user with username @{opponent_username}. Please make sure they have interacted with the bot.")
-                    cursor.close()  # Closing the cursor
+                    cursor.close()  # Close the cursor
                     return
 
                 opponent_id = opponent['user_id']
-                cursor.close()  # Closing the cursor
             except Error as e:
                 logger.error(f"Database error in start_pvp: {e}")
                 await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
+                cursor.close()  # Ensure cursor is closed in case of an error
                 return
             finally:
                 if db.is_connected():
@@ -585,11 +585,12 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             AND status = 'in_progress'
         """, (user_id, opponent_id, opponent_id, user_id))
         battle = cursor.fetchone()
-        cursor.close()  # Closing the cursor immediately after fetching
-
         if battle:
+            cursor.close()  # Close the cursor before returning
             await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
             return
+
+        cursor.close()  # Close cursor after checking ongoing battle
 
         # Create a new PvP battle
         cursor = db.cursor()
@@ -626,13 +627,14 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 OR (challenger_id = %s AND opponent_id = 7283636452 AND status = 'pending')
             """, (user_id, user_id))
             battle = cursor.fetchone()
-            cursor.close()  # Close the cursor immediately after fetching
 
             if not battle:
+                cursor.close()  # Close cursor before returning
                 await update.message.reply_text("You have no pending PvP challenges.")
                 return
             
             logger.info(f"Attempting to accept PvP battle: User: {user_id}, Battle ID: {battle['id']}, Status: {battle['status']}")
+            cursor.close()  # Close the cursor after fetching the battle
 
             # Re-open the cursor for the next database operation
             cursor = db.cursor()
