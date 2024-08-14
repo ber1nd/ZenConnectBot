@@ -723,6 +723,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
 
     # Check for valid move
     if not action or action not in valid_moves:
+        logger.error(f"Invalid move detected: {action}")
         if not bot_mode:
             await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
         return
