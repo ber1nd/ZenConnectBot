@@ -547,25 +547,8 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     opponent_id = None
     if opponent_username == 'bot':
-        opponent_id = 7283636452  # The bot's user ID
-        # Ensure the bot is in the users table
-        if db:
-            try:
-                cursor = db.cursor(dictionary=True)
-                cursor.execute("SELECT * FROM users WHERE user_id = %s", (opponent_id,))
-                bot_user = cursor.fetchone()
-                if not bot_user:
-                    cursor.execute("INSERT INTO users (user_id, username) VALUES (%s, %s)", (opponent_id, 'ZenMonkBot'))
-                    db.commit()
-            except Error as e:
-                logger.error(f"Database error in start_pvp: {e}")
-                await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
-                return
-            finally:
-                if db.is_connected():
-                    cursor.close()
+        opponent_id = 7283636452  # Bot's ID
     else:
-        # Look up the opponent in the database
         if db:
             try:
                 cursor = db.cursor(dictionary=True)
@@ -577,12 +560,13 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
                 opponent_id = opponent['user_id']
+                cursor.close()  # Ensure the cursor is closed
             except Error as e:
                 logger.error(f"Database error in start_pvp: {e}")
                 await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
                 return
             finally:
-                if db.is_connected():
+                if db.is_connected() and cursor:
                     cursor.close()
 
     if not db or opponent_id is None:
@@ -600,12 +584,14 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             AND status = 'in_progress'
         """, (user_id, opponent_id, opponent_id, user_id))
         battle = cursor.fetchone()
+        cursor.close()
 
         if battle:
             await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
             return
 
         # Create a new PvP battle
+        cursor = db.cursor()
         cursor.execute("""
             INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
             VALUES (%s, %s, %s, %s, 'pending')
@@ -617,7 +603,6 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
         else:
             await update.message.reply_text(f"Challenge sent to @{opponent_username}! They need to accept the challenge by using /acceptpvp.")
-
     except Error as e:
         logger.error(f"Database error in start_pvp: {e}")
         await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
@@ -640,11 +625,16 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 OR (challenger_id = %s AND opponent_id = 7283636452 AND status = 'pending')
             """, (user_id, user_id))
             battle = cursor.fetchone()
-            logger.info(f"Attempting to accept PvP battle: User: {user_id}, Battle ID: {battle['id'] if battle else 'None'}, Status: {battle['status'] if battle else 'None'}")
             if not battle:
                 await update.message.reply_text("You have no pending PvP challenges.")
                 return
+            logger.info(f"Attempting to accept PvP battle: User: {user_id}, Battle ID: {battle['id']}, Status: {battle['status']}")
 
+            # Now that the result is fetched, close the cursor before proceeding
+            cursor.close()
+
+            # Re-open the cursor for the next database operation
+            cursor = db.cursor()
             # Update the battle status to 'in_progress'
             cursor.execute("""
                 UPDATE pvp_battles 
