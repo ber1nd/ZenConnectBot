@@ -593,8 +593,9 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if recent_battle:
                 logger.info(f"Previous battle found: {recent_battle}")
-                # If the last completed battle is recent, we might need to wait before starting a new one.
-                time_since_last_move = datetime.now(timezone.utc) - recent_battle['last_move_timestamp']
+                # Convert the last_move_timestamp to timezone-aware datetime for proper comparison
+                last_move_time = recent_battle['last_move_timestamp'].replace(tzinfo=timezone.utc)
+                time_since_last_move = datetime.now(timezone.utc) - last_move_time
                 if time_since_last_move < timedelta(minutes=1):  # Example cooldown period
                     await update.message.reply_text("You must wait before challenging the same opponent again. Please try again later.")
                     return
