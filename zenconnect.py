@@ -857,7 +857,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
             
             # If it's the bot's turn next, call bot_pvp_move
-            if opponent_id == 7283636452:
+            if opponent_id == 7283636452:  # Check if the opponent is the bot
                 await bot_pvp_move(update, context, battle, opponent_hp, user_hp)
                 logger.info(f"Bot is making a move: {action}")
 
