@@ -675,7 +675,7 @@ import asyncio
 
 async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battle, user_hp, opponent_hp):
     # Ensure it's the bot's turn
-    if battle['current_turn'] != 7283636452:
+    if battle['current_turn'] != 7283636452:  # Bot's user ID
         return
 
     await asyncio.sleep(random.uniform(2, 4))  # Delay for realism
@@ -715,10 +715,7 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
         await execute_pvp_move(update, context, bot_mode=True, action=action)
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_mode=False, action=None):
-    user_id = update.effective_user.id
-    if not bot_mode:
-        action = context.args[0].lower() if context.args else None
-    
+    user_id = 7283636452 if bot_mode else update.effective_user.id  # If bot_mode, use bot's user ID
     db = get_db_connection()
 
     # Define available moves
@@ -726,7 +723,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
 
     # Check for valid move
     if not action or action not in valid_moves:
-        await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
+        if not bot_mode:
+            await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
         return
 
     if db:
@@ -740,7 +738,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             battle = cursor.fetchone()
             logger.info(f"Executing PvP move: User: {user_id}, Action: {action}, Battle ID: {battle['id'] if battle else 'None'}, Status: {battle['status'] if battle else 'None'}")
             if not battle:
-                await update.message.reply_text("You are not in an active battle.")
+                if not bot_mode:
+                    await update.message.reply_text("You are not in an active battle.")
                 return
             
             # Check if it's the user's turn
@@ -766,7 +765,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
 
             # Check for zenstrike cooldown
             if action == "zenstrike" and context.user_data['zenstrike_cooldown'] > 0:
-                await update.message.reply_text(f"Zen Strike is on cooldown for {context.user_data['zenstrike_cooldown']} more turn(s). Please choose another move.")
+                if not bot_mode:
+                    await update.message.reply_text(f"Zen Strike is on cooldown for {context.user_data['zenstrike_cooldown']} more turn(s). Please choose another move.")
                 return
 
             # Action logic
@@ -857,7 +857,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
             
             # If it's the bot's turn next, call bot_pvp_move
-            if opponent_id == 7283636452:  # Check if the opponent is the bot
+            if opponent_id == 7283636452:
                 await bot_pvp_move(update, context, battle, opponent_hp, user_hp)
                 logger.info(f"Bot is making a move: {action}")
 
