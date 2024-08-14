@@ -630,39 +630,61 @@ def check_rate_limit(user_id):
     return len(user_messages) < RATE_LIMIT
 
 async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if len(context.args) != 1:
-        await update.message.reply_text("Please mention the opponent's username to challenge them to a PvP battle.")
+    challenger_id = update.effective_user.id
+    if not context.args:
+        await update.message.reply_text("You need to tag the person you want to challenge. Use the format: /startpvp @username")
         return
     
     opponent_username = context.args[0].lstrip('@')
     db = get_db_connection()
-    
     if db:
         try:
             cursor = db.cursor(dictionary=True)
-            cursor.execute("SELECT user_id FROM users WHERE username = %s", (opponent_username,))
-            opponent = cursor.fetchone()
-            
-            if opponent:
-                opponent_id = opponent['user_id']
-                
-                cursor.execute("INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn) VALUES (%s, %s, %s, %s)",
-                               (user_id, opponent_id, update.effective_chat.id, user_id))
+
+            # Ensure challenger is in the users table
+            cursor.execute("SELECT * FROM users WHERE user_id = %s", (challenger_id,))
+            if cursor.fetchone() is None:
+                cursor.execute("INSERT INTO users (user_id, username) VALUES (%s, %s)", (challenger_id, update.effective_user.username))
                 db.commit()
-                
-                await update.message.reply_text(f"Challenge sent to {opponent_username}! Waiting for them to accept.")
+
+            # Look up opponent's user_id
+            cursor.execute("SELECT user_id FROM users WHERE username = %s", (opponent_username,))
+            result = cursor.fetchone()
+            if result:
+                opponent_id = result['user_id']
             else:
                 await update.message.reply_text(f"Could not find user with username @{opponent_username}. Please make sure they have interacted with the bot.")
+                return
+            
+            # Check if there is an existing pending or in-progress battle
+            cursor.execute("""
+                SELECT * FROM pvp_battles 
+                WHERE (challenger_id = %s AND opponent_id = %s) 
+                OR (challenger_id = %s AND opponent_id = %s)
+                AND status IN ('pending', 'in_progress')
+            """, (challenger_id, opponent_id, opponent_id, challenger_id))
+            
+            if cursor.fetchone():
+                await update.message.reply_text("A battle is already in progress or pending between you two.")
+                return
+
+            # Create new PvP battle
+            cursor.execute("""
+                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, status, current_turn) 
+                VALUES (%s, %s, %s, 'pending', %s)
+            """, (challenger_id, opponent_id, update.message.chat_id, challenger_id))
+            db.commit()
+
+            await update.message.reply_text(f"Challenge sent to @{opponent_username}! Waiting for them to accept.")
         except Error as e:
             logger.error(f"Database error in start_pvp: {e}")
-            await update.message.reply_text("An error occurred while initiating the PvP challenge. Please try again later.")
+            await update.message.reply_text("There was an issue starting the PvP battle. Please try again later.")
         finally:
             if db.is_connected():
                 cursor.close()
                 db.close()
     else:
-        await update.message.reply_text("I'm having trouble accessing my memory right now. Please try again later.")
+        await update.message.reply_text("I'm having trouble accessing the database. Please try again later.")
 
 async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
