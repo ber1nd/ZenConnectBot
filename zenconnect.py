@@ -641,7 +641,11 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = context.args[0].lower() if context.args else None
     db = get_db_connection()
 
-    if not action or action not in ["attack", "defend", "focus", "zenstrike"]:
+    # Define available moves
+    valid_moves = ["attack", "defend", "focus", "zenstrike"]
+
+    # Check for valid move
+    if not action or action not in valid_moves:
         await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
         return
 
@@ -672,6 +676,19 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 opponent_id = battle['challenger_id']
                 user_hp, opponent_hp = battle['opponent_hp'], battle['challenger_hp']
 
+            # Initialize energy if not set
+            if 'energy' not in context.user_data:
+                context.user_data['energy'] = 100
+
+            # Initialize cooldown for zenstrike if not set
+            if 'zenstrike_cooldown' not in context.user_data:
+                context.user_data['zenstrike_cooldown'] = 0
+
+            # Check for zenstrike cooldown
+            if action == "zenstrike" and context.user_data['zenstrike_cooldown'] > 0:
+                await update.message.reply_text(f"Zen Strike is on cooldown for {context.user_data['zenstrike_cooldown']} more turn(s). Please choose another move.")
+                return
+
             # Action logic
             if action == "attack":
                 damage = random.randint(5, 15)  # Random damage range
@@ -695,7 +712,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 energy_gain = random.randint(10, 20)
                 critical_boost = random.uniform(0.1, 0.3)  # Boost critical hit chance for next turn
                 context.user_data['focus_critical'] = critical_boost
-                context.user_data['energy'] = context.user_data.get('energy', 100) + energy_gain
+                context.user_data['energy'] += energy_gain
                 result_message = f"You focused, gaining {energy_gain} energy and increased your critical hit chance by {int(critical_boost*100)}% for the next turn."
 
             elif action == "zenstrike":
@@ -710,8 +727,15 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if critical_hit:
                     special_damage *= 2
                 opponent_hp -= special_damage
-                context.user_data['energy'] = context.user_data.get('energy', 100) - energy_cost
+                context.user_data['energy'] -= energy_cost
                 result_message = f"You unleashed a Zen Strike and dealt {special_damage} damage{' (Critical Hit!)' if critical_hit else ''}."
+
+                # Set zenstrike on cooldown
+                context.user_data['zenstrike_cooldown'] = 2  # 2 turns cooldown
+
+            # Decrement cooldown if not zenstrike
+            if action != "zenstrike" and context.user_data['zenstrike_cooldown'] > 0:
+                context.user_data['zenstrike_cooldown'] -= 1
 
             # Visual health bar (10 blocks total)
             def health_bar(hp):
@@ -719,6 +743,10 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 filled_blocks = int((hp / 100) * total_blocks)
                 empty_blocks = total_blocks - filled_blocks
                 return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {hp}/100 HP"
+
+            # Display current energy points in the result message
+            energy_points = context.user_data.get('energy', 100)
+            result_message += f"\n\nYour current energy: {energy_points} points."
 
             # Check if the battle ends
             if opponent_hp <= 0:
@@ -748,6 +776,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
             
             # Switch turns
+            cursor.execute("SELECT username FROM users WHERE user_id = %s", (opponent_id,))
+            opponent = cursor.fetchone()
             next_turn_message = f"It is now @{opponent['username']}'s turn!"
             await context.bot.send_message(chat_id=update.message.chat_id, text=next_turn_message)
 
