@@ -702,6 +702,9 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
             temperature=0.7
         )
 
+        # Log the raw response from the AI
+        logger.info(f"Raw AI Response: {response}")
+
         action = response.choices[0].message.content.strip().lower()
         logger.info(f"Bot chose action: {action}")
 
