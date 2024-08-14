@@ -584,7 +584,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             AND status = 'in_progress'
         """, (user_id, opponent_id, opponent_id, user_id))
         battle = cursor.fetchone()
-        cursor.close()
+        cursor.close()  # Ensure the cursor is closed
 
         if battle:
             await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
@@ -625,10 +625,15 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 OR (challenger_id = %s AND opponent_id = 7283636452 AND status = 'pending')
             """, (user_id, user_id))
             battle = cursor.fetchone()
+
             if not battle:
                 await update.message.reply_text("You have no pending PvP challenges.")
                 return
+            
             logger.info(f"Attempting to accept PvP battle: User: {user_id}, Battle ID: {battle['id']}, Status: {battle['status']}")
+
+            # Fetch the current_turn to force the cursor to be fully processed
+            current_turn = battle['current_turn']
 
             # Now that the result is fetched, close the cursor before proceeding
             cursor.close()
@@ -640,7 +645,7 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 UPDATE pvp_battles 
                 SET status = 'in_progress', current_turn = %s 
                 WHERE id = %s
-            """, (battle['challenger_id'], battle['id']))
+            """, (current_turn, battle['id']))
             db.commit()
 
             await update.message.reply_text("You have accepted the challenge! The battle begins now.")
