@@ -636,6 +636,131 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
+async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    action = context.args[0].lower() if context.args else None
+    db = get_db_connection()
+
+    if not action or action not in ["attack", "defend", "focus", "zenstrike"]:
+        await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
+        return
+
+    if db:
+        try:
+            cursor = db.cursor(dictionary=True)
+            # Fetch the active battle
+            cursor.execute("""
+                SELECT * FROM pvp_battles 
+                WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
+            """, (user_id, user_id))
+            battle = cursor.fetchone()
+
+            if not battle:
+                await update.message.reply_text("You are not in an active battle.")
+                return
+            
+            # Check if it's the user's turn
+            if battle['current_turn'] != user_id:
+                await update.message.reply_text("It's not your turn.")
+                return
+
+            # Get user and opponent info
+            if battle['challenger_id'] == user_id:
+                opponent_id = battle['opponent_id']
+                user_hp, opponent_hp = battle['challenger_hp'], battle['opponent_hp']
+            else:
+                opponent_id = battle['challenger_id']
+                user_hp, opponent_hp = battle['opponent_hp'], battle['challenger_hp']
+
+            # Action logic
+            if action == "attack":
+                damage = random.randint(5, 15)  # Random damage range
+                critical_hit = random.random() < 0.1  # 10% chance of critical hit
+                if context.user_data.get('focus_critical'):
+                    critical_hit_chance = context.user_data['focus_critical']
+                    critical_hit = critical_hit or (random.random() < critical_hit_chance)
+                    context.user_data['focus_critical'] = 0  # Reset critical boost
+
+                if critical_hit:
+                    damage *= 2
+                opponent_hp -= damage
+                result_message = f"You attacked and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
+            
+            elif action == "defend":
+                reduced_damage = random.randint(2, 7)
+                user_hp += reduced_damage  # Gain some HP for defending
+                result_message = f"You defended and regained {reduced_damage} HP."
+            
+            elif action == "focus":
+                energy_gain = random.randint(10, 20)
+                critical_boost = random.uniform(0.1, 0.3)  # Boost critical hit chance for next turn
+                context.user_data['focus_critical'] = critical_boost
+                context.user_data['energy'] = context.user_data.get('energy', 100) + energy_gain
+                result_message = f"You focused, gaining {energy_gain} energy and increased your critical hit chance by {int(critical_boost*100)}% for the next turn."
+
+            elif action == "zenstrike":
+                special_damage = random.randint(10, 25)
+                energy_cost = 20
+                critical_hit = random.random() < 0.15  # 15% chance of critical hit
+                if context.user_data.get('focus_critical'):
+                    critical_hit_chance = context.user_data['focus_critical']
+                    critical_hit = critical_hit or (random.random() < critical_hit_chance)
+                    context.user_data['focus_critical'] = 0  # Reset critical boost
+
+                if critical_hit:
+                    special_damage *= 2
+                opponent_hp -= special_damage
+                context.user_data['energy'] = context.user_data.get('energy', 100) - energy_cost
+                result_message = f"You unleashed a Zen Strike and dealt {special_damage} damage{' (Critical Hit!)' if critical_hit else ''}."
+
+            # Visual health bar (10 blocks total)
+            def health_bar(hp):
+                total_blocks = 10
+                filled_blocks = int((hp / 100) * total_blocks)
+                empty_blocks = total_blocks - filled_blocks
+                return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {hp}/100 HP"
+
+            # Check if the battle ends
+            if opponent_hp <= 0:
+                cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (user_id, battle['id']))
+                db.commit()
+                await update.message.reply_text(f"You have won the battle! Your opponent is defeated.\n\n{health_bar(user_hp)}")
+                await context.bot.send_message(chat_id=update.message.chat_id, text=f"{update.effective_user.username} has won the battle!")
+                return
+            elif user_hp <= 0:
+                cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
+                db.commit()
+                await update.message.reply_text(f"You have been defeated.\n\n{health_bar(user_hp)}")
+                await context.bot.send_message(chat_id=update.message.chat_id, text=f"{update.effective_user.username} has been defeated.")
+                return
+
+            # Update the battle status
+            cursor.execute("""
+                UPDATE pvp_battles 
+                SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
+                WHERE id = %s
+            """, (user_hp if user_id == battle['challenger_id'] else opponent_hp,
+                  opponent_hp if user_id == battle['challenger_id'] else user_hp,
+                  opponent_id, battle['id']))
+            db.commit()
+
+            # Notify players in the group chat
+            await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
+            
+            # Switch turns
+            next_turn_message = f"It is now @{opponent['username']}'s turn!"
+            await context.bot.send_message(chat_id=update.message.chat_id, text=next_turn_message)
+
+        except Error as e:
+            logger.error(f"Database error in execute_pvp_move: {e}")
+            await update.message.reply_text("An error occurred while executing the PvP move. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     db = get_db_connection()
@@ -823,9 +948,9 @@ async def main():
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     application.add_handler(CommandHandler("subscriptionstatus", subscription_status_command))
     application.add_handler(CommandHandler("deletedata", delete_data))
-    
     application.add_handler(CommandHandler("startpvp", start_pvp))
     application.add_handler(CommandHandler("acceptpvp", accept_pvp))
+    application.add_handler(CommandHandler("pvpmove", execute_pvp_move))
     application.add_handler(CommandHandler("surrender", surrender))
     
     application.add_handler(MessageHandler(
