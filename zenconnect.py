@@ -674,7 +674,11 @@ import random
 import asyncio
 
 async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battle, user_hp, opponent_hp):
-    await asyncio.sleep(2)  # Delay for realism
+    # Ensure it's the bot's turn
+    if battle['current_turn'] != 7283636452:
+        return
+
+    await asyncio.sleep(random.uniform(2, 4))  # Delay for realism
 
     # Generate a prompt based on the game state
     prompt = f"""
