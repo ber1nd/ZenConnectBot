@@ -581,7 +581,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
                 return
 
-            # Check if there's a recently completed battle that might be causing confusion
+            # Check if there's a recently completed battle that might be causing confusion, test.
             cursor.execute("""
                 SELECT * FROM pvp_battles 
                 WHERE (challenger_id = %s AND opponent_id = %s) 
