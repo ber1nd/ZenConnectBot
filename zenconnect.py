@@ -859,6 +859,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             # If it's the bot's turn next, call bot_pvp_move
             if opponent_id == 7283636452:
                 await bot_pvp_move(update, context, battle, opponent_hp, user_hp)
+                logger.info(f"Bot is making a move: {action}")
 
         except Error as e:
             logger.error(f"Database error in execute_pvp_move: {e}")
