@@ -577,11 +577,12 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """, (user_id, opponent_id, opponent_id, user_id))
             battle = cursor.fetchone()
 
+            # Ensure the previous result is fully fetched and the cursor is ready for the next query
             if battle:
                 await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
                 return
 
-            # Fetch recent battle and fully process the result
+            # Check if there's a recently completed battle that might be causing confusion
             cursor.execute("""
                 SELECT * FROM pvp_battles 
                 WHERE ((challenger_id = %s AND opponent_id = %s) 
@@ -591,9 +592,9 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """, (user_id, opponent_id, opponent_id, user_id))
             recent_battle = cursor.fetchone()
 
+            # Ensure the previous result is fully fetched and the cursor is ready for the next query
             if recent_battle:
                 logger.info(f"Previous battle found: {recent_battle}")
-                # Convert the last_move_timestamp to timezone-aware datetime for proper comparison
                 last_move_time = recent_battle['last_move_timestamp'].replace(tzinfo=timezone.utc)
                 time_since_last_move = datetime.now(timezone.utc) - last_move_time
                 if time_since_last_move < timedelta(minutes=1):  # Example cooldown period
@@ -611,6 +612,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Database error in start_pvp: {e}")
             await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
         finally:
+            # Ensure cursor and connection are properly closed
             if db.is_connected():
                 cursor.close()
                 db.close()
