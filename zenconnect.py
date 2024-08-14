@@ -976,6 +976,11 @@ async def get_user_stats(request):
         logger.error("Failed to connect to database")
         return web.json_response({"error": "Database connection failed"}, status=500)
 
+async def getbotid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    bot_user = await context.bot.get_me()
+    bot_id = bot_user.id
+    await update.message.reply_text(f"My user ID is: {bot_id}")
+
 async def main():
     # Use environment variable to determine webhook or polling
     use_webhook = os.getenv('USE_WEBHOOK', 'false').lower() == 'true'
@@ -999,6 +1004,7 @@ async def main():
     application.add_handler(CommandHandler("acceptpvp", accept_pvp))
     application.add_handler(CommandHandler("pvpmove", execute_pvp_move))
     application.add_handler(CommandHandler("surrender", surrender))
+    application.add_handler(CommandHandler("getbotid", getbotid))
     
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & (
