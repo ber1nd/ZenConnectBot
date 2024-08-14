@@ -511,11 +511,16 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db:
         try:
             cursor = db.cursor()
-            cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+
+            # Delete related records in other tables first
+            cursor.execute("DELETE FROM group_memberships WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM user_memory WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM meditation_log WHERE user_id = %s", (user_id,))
-            cursor.execute("DELETE FROM group_memberships WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM subscriptions WHERE user_id = %s", (user_id,))
+
+            # Now delete the user record
+            cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+
             db.commit()
             await update.message.reply_text("Your data has been deleted. Your journey with us ends here, but remember that every ending is a new beginning.")
         except Error as e:
