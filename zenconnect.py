@@ -626,19 +626,19 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.close()
             db.close()
   
-
 async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     db = get_db_connection()
     if db:
         try:
             cursor = db.cursor(dictionary=True)
-            
+
             # Fetch the pending battle for the user
             cursor.execute("""
                 SELECT * FROM pvp_battles 
-                WHERE opponent_id = %s AND status = 'pending'
-            """, (user_id,))
+                WHERE (opponent_id = %s AND status = 'pending')
+                OR (challenger_id = %s AND opponent_id = 7283636452 AND status = 'pending')
+            """, (user_id, user_id))
             battle = cursor.fetchone()
             logger.info(f"Attempting to accept PvP battle: User: {user_id}, Battle ID: {battle['id'] if battle else 'None'}, Status: {battle['status'] if battle else 'None'}")
             if not battle:
@@ -664,6 +664,7 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.close()
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
