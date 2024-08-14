@@ -549,6 +549,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if opponent_username == 'bot':
         opponent_id = 7283636452  # Bot's ID
     else:
+        # Ensure the opponent exists in the users table
         if db:
             try:
                 cursor = db.cursor(dictionary=True)
@@ -577,6 +578,15 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         cursor = db.cursor(dictionary=True)
 
+        # Ensure the challenger exists in the users table
+        cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+        challenger = cursor.fetchone()
+
+        if not challenger:
+            await update.message.reply_text("You are not registered in the system. Please interact with the bot first.")
+            cursor.close()  # Close the cursor
+            return
+
         # Check if there's an ongoing PvP battle between these two users
         cursor.execute("""
             SELECT * FROM pvp_battles 
@@ -585,6 +595,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             AND status = 'in_progress'
         """, (user_id, opponent_id, opponent_id, user_id))
         battle = cursor.fetchone()
+
         if battle:
             cursor.close()  # Close the cursor before returning
             await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
@@ -606,6 +617,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
         else:
             await update.message.reply_text(f"Challenge sent to @{opponent_username}! They need to accept the challenge by using /acceptpvp.")
+
     except Error as e:
         logger.error(f"Database error in start_pvp: {e}")
         await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
