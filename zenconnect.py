@@ -576,7 +576,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 AND status = 'in_progress'
             """, (user_id, opponent_id, opponent_id, user_id))
             battle = cursor.fetchone()
-
+            logger.info(f"Attempting to start PvP battle: Challenger: {user_id}, Opponent: {opponent_id}, Battle Status: {battle['status'] if battle else 'None'}")
             if battle:
                 await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
                 return
@@ -611,7 +611,7 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 WHERE opponent_id = %s AND status = 'pending'
             """, (user_id,))
             battle = cursor.fetchone()
-
+            logger.info(f"Attempting to accept PvP battle: User: {user_id}, Battle ID: {battle['id'] if battle else 'None'}, Status: {battle['status'] if battle else 'None'}")
             if not battle:
                 await update.message.reply_text("You have no pending PvP challenges.")
                 return
@@ -654,7 +654,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
             """, (user_id, user_id))
             battle = cursor.fetchone()
-
+            logger.info(f"Executing PvP move: User: {user_id}, Action: {action}, Battle ID: {battle['id'] if battle else 'None'}, Status: {battle['status'] if battle else 'None'}")
             if not battle:
                 await update.message.reply_text("You are not in an active battle.")
                 return
