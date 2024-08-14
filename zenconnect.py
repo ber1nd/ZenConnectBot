@@ -517,6 +517,7 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.execute("DELETE FROM user_memory WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM meditation_log WHERE user_id = %s", (user_id,))
             cursor.execute("DELETE FROM subscriptions WHERE user_id = %s", (user_id,))
+            cursor.execute("DELETE FROM pvp_battles WHERE challenger_id = %s OR opponent_id = %s", (user_id, user_id))
 
             # Now delete the user record
             cursor.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
