@@ -538,30 +538,21 @@ from datetime import datetime, timezone
 
 async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not context.args or len(context.args) != 1:
-        await update.message.reply_text("Please tag the person you'd like to challenge or type 'bot' to challenge the bot.")
+    opponent_username = context.args[0].replace('@', '') if context.args else None
+    db = get_db_connection()
+
+    if not opponent_username:
+        await update.message.reply_text("Please specify a valid opponent or type 'bot' to challenge the bot.")
         return
 
-    opponent_username = context.args[0].replace('@', '').lower()
-
-    db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
-            
-            # Ensure the challenger is in the users table
-            cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
-            challenger = cursor.fetchone()
-            if not challenger:
-                cursor.execute("INSERT INTO users (user_id, username) VALUES (%s, %s)", (user_id, update.effective_user.username))
-                db.commit()
-                cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
-                challenger = cursor.fetchone()
-
-            if opponent_username == 'bot':
-                opponent_id = 'bot'
-            else:
-                # Ensure the opponent is in the users table
+    opponent_id = None
+    if opponent_username == 'bot':
+        opponent_id = -1  # Special ID for the bot
+    else:
+        # Look up the opponent in the database
+        if db:
+            try:
+                cursor = db.cursor(dictionary=True)
                 cursor.execute("SELECT * FROM users WHERE username = %s", (opponent_username,))
                 opponent = cursor.fetchone()
 
@@ -570,65 +561,55 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     return
 
                 opponent_id = opponent['user_id']
-            
-            if user_id == opponent_id:
-                await update.message.reply_text("You cannot challenge yourself to a battle.")
+            except Error as e:
+                logger.error(f"Database error in start_pvp: {e}")
+                await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
                 return
+            finally:
+                if db.is_connected():
+                    cursor.close()
 
-            # Handle the bot opponent
-            if opponent_id == 'bot':
-                await update.message.reply_text("You are about to battle the Zen Monk bot!")
-            else:
-                # Check if there's an ongoing PvP battle between these two users
-                cursor.execute("""
-                    SELECT * FROM pvp_battles 
-                    WHERE ((challenger_id = %s AND opponent_id = %s) 
-                    OR (challenger_id = %s AND opponent_id = %s)) 
-                    AND status = 'in_progress'
-                """, (user_id, opponent_id, opponent_id, user_id))
-                battle = cursor.fetchone()
-
-                if battle:
-                    await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
-                    return
-
-                # Check if there's a recently completed battle that might be causing confusion.
-                cursor.execute("""
-                    SELECT * FROM pvp_battles 
-                    WHERE ((challenger_id = %s AND opponent_id = %s) 
-                    OR (challenger_id = %s AND opponent_id = %s)) 
-                    AND status = 'completed'
-                    ORDER BY last_move_timestamp DESC
-                """, (user_id, opponent_id, opponent_id, user_id))
-                recent_battle = cursor.fetchone()
-
-                if recent_battle:
-                    logger.info(f"Previous battle found: {recent_battle}")
-                    # If the last completed battle is recent, we might need to wait before starting a new one.
-                    time_since_last_move = datetime.now(timezone.utc) - recent_battle['last_move_timestamp']
-                    if time_since_last_move < timedelta(minutes=1):  # Example cooldown period
-                        await update.message.reply_text("You must wait before challenging the same opponent again. Please try again later.")
-                        return
-
-            # Create a new PvP battle
-            cursor.execute("""
-                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
-                VALUES (%s, %s, %s, %s, 'in_progress')
-            """, (user_id, opponent_id, update.effective_chat.id, user_id))
-            db.commit()
-            await update.message.reply_text(f"The battle begins now!")
-            if opponent_id != 'bot':
-                await context.bot.send_message(chat_id=opponent_id, text="You have been challenged to a battle! Use /acceptpvp to begin.")
-            
-        except Error as e:
-            logger.error(f"Database error in start_pvp: {e}")
-            await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
+    if not db or opponent_id is None:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+        return
+
+    try:
+        cursor = db.cursor(dictionary=True)
+
+        # Check if there's an ongoing PvP battle between these two users
+        cursor.execute("""
+            SELECT * FROM pvp_battles 
+            WHERE ((challenger_id = %s AND opponent_id = %s) 
+            OR (challenger_id = %s AND opponent_id = %s)) 
+            AND status = 'in_progress'
+        """, (user_id, opponent_id, opponent_id, user_id))
+        battle = cursor.fetchone()
+
+        if battle:
+            await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
+            return
+
+        # Create a new PvP battle
+        cursor.execute("""
+            INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
+            VALUES (%s, %s, %s, %s, 'pending')
+        """, (user_id, opponent_id, update.effective_chat.id, user_id))
+        db.commit()
+
+        if opponent_id == -1:
+            await update.message.reply_text("You have challenged the bot! The battle will begin now.")
+            await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
+        else:
+            await update.message.reply_text(f"Challenge sent to @{opponent_username}! They need to accept the challenge by using /acceptpvp.")
+
+    except Error as e:
+        logger.error(f"Database error in start_pvp: {e}")
+        await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
+    finally:
+        if db.is_connected():
+            cursor.close()
+            db.close()
+  
 
 async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -807,18 +788,15 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Notify players in the group chat
             await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
             
-            # Bot's turn logic if the opponent is the bot
-            if opponent_id == 'bot':
-                bot_move = random.choice(valid_moves)  # Bot randomly selects a move
-                context.args = [bot_move]  # Set the bot's move as if it was a user input
-                await execute_pvp_move(update, context)  # Recursively call the function for the bot's move
-                return
-            
             # Switch turns
-            cursor.execute("SELECT username FROM users WHERE user_id = %s", (opponent_id,))
-            opponent = cursor.fetchone()
-            next_turn_message = f"It is now @{opponent['username']}'s turn!" if opponent_id != 'bot' else "It's the bot's turn!"
-            await context.bot.send_message(chat_id=update.message.chat_id, text=next_turn_message)
+            if opponent_id == -1:
+                # If playing against the bot, make the bot's move immediately
+                await execute_pvp_move(update, context)
+            else:
+                cursor.execute("SELECT username FROM users WHERE user_id = %s", (opponent_id,))
+                opponent = cursor.fetchone()
+                next_turn_message = f"It is now @{opponent['username']}'s turn!"
+                await context.bot.send_message(chat_id=update.message.chat_id, text=next_turn_message)
 
         except Error as e:
             logger.error(f"Database error in execute_pvp_move: {e}")
