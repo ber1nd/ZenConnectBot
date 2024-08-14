@@ -676,6 +676,7 @@ import asyncio
 async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battle, user_hp, opponent_hp):
     # Ensure it's the bot's turn
     if battle['current_turn'] != 7283636452:
+        logger.info("It's not the bot's turn.")
         return
 
     await asyncio.sleep(random.uniform(2, 4))  # Delay for realism
@@ -709,6 +710,9 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
             action = random.choice(["attack", "defend", "focus"])
             logger.info(f"Random action chosen: {action}")
 
+        # Log before executing the action
+        logger.info(f"Bot is about to execute the move: {action}")
+
         # Execute the chosen move
         await execute_pvp_move(update, context, bot_mode=True, action=action)
 
@@ -730,6 +734,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
 
     # Check for valid move
     if not action or action not in valid_moves:
+        logger.error(f"Invalid action received: {action}")
         if not bot_mode:
             await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
         return
