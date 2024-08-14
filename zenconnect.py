@@ -576,10 +576,28 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 AND status = 'in_progress'
             """, (user_id, opponent_id, opponent_id, user_id))
             battle = cursor.fetchone()
-            logger.info(f"Attempting to start PvP battle: Challenger: {user_id}, Opponent: {opponent_id}, Battle Status: {battle['status'] if battle else 'None'}")
+
             if battle:
                 await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
                 return
+
+            # Check if there's a recently completed battle that might be causing confusion
+            cursor.execute("""
+                SELECT * FROM pvp_battles 
+                WHERE (challenger_id = %s AND opponent_id = %s) 
+                OR (challenger_id = %s AND opponent_id = %s) 
+                AND status = 'completed'
+                ORDER BY last_move_timestamp DESC
+            """, (user_id, opponent_id, opponent_id, user_id))
+            recent_battle = cursor.fetchone()
+
+            if recent_battle:
+                logger.info(f"Previous battle found: {recent_battle}")
+                # If the last completed battle is recent, we might need to wait before starting a new one.
+                time_since_last_move = datetime.now(timezone.utc) - recent_battle['last_move_timestamp']
+                if time_since_last_move < timedelta(minutes=1):  # Example cooldown period
+                    await update.message.reply_text("You must wait before challenging the same opponent again. Please try again later.")
+                    return
 
             # Create a new PvP battle
             cursor.execute("""
