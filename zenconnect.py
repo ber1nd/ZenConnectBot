@@ -876,7 +876,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
                 cursor.close()
                 db.close()
     else:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later")
 
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
