@@ -557,16 +557,17 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if not opponent:
                     await update.message.reply_text(f"Could not find user with username @{opponent_username}. Please make sure they have interacted with the bot.")
+                    cursor.close()  # Closing the cursor
                     return
 
                 opponent_id = opponent['user_id']
-                cursor.close()  # Ensure the cursor is closed
+                cursor.close()  # Closing the cursor
             except Error as e:
                 logger.error(f"Database error in start_pvp: {e}")
                 await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
                 return
             finally:
-                if db.is_connected() and cursor:
+                if db.is_connected():
                     cursor.close()
 
     if not db or opponent_id is None:
@@ -584,7 +585,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             AND status = 'in_progress'
         """, (user_id, opponent_id, opponent_id, user_id))
         battle = cursor.fetchone()
-        cursor.close()  # Ensure the cursor is closed
+        cursor.close()  # Closing the cursor immediately after fetching
 
         if battle:
             await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
@@ -597,6 +598,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             VALUES (%s, %s, %s, %s, 'pending')
         """, (user_id, opponent_id, update.effective_chat.id, user_id))
         db.commit()
+        cursor.close()  # Close the cursor after committing
 
         if opponent_id == 7283636452:
             await update.message.reply_text("You have challenged the bot! The battle will begin now.")
@@ -608,8 +610,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
     finally:
         if db.is_connected():
-            cursor.close()
-            db.close()
+            db.close()  # Ensuring the database connection is closed
   
 async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -625,18 +626,13 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 OR (challenger_id = %s AND opponent_id = 7283636452 AND status = 'pending')
             """, (user_id, user_id))
             battle = cursor.fetchone()
+            cursor.close()  # Close the cursor immediately after fetching
 
             if not battle:
                 await update.message.reply_text("You have no pending PvP challenges.")
                 return
             
             logger.info(f"Attempting to accept PvP battle: User: {user_id}, Battle ID: {battle['id']}, Status: {battle['status']}")
-
-            # Fetch the current_turn to force the cursor to be fully processed
-            current_turn = battle['current_turn']
-
-            # Now that the result is fetched, close the cursor before proceeding
-            cursor.close()
 
             # Re-open the cursor for the next database operation
             cursor = db.cursor()
@@ -645,8 +641,9 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 UPDATE pvp_battles 
                 SET status = 'in_progress', current_turn = %s 
                 WHERE id = %s
-            """, (current_turn, battle['id']))
+            """, (battle['challenger_id'], battle['id']))
             db.commit()
+            cursor.close()  # Close the cursor after committing
 
             await update.message.reply_text("You have accepted the challenge! The battle begins now.")
             await context.bot.send_message(chat_id=battle['challenger_id'], text="Your challenge has been accepted! The battle begins now.")
@@ -655,7 +652,6 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("An error occurred while accepting the PvP challenge. Please try again later.")
         finally:
             if db.is_connected():
-                cursor.close()
                 db.close()
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
