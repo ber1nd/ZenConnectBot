@@ -180,6 +180,13 @@ async def generate_response(prompt, elaborate=False):
         logger.error(f"Error generating response: {type(e).__name__}: {str(e)}")
         return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later."
 
+# Define the health bar function near the top of your script
+def health_bar(hp, energy):
+    total_blocks = 10
+    filled_blocks = int((hp / 100) * total_blocks)
+    empty_blocks = total_blocks - filled_blocks
+    return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {hp}/100 HP | {energy}/100 Energy"
+
 def get_level_name(points):
     if points < 100:
         return "Beginner"
@@ -726,6 +733,13 @@ def generate_pvp_move_buttons(user_id):
     ]
     return InlineKeyboardMarkup(keyboard)
 
+import random
+import logging
+from telegram import Update
+from telegram.ext import ContextTypes
+
+logger = logging.getLogger(__name__)
+
 async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db_connection()
     if db:
@@ -746,20 +760,22 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info("It's not the bot's turn.")
                 return
 
-            # Fetch battle context and generate the bot's move using AI
+            # Determine bot's HP and opponent's HP
             bot_hp = battle['challenger_hp'] if battle['challenger_id'] == 7283636452 else battle['opponent_hp']
             opponent_hp = battle['opponent_hp'] if battle['challenger_id'] == 7283636452 else battle['challenger_hp']
+
+            # Retrieve bot's energy level
             bot_energy = context.user_data.get('energy', 100)
 
-            # Use the AI-based move generation logic with an aggressive strategy
+            # Generate AI decision-making prompt
             prompt = f"""
             You are a Zen warrior AI engaged in a strategic duel. Your goal is to win decisively by reducing your opponent's HP to 0 while keeping your HP above 0. 
             
             Current situation:
             - Your HP: {bot_hp}/100
             - Opponent's HP: {opponent_hp}/100
-            - Your Energy: {bot_energy} points
-            
+            - Your Energy: {bot_energy}/100
+
             Available actions:
             - Strike: Deal moderate damage to the opponent. Costs 12 energy.
             - Defend: Heal yourself and gain energy. Costs 0 energy, gains 10 energy.
@@ -769,33 +785,39 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             - Meditate: Heal yourself moderately and restore energy. Gains 15-25 energy.
 
             Strategy to win:
-            - Always prioritize moves that maximize damage output while managing energy efficiently.
-            - Use "Zen Strike" whenever you have enough energy and the opponent's HP is low enough for a potential knockout.
-            - Use "Mind Trap" strategically to disrupt the opponent's most powerful attacks.
-            - Use "Focus" and "Meditate" to prepare for high-damage attacks or to recover from heavy hits.
-            - If your HP is critically low, use "Defend" or "Meditate" to prolong the battle and regain energy for a powerful counter-attack.
-            
-            Based on the current situation, choose the best action that maximizes your chances of winning the battle swiftly and effectively.
+            - Manage your energy carefully; don't allow it to drop too low unless you can deliver a finishing blow.
+            - Use "Zen Strike" only if you have sufficient energy and can guarantee significant damage or a win.
+            - If your energy is low, prioritize using "Defend," "Focus," or "Meditate" to regain energy and prolong the fight.
+            - Strike with "Mind Trap" if the opponent has high energy, to reduce their effectiveness in the next turn.
             """
 
+            # Generate AI response based on the prompt
             ai_response = await generate_response(prompt)
 
-            # Extract the action from the AI response
-            action = None
-            for move in ["strike", "defend", "focus", "zenstrike", "mindtrap", "meditate"]:
-                if move in ai_response.lower():
-                    action = move
-                    break
+            # Default action to strike unless energy constraints or AI logic dictate otherwise
+            action = "strike"
 
-            if not action:
-                logger.warning(f"AI did not provide a valid action. Defaulting to 'strike'. AI response: {ai_response}")
-                action = "strike"
+            # Avoid getting stuck without energy by selecting appropriate moves
+            if bot_energy < 12:  # Not enough energy for Strike
+                if bot_energy >= 20:
+                    action = "focus"
+                elif bot_energy >= 15:
+                    action = "meditate"
+                else:
+                    action = "defend"
+            else:
+                # Extract action from AI response, if provided
+                for move in ["strike", "defend", "focus", "zenstrike", "mindtrap", "meditate"]:
+                    if move in ai_response.lower():
+                        action = move
+                        break
 
             logger.info(f"Bot chose action: {action} based on AI response: {ai_response}")
 
             # Execute the chosen move
             await execute_pvp_move(update, context, db, bot_mode=True, action=action)
-            # Send the AI's explanation to the chat
+
+            # Send AI's explanation to the chat for transparency
             await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Zen Bot's strategy: {ai_response}")
 
         except Exception as e:
@@ -873,6 +895,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         # Initialize energy if not set
         if 'energy' not in context.user_data:
             context.user_data['energy'] = 100
+
+        player_energy = context.user_data.get('energy', 100)
+        bot_energy = context.user_data.get('bot_energy', 100)
 
         # Action logic for each move
         if action == "strike":
@@ -963,21 +988,51 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
               battle['id']))
         db.commit()
 
-        # Visual health bar (10 blocks total)
-        def health_bar(hp):
+        # Visual health bar (10 blocks total) and energy display
+        def health_bar(hp, energy):
             total_blocks = 10
             filled_blocks = int((hp / 100) * total_blocks)
             empty_blocks = total_blocks - filled_blocks
-            return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {hp}/100 HP"
+            return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {hp}/100 HP | {energy}/100 Energy"
 
-        # Notify players in the group chat
-        await context.bot.send_message(chat_id=battle['group_id'], text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
-        
-        # Send the move buttons for the next turn
-        if opponent_id != 7283636452:
-            await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
-        else:
-            await bot_pvp_move(update, context)
+        # Before sending the result message, update to ensure the player's health and energy are always on the left
+        player_health = user_hp if user_id != 7283636452 else opponent_hp
+        player_energy = context.user_data.get('energy', 100) if user_id != 7283636452 else context.user_data.get('opponent_energy', 100)
+        bot_health = opponent_hp if user_id != 7283636452 else user_hp
+        bot_energy = context.user_data.get('opponent_energy', 100) if user_id != 7283636452 else context.user_data.get('energy', 100)
+
+        try:
+            # Calculate and display the health and energy bars for both players
+            player_health = user_hp if user_id == battle['challenger_id'] else opponent_hp
+            bot_health = opponent_hp if user_id == battle['challenger_id'] else user_hp
+
+            player_energy = context.user_data.get('energy', 100)
+            bot_energy = context.user_data.get('bot_energy', 100)
+
+            await context.bot.send_message(
+                chat_id=battle['group_id'], 
+                text=f"{result_message}\n\n{health_bar(player_health, player_energy)} vs {health_bar(bot_health, bot_energy)}"
+            )  
+
+            # Notify players in the group chat
+            await context.bot.send_message(chat_id=battle['group_id'], text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
+            
+            # Send the move buttons for the next turn
+            if opponent_id != 7283636452:
+                await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
+            else:
+                await bot_pvp_move(update, context)
+
+        except Exception as e:
+            logger.error(f"Error in execute_pvp_move: {e}")
+            if not bot_mode and update.callback_query:
+                await update.callback_query.answer("An error occurred while executing the PvP move. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+
+        if not bot_mode and update.callback_query:
+            await update.callback_query.answer()
 
     except Exception as e:
         logger.error(f"Error in execute_pvp_move: {e}")
