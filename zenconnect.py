@@ -193,6 +193,13 @@ def update_bot_energy(context, energy_cost=0, energy_gain=0):
     context.user_data['bot_energy'] = new_bot_energy
     return new_bot_energy
 
+async def send_message(update, text):
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(text)
+    else:
+        await update.message.reply_text(text)
+
 # Define the health bar function near the top of your script
 def health_bar(hp, energy):
     total_blocks = 10
@@ -849,10 +856,39 @@ async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT
             if db.is_connected():
                 db.close()
 
+def create_battle_view(player_name, player_hp, player_energy, opponent_name, opponent_hp, opponent_energy):
+    max_name_length = max(len(player_name), len(opponent_name))
+    player_name = player_name.ljust(max_name_length)
+    opponent_name = opponent_name.ljust(max_name_length)
+    
+    hp_bar_length = 20
+    energy_bar_length = 10
+    
+    player_hp_bar = '█' * int(player_hp / 5) + '░' * (hp_bar_length - int(player_hp / 5))
+    opponent_hp_bar = '█' * int(opponent_hp / 5) + '░' * (hp_bar_length - int(opponent_hp / 5))
+    
+    player_energy_bar = '█' * int(player_energy / 10) + '░' * (energy_bar_length - int(player_energy / 10))
+    opponent_energy_bar = '█' * int(opponent_energy / 10) + '░' * (energy_bar_length - int(opponent_energy / 10))
+    
+    battle_view = f"""
+```
+┌{'─' * (max_name_length + 24)}┐
+│ {player_name} │ {player_hp:3d}/100 HP    │
+│ {player_hp_bar} │
+│ {player_energy_bar} {player_energy:3d}/100 Energy │
+├{'─' * (max_name_length + 24)}┤
+│ {opponent_name} │ {opponent_hp:3d}/100 HP    │
+│ {opponent_hp_bar} │
+│ {opponent_energy_bar} {opponent_energy:3d}/100 Energy │
+└{'─' * (max_name_length + 24)}┘
+```
+"""
+    return battle_view
+
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
-    energy_cost = 0  # Initialize energy cost
-    energy_gain = 0  # Initialize energy gain
+    energy_cost = 0
+    energy_gain = 0
     
     valid_moves = ["strike", "defend", "focus", "zenstrike", "mindtrap", "meditate"]
 
@@ -863,7 +899,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             action = data[1]
             user_id_from_callback = int(data[-1])
 
-            # Ensure the action is for the correct player
             if user_id_from_callback != user_id:
                 await query.answer("It's not your turn!")
                 return
@@ -897,7 +932,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 await send_message(update, "It's not your turn.")
             return
 
-        # Get user and opponent info
         if battle['challenger_id'] == user_id:
             opponent_id = battle['opponent_id']
             user_hp, opponent_hp = battle['challenger_hp'], battle['opponent_hp']
@@ -905,31 +939,25 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             opponent_id = battle['challenger_id']
             user_hp, opponent_hp = battle['opponent_hp'], battle['challenger_hp']
 
-        # Ensure context is a dictionary and handle energy correctly
-        user_data = context.get('user_data', context)
-        
         # Initialize energy if not set
-        if 'energy' not in user_data:
-            user_data['energy'] = 50  # Set starting energy to 50
-        if 'bot_energy' not in user_data:
-            user_data['bot_energy'] = 50  # Set starting energy to 50 for bot
+        if 'energy' not in context.user_data:
+            context.user_data['energy'] = 50
+        if 'bot_energy' not in context.user_data:
+            context.user_data['bot_energy'] = 50
 
-        player_energy = user_data['energy']
-        bot_energy = user_data['bot_energy']
+        player_energy = context.user_data['energy'] if user_id != 7283636452 else context.user_data['bot_energy']
 
-        # Action logic for each move
+        # Action logic
         if action == "strike":
             energy_cost = 12
             if player_energy < energy_cost:
                 await send_message(update, "Not enough energy to use Strike.")
                 return
-
             damage = random.randint(12, 18)
-            critical_hit = random.random() < 0.15  # 15% chance of critical hit
-            if user_data.get('focus_critical', 0) > 0:
+            critical_hit = random.random() < 0.15
+            if context.user_data.get('focus_critical', 0) > 0:
                 critical_hit = True
-                user_data['focus_critical'] = 0  # Reset critical boost after use
-
+                context.user_data['focus_critical'] = 0
             if critical_hit:
                 damage *= 2
             opponent_hp -= damage
@@ -943,7 +971,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         elif action == "focus":
             energy_gain = random.randint(20, 30)
-            user_data['focus_critical'] = 0.25  # Next move has 25% more critical chance
+            context.user_data['focus_critical'] = 0.25
             result_message = f"You used Focus, gained {energy_gain} energy, and increased your critical hit chance by 25% for the next move."
 
         elif action == "zenstrike":
@@ -951,13 +979,11 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if player_energy < energy_cost:
                 await send_message(update, "Not enough energy to use Zen Strike.")
                 return
-
             damage = random.randint(25, 35)
-            critical_hit = random.random() < 0.2  # 20% chance of critical hit
-            if user_data.get('focus_critical', 0) > 0:
+            critical_hit = random.random() < 0.2
+            if context.user_data.get('focus_critical', 0) > 0:
                 critical_hit = True
-                user_data['focus_critical'] = 0  # Reset critical boost after use
-
+                context.user_data['focus_critical'] = 0
             if critical_hit:
                 damage *= 2
             opponent_hp -= damage
@@ -968,8 +994,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if player_energy < energy_cost:
                 await send_message(update, "Not enough energy to use Mind Trap.")
                 return
-
-            user_data['mind_trap'] = True  # Opponent's next move is 50% effective
+            context.user_data['mind_trap'] = True
             result_message = "You used Mind Trap, the opponent's next move will be 50% effective."
 
         elif action == "meditate":
@@ -979,8 +1004,10 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             result_message = f"You used Meditate, healed {heal} HP, and restored {energy_gain} energy."
 
         # Apply energy changes
-        player_energy = update_energy(user_data, action)
-        bot_energy = update_bot_energy(user_data, action) if bot_mode else bot_energy
+        if user_id != 7283636452:
+            context.user_data['energy'] = max(0, min(100, context.user_data['energy'] - energy_cost + energy_gain))
+        else:
+            context.user_data['bot_energy'] = max(0, min(100, context.user_data['bot_energy'] - energy_cost + energy_gain))
 
         # Check if the battle ends
         if opponent_hp <= 0:
@@ -1007,23 +1034,19 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
               battle['id']))
         db.commit()
 
-        # Visual health bar (10 blocks total) and energy display
-        def health_bar(hp, energy):
-            total_blocks = 10
-            filled_blocks = int((hp / 100) * total_blocks)
-            empty_blocks = total_blocks - filled_blocks
-            return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {hp}/100 HP | {energy}/100 Energy"
+        # Create the battle view
+        player_name = update.effective_user.first_name if user_id != 7283636452 else "Bot"
+        opponent_name = "Bot" if opponent_id == 7283636452 else "Opponent"
+        player_energy = context.user_data['energy'] if user_id != 7283636452 else context.user_data['bot_energy']
+        opponent_energy = context.user_data['bot_energy'] if opponent_id == 7283636452 else context.user_data['energy']
 
-        # Ensure correct values are displayed
-        player_health = user_hp if user_id != 7283636452 else opponent_hp
-        player_energy = user_data['energy'] if user_id != 7283636452 else user_data['bot_energy']
-        bot_health = opponent_hp if user_id != 7283636452 else user_hp
-        bot_energy = user_data['bot_energy'] if user_id != 7283636452 else user_data['energy']
+        battle_view = create_battle_view(player_name, user_hp, player_energy, opponent_name, opponent_hp, opponent_energy)
 
         # Send the result with updated HP and energy bars
         await context.bot.send_message(
             chat_id=battle['group_id'], 
-            text=f"{result_message}\n\n{health_bar(player_health, player_energy)} vs {health_bar(bot_health, bot_energy)}"
+            text=f"{result_message}\n\n{battle_view}",
+            parse_mode='Markdown'
         )
 
         # Notify players in the group chat
