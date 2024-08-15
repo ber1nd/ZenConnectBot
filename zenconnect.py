@@ -686,9 +686,11 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
     logger.info(f"Bot randomly chose action: {action}")
 
     try:
+        # Log before executing the action
+        logger.info(f"Bot is about to execute the move: {action}")
+
         # Execute the chosen move
         await execute_pvp_move(update, context, bot_mode=True, action=action)
-        logger.info(f"Bot executed the move: {action}")
 
     except Exception as e:
         logger.error(f"Error during bot move execution: {e}")
@@ -697,9 +699,11 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
     user_id = 7283636452 if bot_mode else update.effective_user.id  # If bot_mode, use bot's user ID
     db = get_db_connection()
 
-    # Define available moves
-    valid_moves = ["attack", "defend", "focus", "zenstrike"]
+    # Ensure 'action' is captured correctly
+    if not bot_mode:
+        action = context.args[0].lower() if context.args else None
 
+    # Debug log to check the action received
     logger.info(f"Received action: {action}")
 
     # Check for valid move
