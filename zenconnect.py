@@ -681,6 +681,17 @@ from telegram.ext import ContextTypes
 
 logger = logging.getLogger(__name__)
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+def generate_pvp_move_buttons(user_id):
+    keyboard = [
+        [InlineKeyboardButton("Attack", callback_data=f"pvp_attack_{user_id}")],
+        [InlineKeyboardButton("Defend", callback_data=f"pvp_defend_{user_id}")],
+        [InlineKeyboardButton("Focus", callback_data=f"pvp_focus_{user_id}")],
+        [InlineKeyboardButton("Zen Strike", callback_data=f"pvp_zenstrike_{user_id}")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
 async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db_connection()
     if db:
