@@ -640,40 +640,44 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         if db.is_connected():
             cursor.close()
   
+
+def fetch_pending_battle(db, user_id):
+    with db.cursor(dictionary=True) as cursor:
+        cursor.execute("""
+            SELECT * FROM pvp_battles 
+            WHERE (opponent_id = %s AND status = 'pending')
+            OR (challenger_id = %s AND opponent_id = 7283636452 AND status = 'pending')
+        """, (user_id, user_id))
+        battle = cursor.fetchone()
+        cursor.fetchall()  # Consume any remaining results
+    return battle
+
+def update_battle_status(db, battle_id, challenger_id):
+    with db.cursor() as cursor:
+        cursor.execute("""
+            UPDATE pvp_battles 
+            SET status = 'in_progress', current_turn = %s 
+            WHERE id = %s
+        """, (challenger_id, battle_id))
+        db.commit()
+
 @with_database_connection
 async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     user_id = update.effective_user.id
     logger.info(f"Accepting PvP challenge for user: {user_id}")
     
     try:
-        # Use a single cursor for all operations
-        with db.cursor(dictionary=True) as cursor:
-            # Fetch the pending battle
-            cursor.execute("""
-                SELECT * FROM pvp_battles 
-                WHERE (opponent_id = %s AND status = 'pending')
-                OR (challenger_id = %s AND opponent_id = 7283636452 AND status = 'pending')
-            """, (user_id, user_id))
-            battle = cursor.fetchone()
-            
-            if not battle:
-                logger.info(f"No pending battles found for user: {user_id}")
-                await update.message.reply_text("You have no pending PvP challenges.")
-                return
-            
-            logger.info(f"Found pending battle: {battle}")
-            
-            # Update the battle status
-            cursor.execute("""
-                UPDATE pvp_battles 
-                SET status = 'in_progress', current_turn = %s 
-                WHERE id = %s
-            """, (battle['challenger_id'], battle['id']))
-            
-            # Commit the changes
-            db.commit()
-            
-            logger.info(f"Updated battle status to in_progress for battle ID: {battle['id']}")
+        battle = fetch_pending_battle(db, user_id)
+        
+        if not battle:
+            logger.info(f"No pending battles found for user: {user_id}")
+            await update.message.reply_text("You have no pending PvP challenges.")
+            return
+        
+        logger.info(f"Found pending battle: {battle}")
+        
+        update_battle_status(db, battle['id'], battle['challenger_id'])
+        logger.info(f"Updated battle status to in_progress for battle ID: {battle['id']}")
 
         await update.message.reply_text("You have accepted the challenge! The battle begins now.")
         
@@ -693,7 +697,7 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         if db.is_connected():
             db.rollback()
     except Exception as e:
-        logger.error(f"Unexpected error in accept_pvp: {e}")
+        logger.error(f"Unexpected error in accept_pvp: {e}", exc_info=True)
         await update.message.reply_text("An unexpected error occurred. Please try again later.")
         if db.is_connected():
             db.rollback()
