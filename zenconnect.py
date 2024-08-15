@@ -697,19 +697,21 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
     user_id = 7283636452 if bot_mode else update.effective_user.id  # If bot_mode, use bot's user ID
     db = get_db_connection()
 
-    # Define available moves
-    valid_moves = ["attack", "defend", "focus", "zenstrike"]
+    # Ensure the action is not None
+    if not bot_mode and (not context.args or context.args[0].lower() not in ["attack", "defend", "focus", "zenstrike"]):
+        await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
+        return
 
-    # Debug log to check the action received
+    # If bot_mode is True, action is passed directly
+    if bot_mode:
+        logger.info(f"Bot action: {action}")
+    else:
+        # Get the action from the user's command
+        action = context.args[0].lower()
+
     logger.info(f"Received action: {action}")
 
-    # Check for valid move
-    if not action or action not in valid_moves:
-        logger.error(f"Invalid action received: {action}")
-        if not bot_mode:
-            await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
-        return
-        
+    db = get_db_connection()
     if db:
         try:
             cursor = db.cursor(dictionary=True)
@@ -724,7 +726,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
                 if not bot_mode:
                     await update.message.reply_text("You are not in an active battle.")
                 return
-            
+
             # Check if it's the user's turn
             if battle['current_turn'] != user_id and not bot_mode:
                 await update.message.reply_text("It's not your turn.")
@@ -825,7 +827,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
                 await context.bot.send_message(chat_id=update.message.chat_id, text=f"{update.effective_user.username} has been defeated.")
                 return
 
-            # Update the battle status and switch turns
+            # Update the battle status
             cursor.execute("""
                 UPDATE pvp_battles 
                 SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
@@ -840,7 +842,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
             
             # If it's the bot's turn next, call bot_pvp_move
-            if not bot_mode and opponent_id == 7283636452:
+            if opponent_id == 7283636452:
                 await bot_pvp_move(update, context, battle, opponent_hp, user_hp)
                 logger.info(f"Bot is making a move: {action}")
 
