@@ -686,28 +686,16 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
     logger.info(f"Bot randomly chose action: {action}")
 
     try:
-        # Log before executing the action
-        logger.info(f"Bot is about to execute the move: {action}")
-
         # Execute the chosen move
         await execute_pvp_move(update, context, bot_mode=True, action=action)
+        logger.info(f"Bot executed the move: {action}")
 
     except Exception as e:
         logger.error(f"Error during bot move execution: {e}")
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_mode=False, action=None):
-    # Determine user ID (bot or human)
-    user_id = 7283636452 if bot_mode else update.effective_user.id
+    user_id = 7283636452 if bot_mode else update.effective_user.id  # If bot_mode, use bot's user ID
     db = get_db_connection()
-
-    # If not in bot mode, fetch the action from context.args
-    if not bot_mode:
-        if context.args and len(context.args) > 0:
-            action = context.args[0].lower().strip()
-        else:
-            await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
-            logger.error(f"No action provided by user {user_id}.")
-            return
 
     # Define available moves
     valid_moves = ["attack", "defend", "focus", "zenstrike"]
@@ -716,12 +704,12 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
     logger.info(f"Received action: {action}")
 
     # Check for valid move
-    if action not in valid_moves:
+    if not action or action not in valid_moves:
         logger.error(f"Invalid action received: {action}")
         if not bot_mode:
             await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
         return
-
+        
     if db:
         try:
             cursor = db.cursor(dictionary=True)
@@ -732,7 +720,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             """, (user_id, user_id))
             battle = cursor.fetchone()
             logger.info(f"Executing PvP move: User: {user_id}, Action: {action}, Battle ID: {battle['id'] if battle else 'None'}, Status: {battle['status'] if battle else 'None'}")
-
             if not battle:
                 if not bot_mode:
                     await update.message.reply_text("You are not in an active battle.")
@@ -767,8 +754,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
 
             # Action logic
             if action == "attack":
-                damage = random.randint(5, 15)
-                critical_hit = random.random() < 0.1
+                damage = random.randint(5, 15)  # Random damage range
+                critical_hit = random.random() < 0.1  # 10% chance of critical hit
                 if context.user_data.get('focus_critical'):
                     critical_hit_chance = context.user_data['focus_critical']
                     critical_hit = critical_hit or (random.random() < critical_hit_chance)
@@ -838,7 +825,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
                 await context.bot.send_message(chat_id=update.message.chat_id, text=f"{update.effective_user.username} has been defeated.")
                 return
 
-            # Update the battle status
+            # Update the battle status and switch turns
             cursor.execute("""
                 UPDATE pvp_battles 
                 SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
@@ -853,14 +840,13 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
             
             # If it's the bot's turn next, call bot_pvp_move
-            if opponent_id == 7283636452:
+            if not bot_mode and opponent_id == 7283636452:
                 await bot_pvp_move(update, context, battle, opponent_hp, user_hp)
                 logger.info(f"Bot is making a move: {action}")
 
         except Error as e:
             logger.error(f"Database error in execute_pvp_move: {e}")
             await update.message.reply_text("An error occurred while executing the PvP move. Please try again later.")
-       
         finally:
             if db.is_connected():
                 cursor.close()
