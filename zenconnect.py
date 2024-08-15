@@ -838,9 +838,13 @@ async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
-    energy_cost = 0  # Initialize energy cost
-    energy_gain = 0  # Initialize energy gain
     
+    # Validate energy and HP for both players
+    if 'energy' not in context.user_data:
+        context.user_data['energy'] = 50  # Start with 50 energy
+    if 'bot_energy' not in context.user_data:
+        context.user_data['bot_energy'] = 50
+
     valid_moves = ["strike", "defend", "focus", "zenstrike", "mindtrap", "meditate"]
 
     if not bot_mode:
@@ -858,144 +862,172 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             await update.message.reply_text("Invalid move. Please use the provided buttons.")
             return
 
-    # Fetch the active battle involving the user
-    cursor = db.cursor(dictionary=True)
-    cursor.execute("""
-        SELECT * FROM pvp_battles 
-        WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
-    """, (user_id, user_id))
-    battle = cursor.fetchone()
-    
-    if not battle:
-        await update.message.reply_text("You are not in an active battle.")
-        return
-    
-    if battle['current_turn'] != user_id:
-        await update.message.reply_text("It's not your turn.")
+    if not action or action not in valid_moves:
+        if not bot_mode:
+            await update.callback_query.answer("Invalid move!")
         return
 
-    # Determine whether the user is the challenger or the opponent
-    if battle['challenger_id'] == user_id:
-        opponent_id = battle['opponent_id']
-        user_hp, opponent_hp = battle['challenger_hp'], battle['opponent_hp']
-    else:
-        opponent_id = battle['challenger_id']
-        user_hp, opponent_hp = battle['opponent_hp'], battle['challenger_hp']
-
-    # Initialize energy if not set, and ensure both the player and bot start with 50 energy
-    if 'energy' not in context.user_data:
-        context.user_data['energy'] = 50
-    if 'bot_energy' not in context.user_data:
-        context.user_data['bot_energy'] = 50
-
-    player_energy = context.user_data['energy']
-    bot_energy = context.user_data['bot_energy']
-
-    # Action logic for each move
-    if action == "strike":
-        energy_cost = 12
-        if player_energy < energy_cost:
-            await update.message.reply_text("Not enough energy to use Strike.")
+    try:
+        cursor = db.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT * FROM pvp_battles 
+            WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
+        """, (user_id, user_id))
+        battle = cursor.fetchone()
+        
+        if not battle:
+            if not bot_mode:
+                await send_message(update, "You are not in an active battle.")
             return
-        damage = random.randint(12, 18)
-        critical_hit = random.random() < 0.15  # 15% chance of critical hit
-        if context.user_data.get('focus_critical', 0) > 0:
-            critical_hit = True
-            context.user_data['focus_critical'] = 0  # Reset critical boost after use
-        if critical_hit:
-            damage *= 2
-        opponent_hp -= damage
-        result_message = f"You used Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
-
-    elif action == "defend":
-        energy_gain = 10
-        heal = random.randint(10, 20)
-        user_hp += heal
-        result_message = f"You used Defend, healed {heal} HP, and gained {energy_gain} energy."
-
-    elif action == "focus":
-        energy_gain = random.randint(20, 30)
-        context.user_data['focus_critical'] = 0.25  # Next move has 25% more critical chance
-        result_message = f"You used Focus, gained {energy_gain} energy, and increased your critical hit chance by 25% for the next move."
-
-    elif action == "zenstrike":
-        energy_cost = 40
-        if player_energy < energy_cost:
-            await update.message.reply_text("Not enough energy to use Zen Strike.")
+        
+        if battle['current_turn'] != user_id:
+            if not bot_mode:
+                await send_message(update, "It's not your turn.")
             return
-        damage = random.randint(25, 35)
-        critical_hit = random.random() < 0.2  # 20% chance of critical hit
-        if context.user_data.get('focus_critical', 0) > 0:
-            critical_hit = True
-            context.user_data['focus_critical'] = 0  # Reset critical boost after use
-        if critical_hit:
-            damage *= 2
-        opponent_hp -= damage
-        result_message = f"You used Zen Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
 
-    elif action == "mindtrap":
-        energy_cost = 20
-        if player_energy < energy_cost:
-            await update.message.reply_text("Not enough energy to use Mind Trap.")
+        # Get user and opponent info
+        if battle['challenger_id'] == user_id:
+            opponent_id = battle['opponent_id']
+            user_hp, opponent_hp = battle['challenger_hp'], battle['opponent_hp']
+        else:
+            opponent_id = battle['challenger_id']
+            user_hp, opponent_hp = battle['opponent_hp'], battle['challenger_hp']
+
+        player_energy = context.user_data.get('energy', 50)
+        bot_energy = context.user_data.get('bot_energy', 50)
+
+        energy_cost = 0
+        energy_gain = 0
+        
+        # Action logic for each move
+        if action == "strike":
+            energy_cost = 12
+            if player_energy < energy_cost:
+                await send_message(update, "Not enough energy to use Strike.")
+                return
+
+            damage = random.randint(12, 18)
+            critical_hit = random.random() < 0.15  # 15% chance of critical hit
+            if context.user_data.get('focus_critical', 0) > 0:
+                critical_hit = True
+                context.user_data['focus_critical'] = 0  # Reset critical boost after use
+
+            if critical_hit:
+                damage *= 2
+            opponent_hp -= damage
+            result_message = f"You used Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
+
+        elif action == "defend":
+            energy_gain = 10
+            heal = random.randint(10, 20)
+            user_hp = min(100, user_hp + heal)  # Ensure HP doesn't go above 100
+            result_message = f"You used Defend, healed {heal} HP, and gained 10 energy."
+
+        elif action == "focus":
+            energy_gain = random.randint(20, 30)
+            context.user_data['focus_critical'] = 0.25  # Next move has 25% more critical chance
+            result_message = f"You used Focus, gained {energy_gain} energy, and increased your critical hit chance by 25% for the next move."
+
+        elif action == "zenstrike":
+            energy_cost = 40
+            if player_energy < energy_cost:
+                await send_message(update, "Not enough energy to use Zen Strike.")
+                return
+
+            damage = random.randint(25, 35)
+            critical_hit = random.random() < 0.2  # 20% chance of critical hit
+            if context.user_data.get('focus_critical', 0) > 0:
+                critical_hit = True
+                context.user_data['focus_critical'] = 0  # Reset critical boost after use
+
+            if critical_hit:
+                damage *= 2
+            opponent_hp -= damage
+            result_message = f"You used Zen Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
+
+        elif action == "mindtrap":
+            energy_cost = 20
+            if player_energy < energy_cost:
+                await send_message(update, "Not enough energy to use Mind Trap.")
+                return
+
+            context.user_data['mind_trap'] = True  # Opponent's next move is 50% effective
+            result_message = "You used Mind Trap, the opponent's next move will be 50% effective."
+
+        elif action == "meditate":
+            energy_gain = random.randint(15, 25)
+            heal = random.randint(5, 15)
+            user_hp = min(100, user_hp + heal)  # Ensure HP doesn't go above 100
+            result_message = f"You used Meditate, healed {heal} HP, and restored {energy_gain} energy."
+
+        # Apply energy changes
+        player_energy = max(0, min(100, player_energy - energy_cost + energy_gain))
+
+        # Update context.user_data
+        if bot_mode:
+            context.user_data['bot_energy'] = player_energy
+        else:
+            context.user_data['energy'] = player_energy
+
+        # Check if the battle ends
+        if opponent_hp <= 0:
+            cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (user_id, battle['id']))
+            db.commit()
+            await send_message(update, f"You have won the battle! Your opponent is defeated.")
+            await context.bot.send_message(chat_id=battle['group_id'], text=f"{update.effective_user.username} has won the battle!")
             return
-        context.user_data['mind_trap'] = True  # Opponent's next move is 50% effective
-        result_message = "You used Mind Trap, the opponent's next move will be 50% effective."
+        elif user_hp <= 0:
+            cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
+            db.commit()
+            await send_message(update, f"You have been defeated.")
+            await context.bot.send_message(chat_id=battle['group_id'], text=f"{update.effective_user.username} has been defeated.")
+            return
 
-    elif action == "meditate":
-        energy_gain = random.randint(15, 25)
-        heal = random.randint(5, 15)
-        user_hp += heal
-        result_message = f"You used Meditate, healed {heal} HP, and restored {energy_gain} energy."
+        # Update the battle status
+        cursor.execute("""
+            UPDATE pvp_battles 
+            SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
+            WHERE id = %s
+        """, (user_hp if user_id == battle['challenger_id'] else opponent_hp,
+              opponent_hp if user_id == battle['challenger_id'] else user_hp,
+              opponent_id,
+              battle['id']))
+        db.commit()
 
-    # Apply energy changes
-    if not bot_mode:
-        context.user_data['energy'] = max(0, min(100, player_energy - energy_cost + energy_gain))
-    else:
-        context.user_data['bot_energy'] = max(0, min(100, bot_energy - energy_cost + energy_gain))
+        # Visual health bar (10 blocks total) and energy display
+        def health_bar(hp, energy):
+            total_blocks = 10
+            filled_blocks = int((hp / 100) * total_blocks)
+            empty_blocks = total_blocks - filled_blocks
+            return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {hp}/100 HP | {energy}/100 Energy"
 
-    # Health bar display logic
-    def health_bar(hp, energy):
-        total_blocks = 10
-        filled_blocks = int((hp / 100) * total_blocks)
-        empty_blocks = total_blocks - filled_blocks
-        return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {hp}/100 HP | {energy}/100 Energy"
+        player_health = user_hp if user_id != 7283636452 else opponent_hp
+        player_energy = context.user_data.get('energy', 50) if user_id != 7283636452 else context.user_data.get('bot_energy', 50)
+        bot_health = opponent_hp if user_id != 7283636452 else user_hp
+        bot_energy = context.user_data.get('bot_energy', 50) if user_id != 7283636452 else context.user_data.get('energy', 50)
 
-    # Update player and bot energy and health
-    player_health = user_hp if user_id == battle['challenger_id'] else opponent_hp
-    bot_health = opponent_hp if user_id == battle['challenger_id'] else user_hp
+        await context.bot.send_message(
+            chat_id=battle['group_id'], 
+            text=f"{result_message}\n\n{health_bar(player_health, player_energy)} vs {health_bar(bot_health, bot_energy)}"
+        )
 
-    player_energy = context.user_data['energy']
-    bot_energy = context.user_data['bot_energy']
+        # Send the move buttons for the next turn
+        if opponent_id != 7283636452:
+            await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
+        else:
+            await bot_pvp_move(update, context)
 
-    await context.bot.send_message(
-        chat_id=battle['group_id'],
-        text=f"{result_message}\n\n{health_bar(player_health, player_energy)} vs {health_bar(bot_health, bot_energy)}"
-    )
-
-    # Update the battle in the database
-    cursor.execute("""
-        UPDATE pvp_battles 
-        SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
-        WHERE id = %s
-    """, (
-        player_health if user_id == battle['challenger_id'] else bot_health,
-        bot_health if user_id == battle['challenger_id'] else player_health,
-        opponent_id,  # Pass turn to opponent
-        battle['id']
-    ))
-    db.commit()
-
-    # Send move buttons for the next turn
-    if opponent_id != 7283636452:
-        await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
-    else:
-        await bot_pvp_move(update, context)
-
-    cursor.close()
+    except Exception as e:
+        logger.error(f"Error in execute_pvp_move: {e}")
+        if not bot_mode and update.callback_query:
+            await update.callback_query.answer("An error occurred while executing the PvP move. Please try again later.")
+    finally:
+        if db.is_connected():
+            cursor.close()
 
     if not bot_mode and update.callback_query:
         await update.callback_query.answer()
-
+        
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     db = get_db_connection()
