@@ -552,6 +552,7 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # PvP Functionality
 from datetime import datetime, timezone
+
 @with_database_connection
 async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     user_id = update.effective_user.id
@@ -565,28 +566,17 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     if opponent_username == 'bot':
         opponent_id = 7283636452  # Bot's ID
     else:
-        # Ensure the opponent exists in the users table
-        if db:
-            try:
-                cursor = db.cursor(dictionary=True)
-                cursor.execute("SELECT * FROM users WHERE username = %s", (opponent_username,))
-                opponent = cursor.fetchone()
-
-                if not opponent:
-                    await update.message.reply_text(f"Could not find user with username @{opponent_username}. Please make sure they have interacted with the bot.")
-                    cursor.close()
-                    return
-
-                opponent_id = opponent['user_id']
-            except Error as e:
-                logger.error(f"Database error in start_pvp: {e}")
-                await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
-                cursor.close()
+        try:
+            cursor = db.cursor(dictionary=True)
+            cursor.execute("SELECT user_id FROM users WHERE username = %s", (opponent_username,))
+            result = cursor.fetchone()
+            if result:
+                opponent_id = result['user_id']
+            else:
+                await update.message.reply_text(f"Could not find user with username @{opponent_username}. Please make sure they have interacted with the bot.")
                 return
-            finally:
-                if db.is_connected():
-                    cursor.close()
-
+        finally:
+            cursor.close()
     if not db or opponent_id is None:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
         return
@@ -857,15 +847,18 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
     valid_moves = ["attack", "defend", "focus", "zenstrike"]
 
     if not bot_mode:
-        # Retrieve the action from callback data
-        query = update.callback_query
-        data = query.data.split('_')
-        action = data[1]
-        user_id_from_callback = int(data[-1])
+        if update.callback_query:
+            query = update.callback_query
+            data = query.data.split('_')
+            action = data[1]
+            user_id_from_callback = int(data[-1])
 
-        # Ensure the action is for the correct player
-        if user_id_from_callback != user_id:
-            await query.answer("It's not your turn!")
+            # Ensure the action is for the correct player
+            if user_id_from_callback != user_id:
+                await query.answer("It's not your turn!")
+                return
+        else:
+            await update.message.reply_text("Invalid move. Please use the provided buttons.")
             return
 
     logger.info(f"Received action: {action}")
@@ -873,7 +866,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
     if not action or action not in valid_moves:
         logger.error(f"Invalid action received: {action}")
         if not bot_mode:
-            await query.answer("Invalid move!")
+            await update.callback_query.answer("Invalid move!")
         return
 
     try:
@@ -1011,14 +1004,14 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
     except Exception as e:
         logger.error(f"Error in execute_pvp_move: {e}")
-        if not bot_mode:
-            await query.answer("An error occurred while executing the PvP move. Please try again later.")
+        if not bot_mode and update.callback_query:
+            await update.callback_query.answer("An error occurred while executing the PvP move. Please try again later.")
     finally:
         if db.is_connected():
             cursor.close()
 
-    if not bot_mode:
-        await update.callback_query.answer("I'm having trouble accessing my memory right now. Please try again later.")
+    if not bot_mode and update.callback_query:
+        await update.callback_query.answer()
 
 
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1221,8 +1214,8 @@ def setup_handlers(application):
 
     # Callback query handlers
     application.add_handler(CallbackQueryHandler(subscribe_callback, pattern="^subscribe$"))
-    application.add_handler(CallbackQueryHandler(execute_pvp_move, pattern="^pvp_"))
     application.add_handler(CallbackQueryHandler(execute_pvp_move_wrapper, pattern="^pvp_"))
+    
     # Pre-checkout and successful payment handlers
     application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
