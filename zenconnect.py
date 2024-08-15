@@ -686,13 +686,13 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db:
         try:
             cursor = db.cursor(dictionary=True)
-            # Fetch the active battle
+            # Fetch the active battle where the bot is involved
             cursor.execute("""
                 SELECT * FROM pvp_battles 
                 WHERE (challenger_id = 7283636452 OR opponent_id = 7283636452) AND status = 'in_progress'
             """)
             battle = cursor.fetchone()
-            
+
             if not battle:
                 logger.info("No active battle found for the bot.")
                 return
@@ -701,13 +701,13 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info("It's not the bot's turn.")
                 return
 
-            # Fetch battle context
+            # Fetch battle context and generate the bot's move using AI
             bot_hp = battle['challenger_hp'] if battle['challenger_id'] == 7283636452 else battle['opponent_hp']
             opponent_hp = battle['opponent_hp'] if battle['challenger_id'] == 7283636452 else battle['challenger_hp']
             bot_energy = context.user_data.get('energy', 100)
             bot_zenstrike_cooldown = context.user_data.get('zenstrike_cooldown', 0)
 
-            # Generate AI response
+            # Use the existing AI-based move generation logic
             prompt = f"""
             You are a Zen warrior engaged in a duel. Your goal is to win by reducing your opponent's HP to 0 while keeping your HP above 0. 
             
@@ -715,18 +715,18 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             - Your HP: {bot_hp}/100
             - Opponent's HP: {opponent_hp}/100
             - Your Energy: {bot_energy} points
-            - zenstrike Cooldown: {bot_zenstrike_cooldown} turns left (if 0, zenstrike can be used)
+            - Zen Strike Cooldown: {bot_zenstrike_cooldown} turns left (if 0, Zen Strike can be used)
             
             Available actions:
             - Attack: Deal damage to the opponent.
             - Defend: Heal yourself by gaining HP.
             - Focus: Recover energy and increase your critical strike chances for the next turn.
-            - zenstrike: A powerful move that deals significant damage, but it has a 2-turn cooldown after use.
+            - Zen Strike: A powerful move that deals significant damage, but it has a 2-turn cooldown after use.
 
             Strategy to win:
             - Prioritize keeping your HP above 0.
             - Use "Focus" to build up energy and increase critical hit chances when necessary.
-            - Use "zenstrike" whenever possible to deal high damage, especially when the opponent's HP is low.
+            - Use "Zen Strike" whenever possible to deal high damage, especially when the opponent's HP is low.
             - If your HP is low, use "Defend" to regain health and prolong the battle.
             - Use "Attack" regularly to chip away at the opponent's HP, especially when your HP is higher than the opponent's.
             
@@ -768,14 +768,23 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
     valid_moves = ["attack", "defend", "focus", "zenstrike"]
 
     if not bot_mode:
-        action = context.args[0].lower() if context.args else None
+        # Retrieve the action from callback data if it's not provided directly
+        if not action:
+            data = update.callback_query.data.split('_')
+            action = data[1]
+            user_id_from_callback = int(data[-1])
+
+            # Ensure the action is for the correct player
+            if user_id_from_callback != user_id:
+                await update.callback_query.answer("It's not your turn!")
+                return
 
     logger.info(f"Received action: {action}")
 
     if not action or action not in valid_moves:
         logger.error(f"Invalid action received: {action}")
         if not bot_mode:
-            await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
+            await update.callback_query.answer("Invalid move!")
         return
 
     if db:
@@ -911,7 +920,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
                 logger.info("It's now the bot's turn.")
                 await bot_pvp_move(update, context)
             else:
-                logger.info("User's turn now.")
+                # If it's the opponent's turn (another player), send the move buttons to the opponent
+                await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:",
+                                               reply_markup=generate_pvp_move_buttons(opponent_id))
 
         except Exception as e:
             logger.error(f"Database error in execute_pvp_move: {e}")
