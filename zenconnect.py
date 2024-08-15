@@ -717,10 +717,12 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 def generate_pvp_move_buttons(user_id):
     keyboard = [
-        [InlineKeyboardButton("Attack", callback_data=f"pvp_attack_{user_id}")],
+        [InlineKeyboardButton("Strike", callback_data=f"pvp_strike_{user_id}")],
         [InlineKeyboardButton("Defend", callback_data=f"pvp_defend_{user_id}")],
         [InlineKeyboardButton("Focus", callback_data=f"pvp_focus_{user_id}")],
-        [InlineKeyboardButton("Zen Strike", callback_data=f"pvp_zenstrike_{user_id}")]
+        [InlineKeyboardButton("Zen Strike", callback_data=f"pvp_zenstrike_{user_id}")],
+        [InlineKeyboardButton("Mind Trap", callback_data=f"pvp_mindtrap_{user_id}")],
+        [InlineKeyboardButton("Meditate", callback_data=f"pvp_meditate_{user_id}")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -748,53 +750,53 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bot_hp = battle['challenger_hp'] if battle['challenger_id'] == 7283636452 else battle['opponent_hp']
             opponent_hp = battle['opponent_hp'] if battle['challenger_id'] == 7283636452 else battle['challenger_hp']
             bot_energy = context.user_data.get('energy', 100)
-            bot_zenstrike_cooldown = context.user_data.get('zenstrike_cooldown', 0)
 
-            # Use the existing AI-based move generation logic
+            # Use the AI-based move generation logic with an aggressive strategy
             prompt = f"""
-            You are a Zen warrior engaged in a duel. Your goal is to win by reducing your opponent's HP to 0 while keeping your HP above 0. 
+            You are a Zen warrior AI engaged in a strategic duel. Your goal is to win decisively by reducing your opponent's HP to 0 while keeping your HP above 0. 
             
             Current situation:
             - Your HP: {bot_hp}/100
             - Opponent's HP: {opponent_hp}/100
             - Your Energy: {bot_energy} points
-            - zenstrike Cooldown: {bot_zenstrike_cooldown} turns left (if 0, zenstrike can be used)
             
             Available actions:
-            - Attack: Deal damage to the opponent.
-            - Defend: Heal yourself by gaining HP.
-            - Focus: Recover energy and increase your critical strike chances for the next turn.
-            - zenstrike: A powerful move that deals significant damage, but it has a 2-turn cooldown after use.
+            - Strike: Deal moderate damage to the opponent. Costs 12 energy.
+            - Defend: Heal yourself and gain energy. Costs 0 energy, gains 10 energy.
+            - Focus: Recover energy and increase your critical hit chances for the next turn. Gains 20-30 energy.
+            - Zen Strike: A powerful move that deals significant damage. Costs 40 energy.
+            - Mind Trap: Reduces the effectiveness of the opponent's next move by 50%. Costs 20 energy.
+            - Meditate: Heal yourself moderately and restore energy. Gains 15-25 energy.
 
             Strategy to win:
-            - Prioritize keeping your HP above 0.
-            - Use "Focus" to build up energy and increase critical hit chances when necessary.
-            - Use "zenstrike" whenever possible to deal high damage, especially when the opponent's HP is low.
-            - If your HP is low, use "Defend" to regain health and prolong the battle.
-            - Use "Attack" regularly to chip away at the opponent's HP, especially when your HP is higher than the opponent's.
+            - Always prioritize moves that maximize damage output while managing energy efficiently.
+            - Use "Zen Strike" whenever you have enough energy and the opponent's HP is low enough for a potential knockout.
+            - Use "Mind Trap" strategically to disrupt the opponent's most powerful attacks.
+            - Use "Focus" and "Meditate" to prepare for high-damage attacks or to recover from heavy hits.
+            - If your HP is critically low, use "Defend" or "Meditate" to prolong the battle and regain energy for a powerful counter-attack.
             
-            Based on the current situation, choose the best action that maximizes your chances of winning the battle.
+            Based on the current situation, choose the best action that maximizes your chances of winning the battle swiftly and effectively.
             """
 
             ai_response = await generate_response(prompt)
 
             # Extract the action from the AI response
             action = None
-            for move in ["attack", "defend", "focus", "zenstrike"]:
+            for move in ["strike", "defend", "focus", "zenstrike", "mindtrap", "meditate"]:
                 if move in ai_response.lower():
                     action = move
                     break
 
             if not action:
-                logger.warning(f"AI did not provide a valid action. Defaulting to 'attack'. AI response: {ai_response}")
-                action = "attack"
+                logger.warning(f"AI did not provide a valid action. Defaulting to 'strike'. AI response: {ai_response}")
+                action = "strike"
 
             logger.info(f"Bot chose action: {action} based on AI response: {ai_response}")
 
             # Execute the chosen move
             await execute_pvp_move(update, context, db, bot_mode=True, action=action)
             # Send the AI's explanation to the chat
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Zen Bot's thoughts: {ai_response}")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Zen Bot's strategy: {ai_response}")
 
         except Exception as e:
             logger.error(f"Error during bot move execution: {e}")
@@ -803,21 +805,12 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cursor.close()
                 db.close()
 
-async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    db = get_db_connection()
-    if db:
-        try:
-            await execute_pvp_move(update, context, db=db)
-        finally:
-            if db.is_connected():
-                db.close()
-    else:
-        logger.error("Failed to connect to database in bot_pvp_move")
-
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
-
-    valid_moves = ["attack", "defend", "focus", "zenstrike"]
+    energy_cost = 0  # Initialize energy cost
+    energy_gain = 0  # Initialize energy gain
+    
+    valid_moves = ["strike", "defend", "focus", "zenstrike", "mindtrap", "meditate"]
 
     if not bot_mode:
         if update.callback_query:
@@ -872,86 +865,81 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if 'energy' not in context.user_data:
             context.user_data['energy'] = 100
 
-        # Initialize cooldown for zenstrike if not set
-        if 'zenstrike_cooldown' not in context.user_data:
-            context.user_data['zenstrike_cooldown'] = 0
+        # Action logic for each move
+        if action == "strike":
+            energy_cost = 12
+            if context.user_data['energy'] < energy_cost:
+                await send_message(update, "Not enough energy to use Strike.")
+                return
 
-        # Check for zenstrike cooldown
-        if action == "zenstrike" and context.user_data['zenstrike_cooldown'] > 0:
-            if not bot_mode:
-                await send_message(update, f"Zen Strike is on cooldown for {context.user_data['zenstrike_cooldown']} more turn(s). Please choose another move.")
-            return
-
-        # Action logic
-        if action == "attack":
-            damage = random.randint(5, 15)  # Random damage range
-            critical_hit = random.random() < 0.1  # 10% chance of critical hit
-            if context.user_data.get('focus_critical'):
-                critical_hit_chance = context.user_data['focus_critical']
-                critical_hit = critical_hit or (random.random() < critical_hit_chance)
-                context.user_data['focus_critical'] = 0  # Reset critical boost
+            damage = random.randint(12, 18)
+            critical_hit = random.random() < 0.15  # 15% chance of critical hit
+            if context.user_data.get('focus_critical', 0) > 0:
+                critical_hit = True
+                context.user_data['focus_critical'] = 0  # Reset critical boost after use
 
             if critical_hit:
                 damage *= 2
             opponent_hp -= damage
-            result_message = f"You attacked and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
-        
+            result_message = f"You used Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
+
         elif action == "defend":
-            reduced_damage = random.randint(2, 7)
-            user_hp += reduced_damage  # Gain some HP for defending
-            result_message = f"You defended and regained {reduced_damage} HP."
-        
+            energy_gain = 10
+            heal = random.randint(10, 20)
+            user_hp += heal
+            result_message = f"You used Defend, healed {heal} HP, and gained 10 energy."
+
         elif action == "focus":
-            energy_gain = random.randint(10, 20)
-            critical_boost = random.uniform(0.1, 0.3)  # Boost critical hit chance for next turn
-            context.user_data['focus_critical'] = critical_boost
-            context.user_data['energy'] += energy_gain
-            result_message = f"You focused, gaining {energy_gain} energy and increased your critical hit chance by {int(critical_boost*100)}% for the next turn."
+            energy_gain = random.randint(20, 30)
+            context.user_data['focus_critical'] = 0.25  # Next move has 25% more critical chance
+            result_message = f"You used Focus, gained {energy_gain} energy, and increased your critical hit chance by 25% for the next move."
 
         elif action == "zenstrike":
-            special_damage = random.randint(10, 25)
-            energy_cost = 20
-            critical_hit = random.random() < 0.15  # 15% chance of critical hit
-            if context.user_data.get('focus_critical'):
-                critical_hit_chance = context.user_data['focus_critical']
-                critical_hit = critical_hit or (random.random() < critical_hit_chance)
-                context.user_data['focus_critical'] = 0  # Reset critical boost
+            energy_cost = 40
+            if context.user_data['energy'] < energy_cost:
+                await send_message(update, "Not enough energy to use Zen Strike.")
+                return
+
+            damage = random.randint(25, 35)
+            critical_hit = random.random() < 0.2  # 20% chance of critical hit
+            if context.user_data.get('focus_critical', 0) > 0:
+                critical_hit = True
+                context.user_data['focus_critical'] = 0  # Reset critical boost after use
 
             if critical_hit:
-                special_damage *= 2
-            opponent_hp -= special_damage
-            context.user_data['energy'] -= energy_cost
-            result_message = f"You unleashed a Zen Strike and dealt {special_damage} damage{' (Critical Hit!)' if critical_hit else ''}."
+                damage *= 2
+            opponent_hp -= damage
+            result_message = f"You used Zen Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
 
-            # Set zenstrike on cooldown
-            context.user_data['zenstrike_cooldown'] = 2  # 2 turns cooldown
+        elif action == "mindtrap":
+            energy_cost = 20
+            if context.user_data['energy'] < energy_cost:
+                await send_message(update, "Not enough energy to use Mind Trap.")
+                return
 
-        # Decrement cooldown if not zenstrike
-        if action != "zenstrike" and context.user_data['zenstrike_cooldown'] > 0:
-            context.user_data['zenstrike_cooldown'] -= 1
+            context.user_data['mind_trap'] = True  # Opponent's next move is 50% effective
+            result_message = "You used Mind Trap, the opponent's next move will be 50% effective."
 
-        # Visual health bar (10 blocks total)
-        def health_bar(hp):
-            total_blocks = 10
-            filled_blocks = int((hp / 100) * total_blocks)
-            empty_blocks = total_blocks - filled_blocks
-            return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {hp}/100 HP"
+        elif action == "meditate":
+            energy_gain = random.randint(15, 25)
+            heal = random.randint(5, 15)
+            user_hp += heal
+            result_message = f"You used Meditate, healed {heal} HP, and restored {energy_gain} energy."
 
-        # Display current energy points in the result message
-        energy_points = context.user_data.get('energy', 100)
-        result_message += f"\n\nYour current energy: {energy_points} points."
+        # Apply energy changes
+        context.user_data['energy'] = max(0, min(100, context.user_data['energy'] - energy_cost + energy_gain))
 
         # Check if the battle ends
         if opponent_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (user_id, battle['id']))
             db.commit()
-            await send_message(update, f"You have won the battle! Your opponent is defeated.\n\n{health_bar(user_hp)}")
+            await send_message(update, f"You have won the battle! Your opponent is defeated.")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{update.effective_user.username} has won the battle!")
             return
         elif user_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
             db.commit()
-            await send_message(update, f"You have been defeated.\n\n{health_bar(user_hp)}")
+            await send_message(update, f"You have been defeated.")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{update.effective_user.username} has been defeated.")
             return
 
@@ -966,10 +954,17 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
               battle['id']))
         db.commit()
 
+        # Visual health bar (10 blocks total)
+        def health_bar(hp):
+            total_blocks = 10
+            filled_blocks = int((hp / 100) * total_blocks)
+            empty_blocks = total_blocks - filled_blocks
+            return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {hp}/100 HP"
+
         # Notify players in the group chat
         await context.bot.send_message(chat_id=battle['group_id'], text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
         
-         # Send the move buttons for the next turn
+        # Send the move buttons for the next turn
         if opponent_id != 7283636452:
             await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
         else:
