@@ -552,11 +552,10 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # PvP Functionality
 from datetime import datetime, timezone
-
-async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@with_database_connection
+async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     user_id = update.effective_user.id
     opponent_username = context.args[0].replace('@', '') if context.args else None
-    db = get_db_connection()
 
     if not opponent_username:
         await update.message.reply_text("Please specify a valid opponent or type 'bot' to challenge the bot.")
@@ -835,7 +834,7 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"Bot chose action: {action} based on AI response: {ai_response}")
 
             # Execute the chosen move
-            await execute_pvp_move(update, context, bot_mode=True, action=action)
+            await execute_pvp_move(update, context, db, bot_mode=True, action=action)
 
             # Send the AI's explanation to the chat
             await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Zen Bot's thoughts: {ai_response}")
@@ -847,6 +846,11 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cursor.close()
                 db.close()
 
+@with_database_connection
+async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
+    await execute_pvp_move(update, context, db=db)
+
+@with_database_connection
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
 
@@ -1218,7 +1222,7 @@ def setup_handlers(application):
     # Callback query handlers
     application.add_handler(CallbackQueryHandler(subscribe_callback, pattern="^subscribe$"))
     application.add_handler(CallbackQueryHandler(execute_pvp_move, pattern="^pvp_"))
-    
+    application.add_handler(CallbackQueryHandler(execute_pvp_move_wrapper, pattern="^pvp_"))
     # Pre-checkout and successful payment handlers
     application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
