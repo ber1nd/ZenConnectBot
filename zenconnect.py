@@ -825,12 +825,12 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         
         if not battle:
             if not bot_mode:
-                await update.message.reply_text("You are not in an active battle.")
+                await send_message(update, "You are not in an active battle.")
             return
         
         if battle['current_turn'] != user_id:
             if not bot_mode:
-                await update.message.reply_text("It's not your turn.")
+                await send_message(update, "It's not your turn.")
             return
 
         # Get user and opponent info
@@ -852,7 +852,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         # Check for zenstrike cooldown
         if action == "zenstrike" and context.user_data['zenstrike_cooldown'] > 0:
             if not bot_mode:
-                await update.callback_query.answer(f"Zen Strike is on cooldown for {context.user_data['zenstrike_cooldown']} more turn(s). Please choose another move.")
+                await send_message(update, f"Zen Strike is on cooldown for {context.user_data['zenstrike_cooldown']} more turn(s). Please choose another move.")
             return
 
         # Action logic
@@ -918,14 +918,14 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if opponent_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (user_id, battle['id']))
             db.commit()
-            await update.message.reply_text(f"You have won the battle! Your opponent is defeated.\n\n{health_bar(user_hp)}")
-            await context.bot.send_message(chat_id=update.message.chat_id, text=f"{update.effective_user.username} has won the battle!")
+            await send_message(update, f"You have won the battle! Your opponent is defeated.\n\n{health_bar(user_hp)}")
+            await context.bot.send_message(chat_id=battle['group_id'], text=f"{update.effective_user.username} has won the battle!")
             return
         elif user_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
             db.commit()
-            await update.message.reply_text(f"You have been defeated.\n\n{health_bar(user_hp)}")
-            await context.bot.send_message(chat_id=update.message.chat_id, text=f"{update.effective_user.username} has been defeated.")
+            await send_message(update, f"You have been defeated.\n\n{health_bar(user_hp)}")
+            await context.bot.send_message(chat_id=battle['group_id'], text=f"{update.effective_user.username} has been defeated.")
             return
 
         # Update the battle status
@@ -940,7 +940,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         db.commit()
 
         # Notify players in the group chat
-        await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
+        await context.bot.send_message(chat_id=battle['group_id'], text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
         
          # Send the move buttons for the next turn
         if opponent_id != 7283636452:
@@ -958,6 +958,13 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
     if not bot_mode and update.callback_query:
         await update.callback_query.answer()
+
+async def send_message(update: Update, text: str):
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(text)
+    else:
+        await update.message.reply_text(text)
 
 
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
