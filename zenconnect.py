@@ -696,8 +696,18 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
         logger.error(f"Error during bot move execution: {e}")
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_mode=False, action=None):
-    user_id = 7283636452 if bot_mode else update.effective_user.id  # If bot_mode, use bot's user ID
+    # Determine user ID (bot or human)
+    user_id = 7283636452 if bot_mode else update.effective_user.id
     db = get_db_connection()
+
+    # If not in bot mode, fetch the action from context.args
+    if not bot_mode:
+        if context.args and len(context.args) > 0:
+            action = context.args[0].lower().strip()
+        else:
+            await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
+            logger.error(f"No action provided by user {user_id}.")
+            return
 
     # Define available moves
     valid_moves = ["attack", "defend", "focus", "zenstrike"]
@@ -706,12 +716,12 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
     logger.info(f"Received action: {action}")
 
     # Check for valid move
-    if not action or action not in valid_moves:
+    if action not in valid_moves:
         logger.error(f"Invalid action received: {action}")
         if not bot_mode:
             await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
         return
-        
+
     if db:
         try:
             cursor = db.cursor(dictionary=True)
@@ -722,6 +732,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             """, (user_id, user_id))
             battle = cursor.fetchone()
             logger.info(f"Executing PvP move: User: {user_id}, Action: {action}, Battle ID: {battle['id'] if battle else 'None'}, Status: {battle['status'] if battle else 'None'}")
+
             if not battle:
                 if not bot_mode:
                     await update.message.reply_text("You are not in an active battle.")
@@ -756,8 +767,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
 
             # Action logic
             if action == "attack":
-                damage = random.randint(5, 15)  # Random damage range
-                critical_hit = random.random() < 0.1  # 10% chance of critical hit
+                damage = random.randint(5, 15)
+                critical_hit = random.random() < 0.1
                 if context.user_data.get('focus_critical'):
                     critical_hit_chance = context.user_data['focus_critical']
                     critical_hit = critical_hit or (random.random() < critical_hit_chance)
@@ -849,6 +860,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
         except Error as e:
             logger.error(f"Database error in execute_pvp_move: {e}")
             await update.message.reply_text("An error occurred while executing the PvP move. Please try again later.")
+       
         finally:
             if db.is_connected():
                 cursor.close()
