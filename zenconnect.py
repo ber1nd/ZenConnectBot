@@ -706,11 +706,11 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             opponent_hp = battle['opponent_hp'] if battle['challenger_id'] == 7283636452 else battle['challenger_hp']
 
             # Generate AI response
-            prompt = f"""in a PvP battle text game, choose the best action based on the current situation:
+            prompt = f"""choose the best action based on the current situation and to bring the opponent HP to 0 before the bot HP goes to 0:
             Your HP: {bot_hp}/100
             Opponent HP: {opponent_hp}/100
             Available actions: attack(does damage to the opponent), defend(heal the bot HP), focus (recover energy and increase critical strike chances), zenstrike (it does more damage but it has 2 turns cooldown so it cannot be done every round). The goal of the game is to bring the opponent to 0 HP
-            Provide your chosen action and a brief explanation in the style of a Zen monk.
+            Provide your chosen action and a brief explanation why, considering you want to win the game bringing the oppenent to 0 hp and keep the bot hp above 0.
             """
             ai_response = await generate_response(prompt)
 
