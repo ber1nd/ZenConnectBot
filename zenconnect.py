@@ -681,7 +681,7 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
 
     await asyncio.sleep(random.uniform(2, 4))  # Delay for realism
 
-    # Temporarily choose a random action for testing
+    # Choose a random action for testing
     action = random.choice(["attack", "defend", "focus", "zenstrike"])
     logger.info(f"Bot randomly chose action: {action}")
 
@@ -719,7 +719,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
         return
 
-    # Database interaction and battle logic follow
     if db:
         try:
             cursor = db.cursor(dictionary=True)
@@ -853,6 +852,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             if not bot_mode and opponent_id == 7283636452:
                 logger.info("It's now the bot's turn.")
                 await bot_pvp_move(update, context, battle, opponent_hp, user_hp)
+                logger.info(f"Bot has completed its move.")
+            else:
+                logger.info("User's turn now.")
 
         except Error as e:
             logger.error(f"Database error in execute_pvp_move: {e}")
