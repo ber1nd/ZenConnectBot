@@ -558,18 +558,76 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if not opponent:
                     await update.message.reply_text(f"Could not find user with username @{opponent_username}. Please make sure they have interacted with the bot.")
-                    cursor.close()  # Close the cursor
+                    cursor.close()
                     return
 
                 opponent_id = opponent['user_id']
             except Error as e:
                 logger.error(f"Database error in start_pvp: {e}")
                 await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
-                cursor.close()  # Ensure cursor is closed in case of an error
+                cursor.close()
                 return
             finally:
                 if db.is_connected():
                     cursor.close()
+
+    if not db or opponent_id is None:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+        return
+
+    try:
+        cursor = db.cursor(dictionary=True)
+
+        # Ensure the challenger exists in the users table
+        cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+        challenger = cursor.fetchone()
+
+        if not challenger:
+            await update.message.reply_text("You are not registered in the system. Please interact with the bot first.")
+            cursor.close()
+            return
+
+        # Check if there's an ongoing PvP battle between these two users
+        cursor.execute("""
+            SELECT * FROM pvp_battles 
+            WHERE ((challenger_id = %s AND opponent_id = %s) 
+            OR (challenger_id = %s AND opponent_id = %s)) 
+            AND status = 'in_progress'
+        """, (user_id, opponent_id, opponent_id, user_id))
+        battle = cursor.fetchone()
+
+        if battle:
+            cursor.close()
+            await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
+            return
+
+        cursor.close()
+
+        # Create a new PvP battle
+        cursor = db.cursor()
+        cursor.execute("""
+            INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
+            VALUES (%s, %s, %s, %s, 'pending')
+        """, (user_id, opponent_id, update.effective_chat.id, user_id))
+        db.commit()
+        cursor.close()
+
+        if opponent_id == 7283636452:
+            await update.message.reply_text("You have challenged the bot! The battle will begin now.")
+            await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
+        else:
+            await update.message.reply_text(f"Challenge sent to @{opponent_username}! They need to accept the challenge by using /acceptpvp.")
+
+        # Automatically send move buttons if the battle is against the bot
+        if opponent_id == 7283636452:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="Choose your move:", reply_markup=generate_pvp_move_buttons(user_id))
+
+    except Error as e:
+        logger.error(f"Database error in start_pvp: {e}")
+        await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
+    finally:
+        if db.is_connected():
+            db.close()
 
     if not db or opponent_id is None:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
@@ -779,16 +837,15 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
     valid_moves = ["attack", "defend", "focus", "zenstrike"]
 
     if not bot_mode:
-        # Retrieve the action from callback data if it's not provided directly
-        if not action:
-            data = update.callback_query.data.split('_')
-            action = data[1]
-            user_id_from_callback = int(data[-1])
+        # Retrieve the action from callback data
+        data = update.callback_query.data.split('_')
+        action = data[1]
+        user_id_from_callback = int(data[-1])
 
-            # Ensure the action is for the correct player
-            if user_id_from_callback != user_id:
-                await update.callback_query.answer("It's not your turn!")
-                return
+        # Ensure the action is for the correct player
+        if user_id_from_callback != user_id:
+            await update.callback_query.answer("It's not your turn!")
+            return
 
     logger.info(f"Received action: {action}")
 
@@ -836,7 +893,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             # Check for zenstrike cooldown
             if action == "zenstrike" and context.user_data['zenstrike_cooldown'] > 0:
                 if not bot_mode:
-                    await update.message.reply_text(f"Zen Strike is on cooldown for {context.user_data['zenstrike_cooldown']} more turn(s). Please choose another move.")
+                    await update.callback_query.answer(f"Zen Strike is on cooldown for {context.user_data['zenstrike_cooldown']} more turn(s). Please choose another move.")
                 return
 
             # Action logic
@@ -927,25 +984,22 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
             
             # If it's the bot's turn next, call bot_pvp_move
-            if opponent_id == 7283636452:
-                logger.info("It's now the bot's turn.")
-                await bot_pvp_move(update, context)
+            if opponent_id != 7283636452:
+                await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
             else:
-                # If it's the opponent's turn (another player), send the move buttons to the opponent
-                await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:",
-                                               reply_markup=generate_pvp_move_buttons(opponent_id))
+                await bot_pvp_move(update, context)
 
         except Exception as e:
             logger.error(f"Database error in execute_pvp_move: {e}")
             if not bot_mode:
-                await update.message.reply_text("An error occurred while executing the PvP move. Please try again later.")
+                await update.callback_query.answer("An error occurred while executing the PvP move. Please try again later.")
         finally:
             if db.is_connected():
                 cursor.close()
                 db.close()
     else:
         if not bot_mode:
-            await update.message.reply_text("I'm having trouble accessing my memory right now. Please try again later.")
+            await update.callback_query.answer("I'm having trouble accessing my memory right now. Please try again later.")
 
 
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
