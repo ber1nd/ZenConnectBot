@@ -54,7 +54,7 @@ def with_database_connection(func):
         try:
             return await func(*args, **kwargs, db=db)
         finally:
-            if db.is_connected():
+            if db and db.is_connected():
                 db.close()
     return wrapper
 
@@ -630,13 +630,11 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         if db.is_connected():
             cursor.close()
   
-async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@with_database_connection
+async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     user_id = update.effective_user.id
-    db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
-
+    try:
+        with db.cursor(dictionary=True) as cursor:
             # Fetch the pending battle for the user
             cursor.execute("""
                 SELECT * FROM pvp_battles 
@@ -646,15 +644,11 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             battle = cursor.fetchone()
 
             if not battle:
-                cursor.close()  # Close cursor before returning
                 await update.message.reply_text("You have no pending PvP challenges.")
                 return
             
             logger.info(f"Attempting to accept PvP battle: User: {user_id}, Battle ID: {battle['id']}, Status: {battle['status']}")
-            cursor.close()  # Close the cursor after fetching the battle
 
-            # Re-open the cursor for the next database operation
-            cursor = db.cursor()
             # Update the battle status to 'in_progress'
             cursor.execute("""
                 UPDATE pvp_battles 
@@ -662,18 +656,22 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 WHERE id = %s
             """, (battle['challenger_id'], battle['id']))
             db.commit()
-            cursor.close()  # Close the cursor after committing
 
-            await update.message.reply_text("You have accepted the challenge! The battle begins now.")
-            await context.bot.send_message(chat_id=battle['challenger_id'], text="Your challenge has been accepted! The battle begins now.")
-        except Error as e:
-            logger.error(f"Database error in accept_pvp: {e}")
-            await update.message.reply_text("An error occurred while accepting the PvP challenge. Please try again later.")
-        finally:
-            if db.is_connected():
-                db.close()
-    else:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+        await update.message.reply_text("You have accepted the challenge! The battle begins now.")
+        
+        # Notify the challenger
+        await context.bot.send_message(chat_id=battle['challenger_id'], text="Your challenge has been accepted! The battle begins now.")
+        
+        # Send move buttons to the challenger
+        await context.bot.send_message(
+            chat_id=battle['challenger_id'],
+            text="It's your turn! Choose your move:",
+            reply_markup=generate_pvp_move_buttons(battle['challenger_id'])
+        )
+
+    except mysql.connector.Error as e:
+        logger.error(f"Database error in accept_pvp: {e}")
+        await update.message.reply_text("An error occurred while accepting the PvP challenge. Please try again later.")
 
 def setup_pvp_commands(application):
     application.add_handler(CommandHandler("pvpmove", execute_pvp_move))
