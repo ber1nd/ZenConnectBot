@@ -850,11 +850,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
             
             # If it's the bot's turn next, call bot_pvp_move
-            if opponent_id == 7283636452 and not bot_mode:
-                logger.info("Bot's turn now.")
+            if not bot_mode and opponent_id == 7283636452:
+                logger.info("It's now the bot's turn.")
                 await bot_pvp_move(update, context, battle, opponent_hp, user_hp)
-            else:
-                logger.info("User's turn now.")
 
         except Error as e:
             logger.error(f"Database error in execute_pvp_move: {e}")
