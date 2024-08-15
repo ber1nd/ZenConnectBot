@@ -859,7 +859,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
 
         except Error as e:
             logger.error(f"Database error in execute_pvp_move: {e}")
-            await update.message.reply_text("An error occurred while executing the PvP move. Please try again later.")
+            await update.message.reply_text("An error occurred while executing the PvP move. Please try again later")
         finally:
             if db.is_connected():
                 cursor.close()
