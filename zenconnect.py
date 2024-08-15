@@ -805,6 +805,15 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cursor.close()
                 db.close()
 
+async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db = get_db_connection()
+    if db:
+        try:
+            await execute_pvp_move(update, context, db=db)
+        finally:
+            if db.is_connected():
+                db.close()
+
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
     energy_cost = 0  # Initialize energy cost
