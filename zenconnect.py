@@ -180,6 +180,19 @@ async def generate_response(prompt, elaborate=False):
         logger.error(f"Error generating response: {type(e).__name__}: {str(e)}")
         return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later."
 
+# Utility Functions
+def update_energy(context, energy_cost=0, energy_gain=0):
+    current_energy = context.user_data.get('energy', 50)
+    new_energy = max(0, min(100, current_energy - energy_cost + energy_gain))
+    context.user_data['energy'] = new_energy
+    return new_energy
+
+def update_bot_energy(context, energy_cost=0, energy_gain=0):
+    current_bot_energy = context.user_data.get('bot_energy', 50)
+    new_bot_energy = max(0, min(100, current_bot_energy - energy_cost + energy_gain))
+    context.user_data['bot_energy'] = new_bot_energy
+    return new_bot_energy
+
 # Define the health bar function near the top of your script
 def health_bar(hp, energy):
     total_blocks = 10
@@ -875,13 +888,13 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         battle = cursor.fetchone()
         
         if not battle:
-            if update.message:
-                await update.message.reply_text("You are not in an active battle.")
+            if not bot_mode:
+                await send_message(update, "You are not in an active battle.")
             return
         
         if battle['current_turn'] != user_id:
-            if update.message:
-                await update.message.reply_text("It's not your turn.")
+            if not bot_mode:
+                await send_message(update, "It's not your turn.")
             return
 
         # Get user and opponent info
@@ -894,16 +907,18 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         # Initialize energy if not set
         if 'energy' not in context.user_data:
-            context.user_data['energy'] = 100
+            context.user_data['energy'] = 50  # Set starting energy to 50
+        if 'bot_energy' not in context.user_data:
+            context.user_data['bot_energy'] = 50  # Set starting energy to 50 for bot
 
-        player_energy = context.user_data.get('energy', 100)
-        bot_energy = context.user_data.get('bot_energy', 100)
+        player_energy = context.user_data['energy']
+        bot_energy = context.user_data['bot_energy']
 
         # Action logic for each move
         if action == "strike":
             energy_cost = 12
-            if context.user_data['energy'] < energy_cost:
-                await context.bot.send_message(chat_id=battle['group_id'], text="Not enough energy to use Strike.")
+            if player_energy < energy_cost:
+                await send_message(update, "Not enough energy to use Strike.")
                 return
 
             damage = random.randint(12, 18)
@@ -930,8 +945,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         elif action == "zenstrike":
             energy_cost = 40
-            if context.user_data['energy'] < energy_cost:
-                await context.bot.send_message(chat_id=battle['group_id'], text="Not enough energy to use Zen Strike.")
+            if player_energy < energy_cost:
+                await send_message(update, "Not enough energy to use Zen Strike.")
                 return
 
             damage = random.randint(25, 35)
@@ -947,8 +962,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         elif action == "mindtrap":
             energy_cost = 20
-            if context.user_data['energy'] < energy_cost:
-                await context.bot.send_message(chat_id=battle['group_id'], text="Not enough energy to use Mind Trap.")
+            if player_energy < energy_cost:
+                await send_message(update, "Not enough energy to use Mind Trap.")
                 return
 
             context.user_data['mind_trap'] = True  # Opponent's next move is 50% effective
@@ -961,18 +976,21 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             result_message = f"You used Meditate, healed {heal} HP, and restored {energy_gain} energy."
 
         # Apply energy changes
-        context.user_data['energy'] = max(0, min(100, context.user_data['energy'] - energy_cost + energy_gain))
+        player_energy = update_energy(context.user_data, action)
+        bot_energy = update_bot_energy(context.user_data, action) if bot_mode else bot_energy
 
         # Check if the battle ends
         if opponent_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (user_id, battle['id']))
             db.commit()
-            await context.bot.send_message(chat_id=battle['group_id'], text=f"You have won the battle! Your opponent is defeated.")
+            await send_message(update, f"You have won the battle! Your opponent is defeated.")
+            await context.bot.send_message(chat_id=battle['group_id'], text=f"{update.effective_user.username} has won the battle!")
             return
         elif user_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
             db.commit()
-            await context.bot.send_message(chat_id=battle['group_id'], text=f"You have been defeated.")
+            await send_message(update, f"You have been defeated.")
+            await context.bot.send_message(chat_id=battle['group_id'], text=f"{update.effective_user.username} has been defeated.")
             return
 
         # Update the battle status
@@ -986,47 +1004,41 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
               battle['id']))
         db.commit()
 
-                # Visual health bar (10 blocks total) and energy display
+        # Visual health bar (10 blocks total) and energy display
         def health_bar(hp, energy):
             total_blocks = 10
             filled_blocks = int((hp / 100) * total_blocks)
             empty_blocks = total_blocks - filled_blocks
             return f"[{'█' * filled_blocks}{'░' * empty_blocks}] {hp}/100 HP | {energy}/100 Energy"
 
-        # Ensure the player's health and energy are always on the left, and the bot's on the right
+        # Ensure correct values are displayed
         player_health = user_hp if user_id != 7283636452 else opponent_hp
-        player_energy = context.user_data.get('energy', 100) if user_id != 7283636452 else context.user_data.get('opponent_energy', 100)
+        player_energy = context.user_data['energy'] if user_id != 7283636452 else context.user_data['bot_energy']
         bot_health = opponent_hp if user_id != 7283636452 else user_hp
-        bot_energy = context.user_data.get('opponent_energy', 100) if user_id != 7283636452 else context.user_data.get('energy', 100)
+        bot_energy = context.user_data['bot_energy'] if user_id != 7283636452 else context.user_data['energy']
 
-        try:
-            # Display the health and energy bars for both players
-            await context.bot.send_message(
-                chat_id=battle['group_id'], 
-                text=f"{result_message}\n\n{health_bar(player_health, player_energy)} vs {health_bar(bot_health, bot_energy)}"
-            )  
+        # Send the result with updated HP and energy bars
+        await context.bot.send_message(
+            chat_id=battle['group_id'], 
+            text=f"{result_message}\n\n{health_bar(player_health, player_energy)} vs {health_bar(bot_health, bot_energy)}"
+        )
 
-            # Send move buttons for the next turn if the opponent is not the bot
-            if opponent_id != 7283636452:
-                await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
-            else:
-                await bot_pvp_move(update, context)
-
-        except Exception as e:
-            logger.error(f"Error in execute_pvp_move: {e}")
-            if not bot_mode and update.callback_query:
-                await update.callback_query.answer("An error occurred while executing the PvP move. Please try again later.")
-        finally:
-            if db.is_connected():
-                cursor.close()
-
-        if not bot_mode and update.callback_query:
-            await update.callback_query.answer()
+        # Notify players in the group chat
+        if opponent_id != 7283636452:
+            await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
+        else:
+            await bot_pvp_move(update, context)
 
     except Exception as e:
         logger.error(f"Error in execute_pvp_move: {e}")
         if not bot_mode and update.callback_query:
             await update.callback_query.answer("An error occurred while executing the PvP move. Please try again later.")
+    finally:
+        if db.is_connected():
+            cursor.close()
+
+        if not bot_mode and update.callback_query:
+            await update.callback_query.answer()
 
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
