@@ -876,12 +876,12 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         
         if not battle:
             if not bot_mode:
-                await send_message(update, "You are not in an active battle.")
+                await update.message.reply_text("You are not in an active battle.")
             return
         
         if battle['current_turn'] != user_id:
             if not bot_mode:
-                await send_message(update, "It's not your turn.")
+                await update.message.reply_text("It's not your turn.")
             return
 
         # Get user and opponent info
@@ -896,17 +896,17 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if 'energy' not in context.user_data:
             context.user_data['energy'] = 100
 
-        if bot_mode and 'bot_energy' not in context.user_data:
+        if 'bot_energy' not in context.user_data:
             context.user_data['bot_energy'] = 100
 
         player_energy = context.user_data['energy']
-        bot_energy = context.user_data['bot_energy'] if bot_mode else 100
+        bot_energy = context.user_data['bot_energy']
 
         # Action logic for each move
         if action == "strike":
             energy_cost = 12
             if player_energy < energy_cost:
-                await send_message(update, "Not enough energy to use Strike.")
+                await update.message.reply_text("Not enough energy to use Strike.")
                 return
 
             damage = random.randint(12, 18)
@@ -934,7 +934,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         elif action == "zenstrike":
             energy_cost = 40
             if player_energy < energy_cost:
-                await send_message(update, "Not enough energy to use Zen Strike.")
+                await update.message.reply_text("Not enough energy to use Zen Strike.")
                 return
 
             damage = random.randint(25, 35)
@@ -951,7 +951,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         elif action == "mindtrap":
             energy_cost = 20
             if player_energy < energy_cost:
-                await send_message(update, "Not enough energy to use Mind Trap.")
+                await update.message.reply_text("Not enough energy to use Mind Trap.")
                 return
 
             context.user_data['mind_trap'] = True  # Opponent's next move is 50% effective
@@ -965,21 +965,19 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         # Apply energy changes
         context.user_data['energy'] = max(0, min(100, player_energy - energy_cost + energy_gain))
-
-        if bot_mode:
-            context.user_data['bot_energy'] = max(0, min(100, bot_energy - energy_cost + energy_gain))
+        context.user_data['bot_energy'] = max(0, min(100, bot_energy - energy_cost + energy_gain))
 
         # Check if the battle ends
         if opponent_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (user_id, battle['id']))
             db.commit()
-            await send_message(update, f"You have won the battle! Your opponent is defeated.")
+            await update.message.reply_text(f"You have won the battle! Your opponent is defeated.")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{update.effective_user.username} has won the battle!")
             return
         elif user_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
             db.commit()
-            await send_message(update, f"You have been defeated.")
+            await update.message.reply_text(f"You have been defeated.")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{update.effective_user.username} has been defeated.")
             return
 
@@ -1028,7 +1026,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
     if not bot_mode and update.callback_query:
         await update.callback_query.answer()
-
 
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
