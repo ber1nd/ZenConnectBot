@@ -672,6 +672,9 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 import random
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battle, user_hp, opponent_hp):
     # Ensure it's the bot's turn
@@ -735,10 +738,10 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
                 return
             
             # Check if it's the user's turn
-            if battle['current_turn'] != user_id and not bot_mode:
-                await update.message.reply_text("It's not your turn.")
+            if battle['current_turn'] != user_id:
+                if not bot_mode:
+                    await update.message.reply_text("It's not your turn.")
                 return
-
             # Get user and opponent info
             if battle['challenger_id'] == user_id:
                 opponent_id = battle['opponent_id']
@@ -841,7 +844,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
                 WHERE id = %s
             """, (user_hp if user_id == battle['challenger_id'] else opponent_hp,
                   opponent_hp if user_id == battle['challenger_id'] else user_hp,
-                  opponent_id if not bot_mode else user_id,  # Switch turns appropriately
+                  opponent_id,  # Always switch turns
                   battle['id']))
             db.commit()
 
@@ -849,7 +852,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
             
             # If it's the bot's turn next, call bot_pvp_move
-            if not bot_mode and opponent_id == 7283636452:
+            if opponent_id == 7283636452:
                 logger.info("It's now the bot's turn.")
                 await bot_pvp_move(update, context, battle, opponent_hp, user_hp)
                 logger.info(f"Bot has completed its move.")
