@@ -681,41 +681,11 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
 
     await asyncio.sleep(random.uniform(2, 4))  # Delay for realism
 
-    # Generate a prompt based on the game state
-    prompt = f"""
-    You are playing a turn-based combat game as a bot. Here are the current stats:
-    Your HP: {opponent_hp}
-    Opponent's HP: {user_hp}
-    You have access to four moves: attack, defend, focus, zenstrike. 
-    'zenstrike' has a cooldown of 2 turns and should not be used if it's on cooldown.
-    Please choose your next move strategically.
-    """
+    # Temporarily choose a random action for testing
+    action = random.choice(["attack", "defend", "focus", "zenstrike"])
+    logger.info(f"Bot randomly chose action: {action}")
 
     try:
-        # Log the prompt before making the AI call
-        logger.info(f"Sending prompt to AI: {prompt}")
-
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a strategic AI bot in a turn-based combat game."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=10,
-            temperature=0.7
-        )
-
-        # Log the raw response from the AI
-        logger.info(f"Raw AI Response: {response}")
-
-        action = response.choices[0].message.content.strip().lower()
-        logger.info(f"Bot chose action: {action}")
-
-        if action not in ["attack", "defend", "focus", "zenstrike"]:
-            logger.error(f"Invalid action detected from AI: {action}")
-            action = random.choice(["attack", "defend", "focus"])
-            logger.info(f"Random action chosen: {action}")
-
         # Log before executing the action
         logger.info(f"Bot is about to execute the move: {action}")
 
@@ -723,11 +693,8 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
         await execute_pvp_move(update, context, bot_mode=True, action=action)
 
     except Exception as e:
-        logger.error(f"Error generating AI move: {e}")
-        action = random.choice(["attack", "defend", "focus"])
-        logger.info(f"Random action chosen due to error: {action}")
-        await execute_pvp_move(update, context, bot_mode=True, action=action)
-        
+        logger.error(f"Error during bot move execution: {e}")
+
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id  # If bot_mode, use bot's user ID
     db = get_db_connection()
@@ -744,7 +711,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
         if not bot_mode:
             await update.message.reply_text("Please specify a valid move: attack, defend, focus, or zenstrike.")
         return
-
+        
     if db:
         try:
             cursor = db.cursor(dictionary=True)
