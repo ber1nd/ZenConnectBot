@@ -735,7 +735,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
                     await update.message.reply_text("You are not in an active battle.")
                 return
             
-            # Check if it's the user's turn before processing, or allow the bot to process
+            # Check if it's the user's turn
             if battle['current_turn'] != user_id and not bot_mode:
                 await update.message.reply_text("It's not your turn.")
                 return
