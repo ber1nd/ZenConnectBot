@@ -692,6 +692,9 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, battl
         # Execute the chosen move
         await execute_pvp_move(update, context, bot_mode=True, action=action)
 
+        # Log after executing the action to confirm it was completed
+        logger.info(f"Bot has completed its move: {action}")
+
     except Exception as e:
         logger.error(f"Error during bot move execution: {e}")
 
@@ -847,9 +850,12 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
             
             # If it's the bot's turn next, call bot_pvp_move
-            if opponent_id == 7283636452:
+            if opponent_id == 7283636452 and not bot_mode:
+                logger.info("Bot's turn now.")
                 await bot_pvp_move(update, context, battle, opponent_hp, user_hp)
                 logger.info(f"Bot is making a move: {action}")
+            else:
+                logger.info("User's turn now.")
 
         except Error as e:
             logger.error(f"Database error in execute_pvp_move: {e}")
