@@ -48,18 +48,24 @@ def with_database_connection(func):
     async def wrapper(*args, **kwargs):
         db = get_db_connection()
         if not db:
+            logger.error(f"Failed to establish database connection in {func.__name__}")
             if isinstance(args[0], Update):
                 await args[0].message.reply_text("I'm having trouble accessing my memory right now. Please try again later.")
             return
         try:
             return await func(*args, **kwargs, db=db)
-        except Exception as e:
-            logger.error(f"Error in {func.__name__}: {e}")
+        except mysql.connector.Error as e:
+            logger.error(f"MySQL error in {func.__name__}: {e}")
             if isinstance(args[0], Update):
-                await args[0].message.reply_text("An error occurred while processing your request. Please try again later.")
+                await args[0].message.reply_text("A database error occurred. Please try again later.")
+        except Exception as e:
+            logger.error(f"Unexpected error in {func.__name__}: {e}")
+            if isinstance(args[0], Update):
+                await args[0].message.reply_text("An unexpected error occurred. Please try again later.")
         finally:
             if db and db.is_connected():
                 db.close()
+                logger.info(f"Closed database connection in {func.__name__}")
     return wrapper
 
 def setup_database():
@@ -637,30 +643,37 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
 @with_database_connection
 async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     user_id = update.effective_user.id
+    logger.info(f"Accepting PvP challenge for user: {user_id}")
+    
     try:
-        # First, fetch the pending battle
+        # Use a single cursor for all operations
         with db.cursor(dictionary=True) as cursor:
+            # Fetch the pending battle
             cursor.execute("""
                 SELECT * FROM pvp_battles 
                 WHERE (opponent_id = %s AND status = 'pending')
                 OR (challenger_id = %s AND opponent_id = 7283636452 AND status = 'pending')
             """, (user_id, user_id))
             battle = cursor.fetchone()
-
-        if not battle:
-            await update.message.reply_text("You have no pending PvP challenges.")
-            return
-        
-        logger.info(f"Attempting to accept PvP battle: User: {user_id}, Battle ID: {battle['id']}, Status: {battle['status']}")
-
-        # Now, update the battle status in a separate cursor
-        with db.cursor() as update_cursor:
-            update_cursor.execute("""
+            
+            if not battle:
+                logger.info(f"No pending battles found for user: {user_id}")
+                await update.message.reply_text("You have no pending PvP challenges.")
+                return
+            
+            logger.info(f"Found pending battle: {battle}")
+            
+            # Update the battle status
+            cursor.execute("""
                 UPDATE pvp_battles 
                 SET status = 'in_progress', current_turn = %s 
                 WHERE id = %s
             """, (battle['challenger_id'], battle['id']))
+            
+            # Commit the changes
             db.commit()
+            
+            logger.info(f"Updated battle status to in_progress for battle ID: {battle['id']}")
 
         await update.message.reply_text("You have accepted the challenge! The battle begins now.")
         
@@ -675,9 +688,15 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         )
 
     except mysql.connector.Error as e:
-        logger.error(f"Database error in accept_pvp: {e}")
+        logger.error(f"MySQL error in accept_pvp: {e}")
         await update.message.reply_text("An error occurred while accepting the PvP challenge. Please try again later.")
-        db.rollback()  # Rollback any changes if an error occurred
+        if db.is_connected():
+            db.rollback()
+    except Exception as e:
+        logger.error(f"Unexpected error in accept_pvp: {e}")
+        await update.message.reply_text("An unexpected error occurred. Please try again later.")
+        if db.is_connected():
+            db.rollback()
 
 def setup_pvp_commands(application):
     application.add_handler(CommandHandler("pvpmove", execute_pvp_move))
