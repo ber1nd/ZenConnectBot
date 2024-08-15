@@ -53,6 +53,10 @@ def with_database_connection(func):
             return
         try:
             return await func(*args, **kwargs, db=db)
+        except Exception as e:
+            logger.error(f"Error in {func.__name__}: {e}")
+            if isinstance(args[0], Update):
+                await args[0].message.reply_text("An error occurred while processing your request. Please try again later.")
         finally:
             if db and db.is_connected():
                 db.close()
@@ -634,8 +638,8 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
 async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     user_id = update.effective_user.id
     try:
+        # First, fetch the pending battle
         with db.cursor(dictionary=True) as cursor:
-            # Fetch the pending battle for the user
             cursor.execute("""
                 SELECT * FROM pvp_battles 
                 WHERE (opponent_id = %s AND status = 'pending')
@@ -643,14 +647,15 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
             """, (user_id, user_id))
             battle = cursor.fetchone()
 
-            if not battle:
-                await update.message.reply_text("You have no pending PvP challenges.")
-                return
-            
-            logger.info(f"Attempting to accept PvP battle: User: {user_id}, Battle ID: {battle['id']}, Status: {battle['status']}")
+        if not battle:
+            await update.message.reply_text("You have no pending PvP challenges.")
+            return
+        
+        logger.info(f"Attempting to accept PvP battle: User: {user_id}, Battle ID: {battle['id']}, Status: {battle['status']}")
 
-            # Update the battle status to 'in_progress'
-            cursor.execute("""
+        # Now, update the battle status in a separate cursor
+        with db.cursor() as update_cursor:
+            update_cursor.execute("""
                 UPDATE pvp_battles 
                 SET status = 'in_progress', current_turn = %s 
                 WHERE id = %s
@@ -672,6 +677,7 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     except mysql.connector.Error as e:
         logger.error(f"Database error in accept_pvp: {e}")
         await update.message.reply_text("An error occurred while accepting the PvP challenge. Please try again later.")
+        db.rollback()  # Rollback any changes if an error occurred
 
 def setup_pvp_commands(application):
     application.add_handler(CommandHandler("pvpmove", execute_pvp_move))
