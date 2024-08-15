@@ -852,7 +852,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             if not bot_mode and opponent_id == 7283636452:
                 logger.info("It's now the bot's turn.")
                 await bot_pvp_move(update, context, battle, opponent_hp, user_hp)
-                logger.info(f"Bot has completed its move: {action}")
+                logger.info(f"Bot has completed its move.")
             else:
                 logger.info("User's turn now.")
 
