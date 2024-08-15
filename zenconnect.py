@@ -701,14 +701,37 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info("It's not the bot's turn.")
                 return
 
-            await asyncio.sleep(random.uniform(2, 4))  # Delay for realism
+            # Fetch battle context
+            bot_hp = battle['challenger_hp'] if battle['challenger_id'] == 7283636452 else battle['opponent_hp']
+            opponent_hp = battle['opponent_hp'] if battle['challenger_id'] == 7283636452 else battle['challenger_hp']
 
-            # Choose a random action for testing
-            action = random.choice(["attack", "defend", "focus", "zenstrike"])
-            logger.info(f"Bot randomly chose action: {action}")
+            # Generate AI response
+            prompt = f"""As a wise Zen monk in a PvP battle, choose the best action based on the current situation:
+            Your HP: {bot_hp}/100
+            Opponent HP: {opponent_hp}/100
+            Available actions: attack, defend, focus, zenstrike
+            Provide your chosen action and a brief explanation in the style of a Zen monk.
+            """
+            ai_response = await generate_response(prompt)
+
+            # Extract the action from the AI response
+            action = None
+            for move in ["attack", "defend", "focus", "zenstrike"]:
+                if move in ai_response.lower():
+                    action = move
+                    break
+
+            if not action:
+                logger.warning(f"AI did not provide a valid action. Defaulting to 'attack'. AI response: {ai_response}")
+                action = "attack"
+
+            logger.info(f"Bot chose action: {action} based on AI response: {ai_response}")
 
             # Execute the chosen move
             await execute_pvp_move(update, context, bot_mode=True, action=action)
+
+            # Send the AI's explanation to the chat
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Zen Bot's thoughts: {ai_response}")
 
         except Exception as e:
             logger.error(f"Error during bot move execution: {e}")
