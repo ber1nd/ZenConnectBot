@@ -704,14 +704,35 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Fetch battle context
             bot_hp = battle['challenger_hp'] if battle['challenger_id'] == 7283636452 else battle['opponent_hp']
             opponent_hp = battle['opponent_hp'] if battle['challenger_id'] == 7283636452 else battle['challenger_hp']
+            bot_energy = context.user_data.get('energy', 100)
+            bot_zenstrike_cooldown = context.user_data.get('zenstrike_cooldown', 0)
 
             # Generate AI response
-            prompt = f"""choose the best action based on the current situation and to bring the opponent HP to 0 before the bot HP goes to 0:
-            Your HP: {bot_hp}/100
-            Opponent HP: {opponent_hp}/100
-            Available actions: attack(does damage to the opponent), defend(heal the bot HP), focus (recover energy and increase critical strike chances), zenstrike (it does more damage but it has 2 turns cooldown so it cannot be done every round). The goal of the game is to bring the opponent to 0 HP
-            Provide your chosen action and a brief explanation why, considering you want to win the game bringing the oppenent to 0 hp and keep the bot hp above 0.
+            prompt = f"""
+            You are a Zen warrior engaged in a duel. Your goal is to win by reducing your opponent's HP to 0 while keeping your HP above 0. 
+            
+            Current situation:
+            - Your HP: {bot_hp}/100
+            - Opponent's HP: {opponent_hp}/100
+            - Your Energy: {bot_energy} points
+            - Zen Strike Cooldown: {bot_zenstrike_cooldown} turns left (if 0, Zen Strike can be used)
+            
+            Available actions:
+            - Attack: Deal damage to the opponent.
+            - Defend: Heal yourself by gaining HP.
+            - Focus: Recover energy and increase your critical strike chances for the next turn.
+            - Zen Strike: A powerful move that deals significant damage, but it has a 2-turn cooldown after use.
+
+            Strategy to win:
+            - Prioritize keeping your HP above 0.
+            - Use "Focus" to build up energy and increase critical hit chances when necessary.
+            - Use "Zen Strike" whenever possible to deal high damage, especially when the opponent's HP is low.
+            - If your HP is low, use "Defend" to regain health and prolong the battle.
+            - Use "Attack" regularly to chip away at the opponent's HP, especially when your HP is higher than the opponent's.
+            
+            Based on the current situation, choose the best action that maximizes your chances of winning the battle.
             """
+
             ai_response = await generate_response(prompt)
 
             # Extract the action from the AI response
