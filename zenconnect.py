@@ -905,14 +905,17 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             opponent_id = battle['challenger_id']
             user_hp, opponent_hp = battle['opponent_hp'], battle['challenger_hp']
 
+        # Ensure context is a dictionary and handle energy correctly
+        user_data = context.get('user_data', context)
+        
         # Initialize energy if not set
-        if 'energy' not in context.user_data:
-            context.user_data['energy'] = 50  # Set starting energy to 50
-        if 'bot_energy' not in context.user_data:
-            context.user_data['bot_energy'] = 50  # Set starting energy to 50 for bot
+        if 'energy' not in user_data:
+            user_data['energy'] = 50  # Set starting energy to 50
+        if 'bot_energy' not in user_data:
+            user_data['bot_energy'] = 50  # Set starting energy to 50 for bot
 
-        player_energy = context.user_data['energy']
-        bot_energy = context.user_data['bot_energy']
+        player_energy = user_data['energy']
+        bot_energy = user_data['bot_energy']
 
         # Action logic for each move
         if action == "strike":
@@ -923,9 +926,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
             damage = random.randint(12, 18)
             critical_hit = random.random() < 0.15  # 15% chance of critical hit
-            if context.user_data.get('focus_critical', 0) > 0:
+            if user_data.get('focus_critical', 0) > 0:
                 critical_hit = True
-                context.user_data['focus_critical'] = 0  # Reset critical boost after use
+                user_data['focus_critical'] = 0  # Reset critical boost after use
 
             if critical_hit:
                 damage *= 2
@@ -940,7 +943,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         elif action == "focus":
             energy_gain = random.randint(20, 30)
-            context.user_data['focus_critical'] = 0.25  # Next move has 25% more critical chance
+            user_data['focus_critical'] = 0.25  # Next move has 25% more critical chance
             result_message = f"You used Focus, gained {energy_gain} energy, and increased your critical hit chance by 25% for the next move."
 
         elif action == "zenstrike":
@@ -951,9 +954,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
             damage = random.randint(25, 35)
             critical_hit = random.random() < 0.2  # 20% chance of critical hit
-            if context.user_data.get('focus_critical', 0) > 0:
+            if user_data.get('focus_critical', 0) > 0:
                 critical_hit = True
-                context.user_data['focus_critical'] = 0  # Reset critical boost after use
+                user_data['focus_critical'] = 0  # Reset critical boost after use
 
             if critical_hit:
                 damage *= 2
@@ -966,7 +969,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 await send_message(update, "Not enough energy to use Mind Trap.")
                 return
 
-            context.user_data['mind_trap'] = True  # Opponent's next move is 50% effective
+            user_data['mind_trap'] = True  # Opponent's next move is 50% effective
             result_message = "You used Mind Trap, the opponent's next move will be 50% effective."
 
         elif action == "meditate":
@@ -976,8 +979,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             result_message = f"You used Meditate, healed {heal} HP, and restored {energy_gain} energy."
 
         # Apply energy changes
-        player_energy = update_energy(context.user_data, action)
-        bot_energy = update_bot_energy(context.user_data, action) if bot_mode else bot_energy
+        player_energy = update_energy(user_data, action)
+        bot_energy = update_bot_energy(user_data, action) if bot_mode else bot_energy
 
         # Check if the battle ends
         if opponent_hp <= 0:
@@ -1013,9 +1016,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         # Ensure correct values are displayed
         player_health = user_hp if user_id != 7283636452 else opponent_hp
-        player_energy = context.user_data['energy'] if user_id != 7283636452 else context.user_data['bot_energy']
+        player_energy = user_data['energy'] if user_id != 7283636452 else user_data['bot_energy']
         bot_health = opponent_hp if user_id != 7283636452 else user_hp
-        bot_energy = context.user_data['bot_energy'] if user_id != 7283636452 else context.user_data['energy']
+        bot_energy = user_data['bot_energy'] if user_id != 7283636452 else user_data['energy']
 
         # Send the result with updated HP and energy bars
         await context.bot.send_message(
