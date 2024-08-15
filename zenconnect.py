@@ -871,7 +871,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
                 await context.bot.send_message(chat_id=update.message.chat_id, text=f"{update.effective_user.username} has been defeated.")
                 return
 
-             # Update the battle status
+            # Update the battle status
             cursor.execute("""
                 UPDATE pvp_battles 
                 SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
@@ -883,8 +883,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, b
             db.commit()
 
             # Notify players in the group chat
-            result_message = f"Player {user_id} used {action}!"  # Replace with actual result message
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"{result_message}\n\nYour HP: {user_hp}/100\nOpponent HP: {opponent_hp}/100")
+            await context.bot.send_message(chat_id=update.message.chat_id, text=f"{result_message}\n\n{health_bar(user_hp)} vs {health_bar(opponent_hp)}")
             
             # If it's the bot's turn next, call bot_pvp_move
             if opponent_id == 7283636452:
