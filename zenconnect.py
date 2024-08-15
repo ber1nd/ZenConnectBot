@@ -562,6 +562,10 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         await update.message.reply_text("Please specify a valid opponent or type 'bot' to challenge the bot.")
         return
 
+    if not db:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+        return
+
     opponent_id = None
     if opponent_username == 'bot':
         opponent_id = 7283636452  # Bot's ID
@@ -577,9 +581,6 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
                 return
         finally:
             cursor.close()
-    if not db or opponent_id is None:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
-        return
 
     try:
         cursor = db.cursor(dictionary=True)
@@ -590,7 +591,6 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
 
         if not challenger:
             await update.message.reply_text("You are not registered in the system. Please interact with the bot first.")
-            cursor.close()
             return
 
         # Check if there's an ongoing PvP battle between these two users
@@ -603,20 +603,15 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         battle = cursor.fetchone()
 
         if battle:
-            cursor.close()
             await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
             return
 
-        cursor.close()
-
         # Create a new PvP battle
-        cursor = db.cursor()
         cursor.execute("""
             INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
             VALUES (%s, %s, %s, %s, 'pending')
         """, (user_id, opponent_id, update.effective_chat.id, user_id))
         db.commit()
-        cursor.close()
 
         if opponent_id == 7283636452:
             await update.message.reply_text("You have challenged the bot! The battle will begin now.")
@@ -633,61 +628,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
     finally:
         if db.is_connected():
-            db.close()
-
-    if not db or opponent_id is None:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
-        return
-
-    try:
-        cursor = db.cursor(dictionary=True)
-
-        # Ensure the challenger exists in the users table
-        cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
-        challenger = cursor.fetchone()
-
-        if not challenger:
-            await update.message.reply_text("You are not registered in the system. Please interact with the bot first.")
-            cursor.close()  # Close the cursor
-            return
-
-        # Check if there's an ongoing PvP battle between these two users
-        cursor.execute("""
-            SELECT * FROM pvp_battles 
-            WHERE ((challenger_id = %s AND opponent_id = %s) 
-            OR (challenger_id = %s AND opponent_id = %s)) 
-            AND status = 'in_progress'
-        """, (user_id, opponent_id, opponent_id, user_id))
-        battle = cursor.fetchone()
-
-        if battle:
-            cursor.close()  # Close the cursor before returning
-            await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
-            return
-
-        cursor.close()  # Close cursor after checking ongoing battle
-
-        # Create a new PvP battle
-        cursor = db.cursor()
-        cursor.execute("""
-            INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
-            VALUES (%s, %s, %s, %s, 'pending')
-        """, (user_id, opponent_id, update.effective_chat.id, user_id))
-        db.commit()
-        cursor.close()  # Close the cursor after committing
-
-        if opponent_id == 7283636452:
-            await update.message.reply_text("You have challenged the bot! The battle will begin now.")
-            await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
-        else:
-            await update.message.reply_text(f"Challenge sent to @{opponent_username}! They need to accept the challenge by using /acceptpvp.")
-
-    except Error as e:
-        logger.error(f"Database error in start_pvp: {e}")
-        await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
-    finally:
-        if db.is_connected():
-            db.close()  # Ensuring the database connection is closed
+            cursor.close()
   
 async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -825,7 +766,6 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Execute the chosen move
             await execute_pvp_move(update, context, db, bot_mode=True, action=action)
-
             # Send the AI's explanation to the chat
             await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Zen Bot's thoughts: {ai_response}")
 
@@ -836,11 +776,17 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cursor.close()
                 db.close()
 
-@with_database_connection
-async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
-    await execute_pvp_move(update, context, db=db)
+async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db = get_db_connection()
+    if db:
+        try:
+            await execute_pvp_move(update, context, db=db)
+        finally:
+            if db.is_connected():
+                db.close()
+    else:
+        logger.error("Failed to connect to database in bot_pvp_move")
 
-@with_database_connection
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
 
