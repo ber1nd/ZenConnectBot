@@ -758,18 +758,18 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             - Your HP: {bot_hp}/100
             - Opponent's HP: {opponent_hp}/100
             - Your Energy: {bot_energy} points
-            - Zen Strike Cooldown: {bot_zenstrike_cooldown} turns left (if 0, Zen Strike can be used)
+            - zenstrike Cooldown: {bot_zenstrike_cooldown} turns left (if 0, zenstrike can be used)
             
             Available actions:
             - Attack: Deal damage to the opponent.
             - Defend: Heal yourself by gaining HP.
             - Focus: Recover energy and increase your critical strike chances for the next turn.
-            - Zen Strike: A powerful move that deals significant damage, but it has a 2-turn cooldown after use.
+            - zenstrike: A powerful move that deals significant damage, but it has a 2-turn cooldown after use.
 
             Strategy to win:
             - Prioritize keeping your HP above 0.
             - Use "Focus" to build up energy and increase critical hit chances when necessary.
-            - Use "Zen Strike" whenever possible to deal high damage, especially when the opponent's HP is low.
+            - Use "zenstrike" whenever possible to deal high damage, especially when the opponent's HP is low.
             - If your HP is low, use "Defend" to regain health and prolong the battle.
             - Use "Attack" regularly to chip away at the opponent's HP, especially when your HP is higher than the opponent's.
             
