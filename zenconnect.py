@@ -181,17 +181,6 @@ async def generate_response(prompt, elaborate=False):
         return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later."
 
 # Utility Functions
-def update_energy(context, energy_cost=0, energy_gain=0):
-    current_energy = context.user_data.get('energy', 50)
-    new_energy = max(0, min(100, current_energy - energy_cost + energy_gain))
-    context.user_data['energy'] = new_energy
-    return new_energy
-
-def update_bot_energy(context, energy_cost=0, energy_gain=0):
-    current_bot_energy = context.user_data.get('bot_energy', 50)
-    new_bot_energy = max(0, min(100, current_bot_energy - energy_cost + energy_gain))
-    context.user_data['bot_energy'] = new_bot_energy
-    return new_bot_energy
 
 async def send_message(update, text):
     if update.callback_query:
@@ -642,6 +631,10 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         if battle:
             await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
             return
+
+        # Initialize energy for both players
+        context.user_data['challenger_energy'] = 50
+        context.user_data['opponent_energy'] = 50
 
         # Create a new PvP battle
         cursor.execute("""
