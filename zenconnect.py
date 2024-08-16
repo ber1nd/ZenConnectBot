@@ -857,7 +857,7 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
 │ {opponent_hp_bar} │
 │ {opponent_energy_bar} {int(opponent_energy):3d}/100 Energy │
 └{'─' * (max_name_length + 24)}┘
-"""
+Copy"""
     return battle_view
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
