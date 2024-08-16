@@ -1029,13 +1029,18 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             """, (opponent_hp, user_hp, opponent_id, battle['id']))
         db.commit()
 
+
+
         # Create the battle view
-        if is_challenger:
-            player_name = update.effective_user.first_name if not bot_mode else "Bot"
+        if bot_mode:
+            player_name = "Bot"
+            opponent_name = update.effective_user.first_name
+        elif is_challenger:
+            player_name = update.effective_user.first_name
             opponent_name = "Bot" if opponent_id == 7283636452 else "Opponent"
         else:
-            player_name = "Bot" if bot_mode else "Opponent"
-            opponent_name = update.effective_user.first_name if not bot_mode else "Bot"
+            player_name = "Bot" if user_id == 7283636452 else "Opponent"
+            opponent_name = update.effective_user.first_name
 
         battle_view = create_battle_view(
             player_name, 
@@ -1046,7 +1051,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             opponent_energy
         )
 
-        # Send the result with updated HP and energy bars
+         # Send the result with updated HP and energy bars
         await context.bot.send_message(
             chat_id=battle['group_id'], 
             text=f"{result_message}\n\n{battle_view}",
