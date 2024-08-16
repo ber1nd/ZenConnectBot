@@ -1008,13 +1008,17 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if action == "mindtrap":
             context.user_data['opponent_mind_trap'] = True
 
-        # Update energies in context
+        # Update energies and HP in context
         if is_challenger:
             context.user_data['challenger_energy'] = user_energy
             context.user_data['opponent_energy'] = opponent_energy
+            context.user_data['challenger_hp'] = user_hp
+            context.user_data['opponent_hp'] = opponent_hp
         else:
             context.user_data['opponent_energy'] = user_energy
             context.user_data['challenger_energy'] = opponent_energy
+            context.user_data['opponent_hp'] = user_hp
+            context.user_data['challenger_hp'] = opponent_hp
 
         # Check if the battle ends
         if opponent_hp <= 0:
@@ -1030,7 +1034,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{update.effective_user.username} has been defeated.")
             return
 
-        # Update the battle status
+        # Update the battle status in the database
         if is_challenger:
             cursor.execute("""
                 UPDATE pvp_battles 
@@ -1051,10 +1055,10 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         
         battle_view = create_battle_view(
             challenger_name, 
-            battle['challenger_hp'], 
+            context.user_data.get('challenger_hp', 100),
             context.user_data.get('challenger_energy', 50),
             opponent_name, 
-            battle['opponent_hp'], 
+            context.user_data.get('opponent_hp', 100),
             context.user_data.get('opponent_energy', 50)
         )
 
