@@ -748,8 +748,7 @@ def generate_pvp_move_buttons(user_id):
         [InlineKeyboardButton("Defend", callback_data=f"pvp_defend_{user_id}")],
         [InlineKeyboardButton("Focus", callback_data=f"pvp_focus_{user_id}")],
         [InlineKeyboardButton("Zen Strike", callback_data=f"pvp_zenstrike_{user_id}")],
-        [InlineKeyboardButton("Mind Trap", callback_data=f"pvp_mindtrap_{user_id}")],
-        [InlineKeyboardButton("Meditate", callback_data=f"pvp_meditate_{user_id}")]
+        [InlineKeyboardButton("Mind Trap", callback_data=f"pvp_mindtrap_{user_id}")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -856,26 +855,26 @@ async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT
             if db.is_connected():
                 db.close()
 
-def create_battle_view(player_name, player_hp, player_energy, opponent_name, opponent_hp, opponent_energy):
-    max_name_length = max(len(player_name), len(opponent_name))
-    player_name = player_name.ljust(max_name_length)
+def create_battle_view(challenger_name, challenger_hp, challenger_energy, opponent_name, opponent_hp, opponent_energy):
+    max_name_length = max(len(challenger_name), len(opponent_name))
+    challenger_name = challenger_name.ljust(max_name_length)
     opponent_name = opponent_name.ljust(max_name_length)
     
     hp_bar_length = 20
     energy_bar_length = 10
     
-    player_hp_bar = '█' * int(player_hp / 5) + '░' * (hp_bar_length - int(player_hp / 5))
+    challenger_hp_bar = '█' * int(challenger_hp / 5) + '░' * (hp_bar_length - int(challenger_hp / 5))
     opponent_hp_bar = '█' * int(opponent_hp / 5) + '░' * (hp_bar_length - int(opponent_hp / 5))
     
-    player_energy_bar = '█' * int(player_energy / 10) + '░' * (energy_bar_length - int(player_energy / 10))
+    challenger_energy_bar = '█' * int(challenger_energy / 10) + '░' * (energy_bar_length - int(challenger_energy / 10))
     opponent_energy_bar = '█' * int(opponent_energy / 10) + '░' * (energy_bar_length - int(opponent_energy / 10))
     
     battle_view = f"""
 ```
 ┌{'─' * (max_name_length + 24)}┐
-│ {player_name} │ {player_hp:3d}/100 HP    │
-│ {player_hp_bar} │
-│ {player_energy_bar} {player_energy:3d}/100 Energy │
+│ {challenger_name} │ {challenger_hp:3d}/100 HP    │
+│ {challenger_hp_bar} │
+│ {challenger_energy_bar} {challenger_energy:3d}/100 Energy │
 ├{'─' * (max_name_length + 24)}┤
 │ {opponent_name} │ {opponent_hp:3d}/100 HP    │
 │ {opponent_hp_bar} │
@@ -885,12 +884,13 @@ def create_battle_view(player_name, player_hp, player_energy, opponent_name, opp
 """
     return battle_view
 
+
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
     energy_cost = 0
     energy_gain = 0
     
-    valid_moves = ["strike", "defend", "focus", "zenstrike", "mindtrap", "meditate"]
+    valid_moves = ["strike", "defend", "focus", "zenstrike", "mindtrap"]
 
     if not bot_mode:
         if update.callback_query:
@@ -905,8 +905,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         else:
             await update.message.reply_text("Invalid move. Please use the provided buttons.")
             return
-
-    logger.info(f"Received action: {action}")
 
     if not action or action not in valid_moves:
         logger.error(f"Invalid action received: {action}")
@@ -932,82 +930,98 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 await send_message(update, "It's not your turn.")
             return
 
-        if battle['challenger_id'] == user_id:
-            opponent_id = battle['opponent_id']
+        # Determine if the user is the challenger or opponent
+        is_challenger = battle['challenger_id'] == user_id
+        
+        if is_challenger:
             user_hp, opponent_hp = battle['challenger_hp'], battle['opponent_hp']
+            user_energy = context.user_data.get('challenger_energy', 50)
+            opponent_energy = context.user_data.get('opponent_energy', 50)
         else:
-            opponent_id = battle['challenger_id']
             user_hp, opponent_hp = battle['opponent_hp'], battle['challenger_hp']
+            user_energy = context.user_data.get('opponent_energy', 50)
+            opponent_energy = context.user_data.get('challenger_energy', 50)
 
-        # Initialize energy if not set
-        if 'energy' not in context.user_data:
-            context.user_data['energy'] = 50
-        if 'bot_energy' not in context.user_data:
-            context.user_data['bot_energy'] = 50
+        opponent_id = battle['opponent_id'] if is_challenger else battle['challenger_id']
 
-        player_energy = context.user_data['energy'] if user_id != 7283636452 else context.user_data['bot_energy']
+        # Check if the user is under Mind Trap effect
+        mind_trap_effect = context.user_data.get('mind_trap_effect', False)
+        
+        # Check if the user has Focus active
+        focus_active = context.user_data.get('focus_active', False)
 
         # Action logic
         if action == "strike":
             energy_cost = 12
-            if player_energy < energy_cost:
+            if user_energy < energy_cost:
                 await send_message(update, "Not enough energy to use Strike.")
                 return
             damage = random.randint(12, 18)
-            critical_hit = random.random() < 0.15
-            if context.user_data.get('focus_critical', 0) > 0:
-                critical_hit = True
-                context.user_data['focus_critical'] = 0
+            critical_hit = random.random() < (0.30 if focus_active else 0.15)
             if critical_hit:
                 damage *= 2
-            opponent_hp -= damage
+            if mind_trap_effect:
+                damage //= 2
+                opponent_energy = min(100, opponent_energy + 15)
+            opponent_hp = max(0, opponent_hp - damage)
             result_message = f"You used Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
 
         elif action == "defend":
             energy_gain = 10
-            heal = random.randint(10, 20)
-            user_hp += heal
+            heal = random.randint(15, 25)
+            if focus_active:
+                heal *= 2
+            if mind_trap_effect:
+                heal //= 2
+            user_hp = min(100, user_hp + heal)
             result_message = f"You used Defend, healed {heal} HP, and gained 10 energy."
 
         elif action == "focus":
             energy_gain = random.randint(20, 30)
-            context.user_data['focus_critical'] = 0.25
-            result_message = f"You used Focus, gained {energy_gain} energy, and increased your critical hit chance by 25% for the next move."
+            context.user_data['focus_active'] = True
+            result_message = f"You used Focus, gained {energy_gain} energy, and increased your critical hit chance for the next move."
 
         elif action == "zenstrike":
             energy_cost = 40
-            if player_energy < energy_cost:
+            if user_energy < energy_cost:
                 await send_message(update, "Not enough energy to use Zen Strike.")
                 return
             damage = random.randint(25, 35)
-            critical_hit = random.random() < 0.2
-            if context.user_data.get('focus_critical', 0) > 0:
-                critical_hit = True
-                context.user_data['focus_critical'] = 0
+            critical_hit = True if focus_active else (random.random() < 0.20)
             if critical_hit:
                 damage *= 2
-            opponent_hp -= damage
+            if mind_trap_effect:
+                damage //= 2
+                opponent_energy = min(100, opponent_energy + 15)
+            opponent_hp = max(0, opponent_hp - damage)
             result_message = f"You used Zen Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
 
         elif action == "mindtrap":
             energy_cost = 20
-            if player_energy < energy_cost:
+            if user_energy < energy_cost:
                 await send_message(update, "Not enough energy to use Mind Trap.")
                 return
-            context.user_data['mind_trap'] = True
-            result_message = "You used Mind Trap, the opponent's next move will be 50% effective."
-
-        elif action == "meditate":
-            energy_gain = random.randint(15, 25)
-            heal = random.randint(5, 15)
-            user_hp += heal
-            result_message = f"You used Meditate, healed {heal} HP, and restored {energy_gain} energy."
+            context.user_data['opponent_mind_trap'] = True
+            result_message = "You used Mind Trap, the opponent's next move will be 50% effective and they'll lose energy if they attack."
 
         # Apply energy changes
-        if user_id != 7283636452:
-            context.user_data['energy'] = max(0, min(100, context.user_data['energy'] - energy_cost + energy_gain))
+        user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
+        
+        # Reset focus and mind trap effects
+        context.user_data['focus_active'] = False
+        context.user_data['mind_trap_effect'] = False
+
+        # Set mind trap effect for the opponent's next turn
+        if action == "mindtrap":
+            context.user_data['opponent_mind_trap'] = True
+
+        # Update energies in context
+        if is_challenger:
+            context.user_data['challenger_energy'] = user_energy
+            context.user_data['opponent_energy'] = opponent_energy
         else:
-            context.user_data['bot_energy'] = max(0, min(100, context.user_data['bot_energy'] - energy_cost + energy_gain))
+            context.user_data['opponent_energy'] = user_energy
+            context.user_data['challenger_energy'] = opponent_energy
 
         # Check if the battle ends
         if opponent_hp <= 0:
@@ -1024,23 +1038,32 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             return
 
         # Update the battle status
-        cursor.execute("""
-            UPDATE pvp_battles 
-            SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
-            WHERE id = %s
-        """, (user_hp if user_id == battle['challenger_id'] else opponent_hp,
-              opponent_hp if user_id == battle['challenger_id'] else user_hp,
-              opponent_id,
-              battle['id']))
+        if is_challenger:
+            cursor.execute("""
+                UPDATE pvp_battles 
+                SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
+                WHERE id = %s
+            """, (user_hp, opponent_hp, opponent_id, battle['id']))
+        else:
+            cursor.execute("""
+                UPDATE pvp_battles 
+                SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
+                WHERE id = %s
+            """, (opponent_hp, user_hp, opponent_id, battle['id']))
         db.commit()
 
         # Create the battle view
-        player_name = update.effective_user.first_name if user_id != 7283636452 else "Bot"
-        opponent_name = "Bot" if opponent_id == 7283636452 else "Opponent"
-        player_energy = context.user_data['energy'] if user_id != 7283636452 else context.user_data['bot_energy']
-        opponent_energy = context.user_data['bot_energy'] if opponent_id == 7283636452 else context.user_data['energy']
-
-        battle_view = create_battle_view(player_name, user_hp, player_energy, opponent_name, opponent_hp, opponent_energy)
+        challenger_name = update.effective_user.first_name if is_challenger else "Opponent"
+        opponent_name = "Bot" if opponent_id == 7283636452 else ("Opponent" if is_challenger else update.effective_user.first_name)
+        
+        battle_view = create_battle_view(
+            challenger_name, 
+            battle['challenger_hp'], 
+            context.user_data.get('challenger_energy', 50),
+            opponent_name, 
+            battle['opponent_hp'], 
+            context.user_data.get('opponent_energy', 50)
+        )
 
         # Send the result with updated HP and energy bars
         await context.bot.send_message(
