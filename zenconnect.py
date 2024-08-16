@@ -580,7 +580,7 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
 from datetime import datetime, timezone
 
 @with_database_connection
-async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
+async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     opponent_username = context.args[0].replace('@', '') if context.args else None
 
@@ -588,6 +588,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         await update.message.reply_text("Please specify a valid opponent or type 'bot' to challenge the bot.")
         return
 
+    db = get_db_connection()
     if not db:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
         return
@@ -659,6 +660,8 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     finally:
         if db.is_connected():
             cursor.close()
+            db.close()
+
   
 
 def fetch_pending_battle(db, user_id):
@@ -745,92 +748,17 @@ def generate_pvp_move_buttons(user_id):
     ]
     return InlineKeyboardMarkup(keyboard)
 
+import re
 import random
 import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+from telegram.error import BadRequest
 
 logger = logging.getLogger(__name__)
 
-async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
-            # Fetch the active battle where the bot is involved
-            cursor.execute("""
-                SELECT * FROM pvp_battles 
-                WHERE (challenger_id = 7283636452 OR opponent_id = 7283636452) AND status = 'in_progress'
-            """)
-            battle = cursor.fetchone()
-
-            if not battle:
-                logger.info("No active battle found for the bot.")
-                return
-
-            if battle['current_turn'] != 7283636452:
-                logger.info("It's not the bot's turn.")
-                return
-
-            # Determine bot's HP and opponent's HP
-            bot_hp = battle['challenger_hp'] if battle['challenger_id'] == 7283636452 else battle['opponent_hp']
-            opponent_hp = battle['opponent_hp'] if battle['challenger_id'] == 7283636452 else battle['challenger_hp']
-
-            # Retrieve bot's energy level
-            bot_energy = context.user_data.get('bot_energy', 100)
-
-            # Generate AI decision-making prompt
-            prompt = f"""
-            You are a Zen warrior AI engaged in a strategic duel. Your goal is to win decisively by reducing your opponent's HP to 0 while keeping your HP above 0. 
-            
-            Current situation:
-            - Your HP: {bot_hp}/100
-            - Opponent's HP: {opponent_hp}/100
-            - Your Energy: {bot_energy}/100
-
-            Available actions:
-            - Strike: Deal moderate damage to the opponent. Costs 12 energy.
-            - Defend: Heal yourself and gain energy. Costs 0 energy, gains 10 energy.
-            - Focus: Recover energy and increase your critical hit chances for the next turn. Gains 20-30 energy.
-            - Zen Strike: A powerful move that deals significant damage. Costs 40 energy.
-            - Mind Trap: Reduces the effectiveness of the opponent's next move by 50%. Costs 20 energy.
-
-            Strategy to win:
-            - Manage your energy carefully; don't allow it to drop too low unless you can deliver a finishing blow.
-            - Use "Zen Strike" only if you have sufficient energy and can guarantee significant damage or a win.
-            - If your energy is low, prioritize using "Defend" or "Focus" to regain energy and prolong the fight.
-            - Strike with "Mind Trap" if the opponent has high energy, to reduce their effectiveness in the next turn.
-            """
-
-            # Generate AI response based on the prompt
-            ai_response = await generate_response(prompt)
-
-            # Extract action from AI response
-            action = next((move for move in ["strike", "defend", "focus", "zenstrike", "mindtrap"] if move in ai_response.lower()), "strike")
-
-            logger.info(f"Bot chose action: {action} based on AI response: {ai_response}")
-
-            # Execute the chosen move
-            await execute_pvp_move(update, context, db, bot_mode=True, action=action)
-
-            # Send AI's explanation to the chat for transparency
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Zen Bot's strategy: {ai_response}")
-
-        except Exception as e:
-            logger.error(f"Error during bot move execution: {e}")
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-
-async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    db = get_db_connection()
-    if db:
-        try:
-            await execute_pvp_move(update, context, db=db)
-        finally:
-            if db.is_connected():
-                db.close()
+def escape_markdown(text):
+    return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
 
 def create_battle_view(challenger_name, challenger_hp, challenger_energy, opponent_name, opponent_hp, opponent_energy):
     max_name_length = max(len(challenger_name), len(opponent_name))
@@ -847,7 +775,6 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
     opponent_energy_bar = '█' * int(opponent_energy / 10) + '░' * (energy_bar_length - int(opponent_energy / 10))
     
     battle_view = f"""
-```
 ┌{'─' * (max_name_length + 24)}┐
 │ {challenger_name} │ {int(challenger_hp):3d}/100 HP    │
 │ {challenger_hp_bar} │
@@ -857,8 +784,18 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
 │ {opponent_hp_bar} │
 │ {opponent_energy_bar} {int(opponent_energy):3d}/100 Energy │
 └{'─' * (max_name_length + 24)}┘
-Copy"""
+"""
     return battle_view
+
+def generate_pvp_move_buttons(user_id):
+    keyboard = [
+        [InlineKeyboardButton("Strike", callback_data=f"pvp_strike_{user_id}")],
+        [InlineKeyboardButton("Defend", callback_data=f"pvp_defend_{user_id}")],
+        [InlineKeyboardButton("Focus", callback_data=f"pvp_focus_{user_id}")],
+        [InlineKeyboardButton("Zen Strike", callback_data=f"pvp_zenstrike_{user_id}")],
+        [InlineKeyboardButton("Mind Trap", callback_data=f"pvp_mindtrap_{user_id}")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
@@ -1062,7 +999,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             """, (opponent_hp, user_hp, opponent_id, battle['id']))
         db.commit()
 
-         # Create the battle view
+        # Create the battle view
         if bot_mode:
             player_name = "Bot"
             opponent_name = update.effective_user.first_name
@@ -1083,11 +1020,18 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         )
 
         # Send the result with updated HP and energy bars
-        await context.bot.send_message(
-            chat_id=battle['group_id'], 
-            text=f"{result_message}\n\n{battle_view}",
-            parse_mode='Markdown'
-        )
+        try:
+            await context.bot.send_message(
+                chat_id=battle['group_id'], 
+                text=f"{escape_markdown(result_message)}\n\n{battle_view}",
+                parse_mode='MarkdownV2'
+            )
+        except BadRequest as e:
+            logger.error(f"Error sending battle update: {e}")
+            await context.bot.send_message(
+                chat_id=battle['group_id'],
+                text="An error occurred while updating the battle. Please check /pvpstatus for the current state."
+            )
 
         # Notify players in the group chat
         if opponent_id != 7283636452:
@@ -1105,6 +1049,96 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         if not bot_mode and update.callback_query:
             await update.callback_query.answer()
+
+async def send_message(update, text):
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(text)
+    else:
+        await update.message.reply_text(text)
+async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor(dictionary=True)
+            # Fetch the active battle where the bot is involved
+            cursor.execute("""
+                SELECT * FROM pvp_battles 
+                WHERE (challenger_id = 7283636452 OR opponent_id = 7283636452) AND status = 'in_progress'
+            """)
+            battle = cursor.fetchone()
+
+            if not battle:
+                logger.info("No active battle found for the bot.")
+                return
+
+            if battle['current_turn'] != 7283636452:
+                logger.info("It's not the bot's turn.")
+                return
+
+            # Determine bot's HP and opponent's HP
+            bot_hp = battle['challenger_hp'] if battle['challenger_id'] == 7283636452 else battle['opponent_hp']
+            opponent_hp = battle['opponent_hp'] if battle['challenger_id'] == 7283636452 else battle['challenger_hp']
+
+            # Retrieve bot's energy level
+            bot_energy = context.user_data.get('bot_energy', 100)
+
+            # Generate AI decision-making prompt
+            prompt = f"""
+            You are a Zen warrior AI engaged in a strategic duel. Your goal is to win decisively by reducing your opponent's HP to 0 while keeping your HP above 0. 
+            
+            Current situation:
+            - Your HP: {bot_hp}/100
+            - Opponent's HP: {opponent_hp}/100
+            - Your Energy: {bot_energy}/100
+
+            Available actions:
+            - Strike: Deal moderate damage to the opponent. Costs 12 energy.
+            - Defend: Heal yourself and gain energy. Costs 0 energy, gains 10 energy.
+            - Focus: Recover energy and increase your critical hit chances for the next turn. Gains 20-30 energy.
+            - Zen Strike: A powerful move that deals significant damage. Costs 40 energy.
+            - Mind Trap: Reduces the effectiveness of the opponent's next move by 50%. Costs 20 energy.
+
+            Strategy to win:
+            - Manage your energy carefully; don't allow it to drop too low unless you can deliver a finishing blow.
+            - Use "Zen Strike" only if you have sufficient energy and can guarantee significant damage or a win.
+            - If your energy is low, prioritize using "Defend" or "Focus" to regain energy and prolong the fight.
+            - Strike with "Mind Trap" if the opponent has high energy, to reduce their effectiveness in the next turn.
+            """
+
+            # Generate AI response based on the prompt
+            ai_response = await generate_response(prompt)
+
+            # Extract action from AI response
+            action = next((move for move in ["strike", "defend", "focus", "zenstrike", "mindtrap"] if move in ai_response.lower()), "strike")
+
+            logger.info(f"Bot chose action: {action} based on AI response: {ai_response}")
+
+            # Execute the chosen move
+            await execute_pvp_move(update, context, db, bot_mode=True, action=action)
+
+            # Send AI's explanation to the chat for transparency
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Zen Bot's strategy: {ai_response}")
+
+        except Exception as e:
+            logger.error(f"Error during bot move execution: {e}")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+
+async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db = get_db_connection()
+    if db:
+        try:
+            await execute_pvp_move(update, context, db=db)
+        finally:
+            if db.is_connected():
+                db.close()
+
+
+
+
 
 
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
