@@ -1,6 +1,7 @@
 import os
 import asyncio
 import sys
+import hashlib
 import logging
 import functools
 from openai import AsyncOpenAI
@@ -579,6 +580,8 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # PvP Functionality
 from datetime import datetime, timezone
 
+import hashlib
+
 @with_database_connection
 async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     user_id = update.effective_user.id
@@ -603,16 +606,20 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
             if result:
                 opponent_id = result['user_id']
             else:
+                # Generate a temporary user_id based on the username
+                temp_user_id = int(hashlib.md5(opponent_username.encode()).hexdigest(), 16) % (10 ** 10)
+                
                 # Create a new user entry if they don't exist
                 cursor.execute("""
-                    INSERT INTO users (username, zen_points, total_minutes, level)
-                    VALUES (%s, 0, 0, 0)
-                """, (opponent_username,))
+                    INSERT INTO users (user_id, username, zen_points, total_minutes, level, chat_type)
+                    VALUES (%s, %s, 0, 0, 0, 'private')
+                """, (temp_user_id, opponent_username))
                 db.commit()
-                opponent_id = cursor.lastrowid
+                opponent_id = temp_user_id
                 await update.message.reply_text(f"Created new user entry for @{opponent_username}.")
         finally:
             cursor.close()
+
     try:
         cursor = db.cursor(dictionary=True)
 
