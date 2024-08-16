@@ -849,15 +849,14 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
     battle_view = f"""
 ```
 ┌{'─' * (max_name_length + 24)}┐
-│ {challenger_name} │ {challenger_hp:3d}/100 HP    │
+│ {challenger_name} │ {int(challenger_hp):3d}/100 HP    │
 │ {challenger_hp_bar} │
-│ {challenger_energy_bar} {challenger_energy:3d}/100 Energy │
+│ {challenger_energy_bar} {int(challenger_energy):3d}/100 Energy │
 ├{'─' * (max_name_length + 24)}┤
-│ {opponent_name} │ {opponent_hp:3d}/100 HP    │
+│ {opponent_name} │ {int(opponent_hp):3d}/100 HP    │
 │ {opponent_hp_bar} │
-│ {opponent_energy_bar} {opponent_energy:3d}/100 Energy │
+│ {opponent_energy_bar} {int(opponent_energy):3d}/100 Energy │
 └{'─' * (max_name_length + 24)}┘
-```
 """
     return battle_view
 
