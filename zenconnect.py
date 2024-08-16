@@ -50,7 +50,7 @@ def with_database_connection(func):
         if not db:
             logger.error(f"Failed to establish database connection in {func.__name__}")
             if isinstance(args[0], Update):
-                await args[0].message.reply_text("I'm having trouble accessing my memory right now. Please try again later.")
+                await args[0].message.reply_text("I'm having trouble accessing my memory right now. Please try again later")
             return
         try:
             return await func(*args, **kwargs, db=db)
