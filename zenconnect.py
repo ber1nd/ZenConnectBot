@@ -581,10 +581,11 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
 from datetime import datetime, timezone
 
 import hashlib
+from mysql.connector import Error
 
 @with_database_connection
 async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
-    user_id = update.effective_user.id
+    challenger_id = update.effective_user.id
     opponent_username = context.args[0].replace('@', '') if context.args else None
 
     if not opponent_username:
@@ -626,25 +627,27 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
                         """, (opponent_telegram_id, opponent_username))
                         db.commit()
                         opponent_id = opponent_telegram_id
-                        await update.message.reply_text(f"Created new user entry for @{opponent_username}.")
+                        logger.info(f"Created new user entry for @{opponent_username} with ID {opponent_id}")
                 except Exception as e:
                     logger.error(f"Error getting chat member: {e}")
                     await update.message.reply_text(f"Couldn't find user @{opponent_username}. Make sure they have interacted with me in this group.")
                     return
             else:
                 opponent_id = result['user_id']
-                
         finally:
             cursor.close()
+
+    logger.info(f"Starting PvP: Challenger ID: {challenger_id}, Opponent ID: {opponent_id}")
 
     try:
         cursor = db.cursor(dictionary=True)
 
         # Ensure the challenger exists in the users table
-        cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+        cursor.execute("SELECT * FROM users WHERE user_id = %s", (challenger_id,))
         challenger = cursor.fetchone()
 
         if not challenger:
+            logger.warning(f"Challenger {challenger_id} not found in users table")
             await update.message.reply_text("You are not registered in the system. Please interact with the bot first.")
             return
 
@@ -654,7 +657,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
             WHERE ((challenger_id = %s AND opponent_id = %s) 
             OR (challenger_id = %s AND opponent_id = %s)) 
             AND status = 'in_progress'
-        """, (user_id, opponent_id, opponent_id, user_id))
+        """, (challenger_id, opponent_id, opponent_id, challenger_id))
         battle = cursor.fetchone()
 
         if battle:
@@ -669,8 +672,11 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         cursor.execute("""
             INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
             VALUES (%s, %s, %s, %s, 'pending')
-        """, (user_id, opponent_id, update.effective_chat.id, user_id))
+        """, (challenger_id, opponent_id, update.effective_chat.id, challenger_id))
         db.commit()
+        
+        battle_id = cursor.lastrowid
+        logger.info(f"Created PvP battle with ID: {battle_id}")
 
         if opponent_id == 7283636452:
             await update.message.reply_text("You have challenged the bot! The battle will begin now.")
@@ -680,7 +686,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
 
         # Automatically send move buttons if the battle is against the bot
         if opponent_id == 7283636452:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="Choose your move:", reply_markup=generate_pvp_move_buttons(user_id))
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="Choose your move:", reply_markup=generate_pvp_move_buttons(challenger_id))
 
     except Error as e:
         logger.error(f"Database error in start_pvp: {e}")
@@ -688,18 +694,19 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     finally:
         if db.is_connected():
             cursor.close()
-  
 
 def fetch_pending_battle(db, user_id):
     with db.cursor(dictionary=True) as cursor:
         cursor.execute("""
             SELECT * FROM pvp_battles 
-            WHERE (opponent_id = %s AND status = 'pending')
-            OR (challenger_id = %s AND opponent_id = 7283636452 AND status = 'pending')
+            WHERE (opponent_id = %s OR challenger_id = %s) AND status = 'pending'
         """, (user_id, user_id))
         battle = cursor.fetchone()
-        cursor.fetchall()  # Consume any remaining results
-    return battle
+        if battle:
+            logger.info(f"Found pending battle for user {user_id}: {battle}")
+        else:
+            logger.info(f"No pending battle found for user {user_id}")
+        return battle
 
 def update_battle_status(db, battle_id, challenger_id):
     with db.cursor() as cursor:
@@ -725,18 +732,25 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         
         logger.info(f"Found pending battle: {battle}")
         
+        # Determine if the accepting user is the challenger or opponent
+        is_challenger = battle['challenger_id'] == user_id
+        opponent_id = battle['opponent_id'] if is_challenger else battle['challenger_id']
+        
         update_battle_status(db, battle['id'], battle['challenger_id'])
         logger.info(f"Updated battle status to in_progress for battle ID: {battle['id']}")
 
         await update.message.reply_text("You have accepted the challenge! The battle begins now.")
         
-        # Notify the challenger
-        await context.bot.send_message(chat_id=battle['challenger_id'], text="Your challenge has been accepted! The battle begins now.")
-        
-        # Send move buttons to the challenger
+        # Notify the group
         await context.bot.send_message(
-            chat_id=battle['challenger_id'],
-            text="It's your turn! Choose your move:",
+            chat_id=battle['group_id'],
+            text=f"The challenge has been accepted! The battle between {update.effective_user.mention_html()} and their opponent begins now."
+        )
+        
+        # Send move buttons to the group for the challenger
+        await context.bot.send_message(
+            chat_id=battle['group_id'],
+            text=f"It's the challenger's turn! Choose your move:",
             reply_markup=generate_pvp_move_buttons(battle['challenger_id'])
         )
 
