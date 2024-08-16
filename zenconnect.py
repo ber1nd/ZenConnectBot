@@ -879,7 +879,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 await query.answer("It's not your turn!")
                 return
         else:
-            await update.message.reply_text("Invalid move. Please use the provided buttons.")
+            await update.message.reply_text("Invalid move. Please use the provided buttons")
             return
 
     if not action or action not in valid_moves:
