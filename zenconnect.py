@@ -589,7 +589,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         return
 
     if not db:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+        await update.message.reply_text("I'm having trouble accessing my memory right now. Please try again later.")
         return
 
     opponent_id = None
@@ -603,11 +603,16 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
             if result:
                 opponent_id = result['user_id']
             else:
-                await update.message.reply_text(f"Could not find user with username @{opponent_username}. Please make sure they have interacted with the bot.")
-                return
+                # Create a new user entry if they don't exist
+                cursor.execute("""
+                    INSERT INTO users (username, zen_points, total_minutes, level)
+                    VALUES (%s, 0, 0, 0)
+                """, (opponent_username,))
+                db.commit()
+                opponent_id = cursor.lastrowid
+                await update.message.reply_text(f"Created new user entry for @{opponent_username}.")
         finally:
             cursor.close()
-
     try:
         cursor = db.cursor(dictionary=True)
 
