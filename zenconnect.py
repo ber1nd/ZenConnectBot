@@ -596,27 +596,44 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         return
 
     opponent_id = None
-    if opponent_username == 'bot':
+    if opponent_username.lower() == 'bot':
         opponent_id = 7283636452  # Bot's ID
     else:
         try:
             cursor = db.cursor(dictionary=True)
-            cursor.execute("SELECT user_id FROM users WHERE username = %s", (opponent_username,))
+            
+            # Try to find the user by username (case-insensitive)
+            cursor.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(%s)", (opponent_username,))
             result = cursor.fetchone()
-            if result:
-                opponent_id = result['user_id']
+            
+            if not result:
+                # If not found by username, try to get the user's ID from Telegram
+                try:
+                    chat_member = await context.bot.get_chat_member(update.effective_chat.id, f"@{opponent_username}")
+                    opponent_telegram_id = chat_member.user.id
+                    
+                    # Try to find the user by Telegram ID
+                    cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (opponent_telegram_id,))
+                    result = cursor.fetchone()
+                    
+                    if result:
+                        opponent_id = result['user_id']
+                    else:
+                        # If still not found, create a new user entry
+                        cursor.execute("""
+                            INSERT INTO users (user_id, username, zen_points, total_minutes, level, chat_type)
+                            VALUES (%s, %s, 0, 0, 0, 'private')
+                        """, (opponent_telegram_id, opponent_username))
+                        db.commit()
+                        opponent_id = opponent_telegram_id
+                        await update.message.reply_text(f"Created new user entry for @{opponent_username}.")
+                except Exception as e:
+                    logger.error(f"Error getting chat member: {e}")
+                    await update.message.reply_text(f"Couldn't find user @{opponent_username}. Make sure they have interacted with me in this group.")
+                    return
             else:
-                # Generate a temporary user_id based on the username
-                temp_user_id = int(hashlib.md5(opponent_username.encode()).hexdigest(), 16) % (10 ** 10)
+                opponent_id = result['user_id']
                 
-                # Create a new user entry if they don't exist
-                cursor.execute("""
-                    INSERT INTO users (user_id, username, zen_points, total_minutes, level, chat_type)
-                    VALUES (%s, %s, 0, 0, 0, 'private')
-                """, (temp_user_id, opponent_username))
-                db.commit()
-                opponent_id = temp_user_id
-                await update.message.reply_text(f"Created new user entry for @{opponent_username}.")
         finally:
             cursor.close()
 
