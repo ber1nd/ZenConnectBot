@@ -899,7 +899,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         if not battle:
             if not bot_mode:
-                await send_message(update, "You are not in an active battle.")
+                await send_message(update, "You are not in an active battle")
             return
 
         if battle['current_turn'] != user_id:
