@@ -823,6 +823,15 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cursor.close()
                 db.close()
 
+async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db = get_db_connection()
+    if db:
+        try:
+            await execute_pvp_move(update, context, db=db)
+        finally:
+            if db.is_connected():
+                db.close()
+
 def create_battle_view(challenger_name, challenger_hp, challenger_energy, opponent_name, opponent_hp, opponent_energy):
     max_name_length = max(len(challenger_name), len(opponent_name))
     challenger_name = challenger_name.ljust(max_name_length)
