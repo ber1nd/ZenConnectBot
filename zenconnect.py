@@ -439,18 +439,13 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 # PvP Functionality
-
-async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@with_database_connection
+async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     user_id = update.effective_user.id
     opponent_username = context.args[0].replace('@', '') if context.args else None
 
     if not opponent_username:
         await update.message.reply_text("Please specify a valid opponent or type 'bot' to challenge the bot.")
-        return
-
-    db = get_db_connection()
-    if not db:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
         return
 
     try:
@@ -513,10 +508,6 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Error as e:
         logger.error(f"Database error in start_pvp: {e}")
         await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
-    finally:
-        if db.is_connected():
-            cursor.close()
-            db.close()
 
 
 def fetch_pending_battle(db, user_id):
@@ -539,15 +530,11 @@ def update_battle_status(db, battle_id, challenger_id):
         """, (challenger_id, battle_id))
         db.commit()
 
-async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@with_database_connection
+async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     user_id = update.effective_user.id
     logger.info(f"Accepting PvP challenge for user: {user_id}")
     
-    db = get_db_connection()
-    if not db:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
-        return
-
     try:
         cursor = db.cursor(dictionary=True)
         cursor.execute("""
@@ -594,10 +581,6 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("An unexpected error occurred. Please try again later.")
         if db.is_connected():
             db.rollback()
-    finally:
-        if db.is_connected():
-            cursor.close()
-            db.close()
 
 def generate_pvp_move_buttons(user_id):
     keyboard = [
