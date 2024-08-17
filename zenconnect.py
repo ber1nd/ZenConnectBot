@@ -667,6 +667,8 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
 """
     return battle_view
 
+# Updated execute_pvp_move function with improvements
+
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
     energy_cost = 0
@@ -686,7 +688,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 await query.answer("It's not your turn!")
                 return
         else:
-            await update.message.reply_text("Invalid move. Please use the provided buttons")
+            await update.message.reply_text("Invalid move. Please use the provided buttons.")
             return
 
     if not action or action not in valid_moves:
@@ -694,7 +696,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if not bot_mode:
             await update.callback_query.answer("Invalid move!")
         return
-    
+
     try:
         cursor = db.cursor(dictionary=True)
         cursor.execute("""
@@ -757,9 +759,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             critical_hit = random.random() < synergy_effects.get('critical_hit_chance', 0.15)
             if critical_hit:
                 damage *= 2
-                critical_hit_message = f"A well-placed strike hits critically, dealing {damage} damage!"
+                critical_hit_message = "A well-placed strike hits critically, doubling the damage!"
             else:
-                critical_hit_message = f"The strike deals {damage} damage."
+                critical_hit_message = ""
 
             # Check if Mind Trap is active
             if context.user_data.get('opponent_mind_trap'):
@@ -773,7 +775,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             opponent_hp = max(0, opponent_hp - damage)
             
             # Final Narrative for Strike
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} jumps and kicks {opponent_name}, aiming for a strong hit. {synergy_message} {critical_hit_message} {mind_trap_message}"
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} jumps and kicks {opponent_name}, aiming for a strong hit. {synergy_message} {critical_hit_message} {mind_trap_message} The strike deals {damage} damage."
 
         elif action == "zenstrike":
             energy_cost = 40
@@ -793,9 +795,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             critical_hit = random.random() < critical_hit_chance
             if critical_hit:
                 damage *= 2
-                critical_hit_message = f"A precise strike lands, dealing critical damage of {damage}!"
+                critical_hit_message = "A precise strike lands, dealing critical damage!"
             else:
-                critical_hit_message = f"The Zen Strike deals {damage} damage."
+                critical_hit_message = ""
 
             # Check if Mind Trap is active
             if context.user_data.get('opponent_mind_trap'):
@@ -809,7 +811,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             opponent_hp = max(0, opponent_hp - damage)
             
             # Final Narrative for Zen Strike
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} harnesses their Zen energy, unleashing a powerful Zen Strike on {opponent_name}. {synergy_message} {critical_hit_message} {mind_trap_message}"
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} harnesses their Zen energy, unleashing a powerful Zen Strike on {opponent_name}. {synergy_message} {critical_hit_message} {mind_trap_message} The Zen Strike deals {damage} damage."
 
         elif action == "mindtrap":
             energy_cost = 20
@@ -854,7 +856,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             user_hp = min(100, user_hp + heal)
             
             # Final Narrative for Defend
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} centers themselves, a warm energy flowing through their body as they heal for {heal} HP and gain {energy_gain} energy. {synergy_message}"
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} centers themselves, a warm energy flowing through their body as they heal for{heal} HP and gain {energy_gain} energy.{synergy_message}"
 
         elif action == "focus":
             energy_gain = random.randint(20, 30)
@@ -871,8 +873,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             else:
                 synergy_message = ""
 
+            # Prevent double energy gain by ensuring we only update once
             user_energy = min(100, user_energy + energy_gain)
-
+        
             # Final Narrative for Focus
             result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} gathers their strength, eyes closed, focusing their inner energy. They recover {energy_gain} energy, preparing for a decisive move. {synergy_message}"
 
@@ -965,7 +968,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
         else:
             await bot_pvp_move(update, context)
-        
+    
     except Exception as e:
         logger.error(f"Error in execute_pvp_move: {e}")
         if not bot_mode and update.callback_query:
@@ -974,8 +977,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if db.is_connected():
             cursor.close()
 
-    if not bot_mode and update.callback_query:
-        await update.callback_query.answer()
+        if not bot_mode and update.callback_query:
+            await update.callback_query.answer()
 
 
 # Call this function at the start of a new battle
