@@ -1035,22 +1035,34 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db:
         try:
             cursor = db.cursor(dictionary=True)
+            
+            # Fetch the active battle where the user is a challenger or opponent
             cursor.execute("""
                 SELECT id, challenger_id, opponent_id FROM pvp_battles 
                 WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
             """, (user_id, user_id))
             battle_data = cursor.fetchone()
+
+            # Ensure all results are consumed
+            cursor.fetchall()
+
             if not battle_data:
                 await update.message.reply_text("No active battles found to surrender.")
                 return
 
+            # Determine the winner (opponent wins if the user surrenders)
             winner_id = battle_data['opponent_id'] if user_id == battle_data['challenger_id'] else battle_data['challenger_id']
+            
+            # Update the battle status to 'completed' and set the winner
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle_data['id']))
             db.commit()
+            
             await update.message.reply_text("You have surrendered the battle. Your opponent is victorious.")
-        except Error as e:
+        
+        except mysql.connector.Error as e:
             logger.error(f"Database error in surrender: {e}")
             await update.message.reply_text("An error occurred while surrendering. Please try again later.")
+        
         finally:
             if db.is_connected():
                 cursor.close()
