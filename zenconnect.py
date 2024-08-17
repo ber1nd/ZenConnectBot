@@ -726,6 +726,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             opponent_energy = context.user_data.get('challenger_energy', 50)
 
         opponent_id = battle['opponent_id'] if is_challenger else battle['challenger_id']
+        opponent_name = "Bot" if opponent_id == 7283636452 else update.effective_user.first_name if bot_mode else "Opponent"
 
         # Reset energy gain/loss conditions
         context.user_data['energy_gain'] = 0
@@ -772,7 +773,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             opponent_hp = max(0, opponent_hp - damage)
             
             # Final Narrative for Strike
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} jumps and kicks {'Fab' if bot_mode else 'Bot'}, aiming for a strong hit. {synergy_message} {critical_hit_message} {mind_trap_message}"
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} jumps and kicks {opponent_name}, aiming for a strong hit. {synergy_message} {critical_hit_message} {mind_trap_message}"
 
         elif action == "zenstrike":
             energy_cost = 40
@@ -808,27 +809,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             opponent_hp = max(0, opponent_hp - damage)
             
             # Final Narrative for Zen Strike
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} harnesses their Zen energy, unleashing a powerful Zen Strike on {'Fab' if bot_mode else 'Bot'}. {synergy_message} {critical_hit_message} {mind_trap_message}"
-
-        elif action == "focus":
-            energy_gain = random.randint(20, 30)
-
-            if previous_move == "strike":
-                energy_gain += 10
-                synergy_message = "The strike channels energy back into focus, increasing recovery."
-            elif previous_move == "zenstrike":
-                energy_gain = max(50, energy_gain + 20)
-                synergy_message = "After the Zen Strike, a deep focus refills the energy reserves."
-            elif previous_move == "mindtrap":
-                context.user_data['energy_loss'] = 15
-                synergy_message = "The Mind Trap drains some energy even during focus."
-            else:
-                synergy_message = ""
-
-            user_energy = min(100, user_energy + energy_gain)
-            
-            # Final Narrative for Focus
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} gathers their strength, eyes closed, focusing their inner energy. They recover {energy_gain} energy, preparing for a decisive move. {synergy_message}"
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} harnesses their Zen energy, unleashing a powerful Zen Strike on {opponent_name}. {synergy_message} {critical_hit_message} {mind_trap_message}"
 
         elif action == "mindtrap":
             energy_cost = 20
@@ -837,7 +818,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 return
             context.user_data['opponent_mind_trap'] = True
 
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} sets a cunning Mind Trap for {'Fab' if bot_mode else 'Bot'}, clouding their next move."
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} sets a cunning Mind Trap for {opponent_name}, clouding their next move."
             
             if previous_move == "strike":
                 opponent_hp = max(0, opponent_hp - 5)
@@ -889,7 +870,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
             db.commit()
             await send_message(update, f"{'Bot' if bot_mode else update.effective_user.first_name} has been defeated.")
-            await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has been defeated.")
+            await context.bot.send_message(chat_id=battle['group_id'], text=f"{opponent_name} has won the battle!")
             return
 
         # Update the battle status
@@ -946,7 +927,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
         else:
             await bot_pvp_move(update, context)
-
+        
     except Exception as e:
         logger.error(f"Error in execute_pvp_move: {e}")
         if not bot_mode and update.callback_query:
