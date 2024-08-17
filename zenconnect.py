@@ -744,54 +744,35 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
             if previous_move == "focus":
                 damage = round(damage * 1.1)
+                synergy_message = "The focus enhances the strike, adding extra force."
                 synergy_effects['critical_hit_chance'] = 0.20
-            if previous_move == "zenstrike":
+            elif previous_move == "zenstrike":
                 damage = round(damage * 1.1)
+                synergy_message = "The momentum from the Zen Strike increases the strike's power."
                 synergy_effects['critical_hit_chance'] = 0.15
-            if previous_move == "mindtrap":
-                damage = round(damage * 0.85)
-                context.user_data['energy_loss'] = 10
+            else:
+                synergy_message = ""
 
             critical_hit = random.random() < synergy_effects.get('critical_hit_chance', 0.15)
             if critical_hit:
                 damage *= 2
+                critical_hit_message = "A well-placed strike hits critically, doubling the damage!"
+            else:
+                critical_hit_message = ""
+
+            # Check if Mind Trap is active
+            if context.user_data.get('opponent_mind_trap'):
+                original_damage = damage
+                damage //= 2  # Reduces the damage by half due to Mind Trap
+                context.user_data['energy_loss'] = 10
+                mind_trap_message = f"But the Mind Trap dampens the force, reducing the damage by {original_damage - damage}. Only {damage} damage is dealt."
+            else:
+                mind_trap_message = ""
 
             opponent_hp = max(0, opponent_hp - damage)
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} jumps and kicks {'Bot' if bot_mode else opponent_id}, aiming for a strong hit. The attack deals {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
-            if context.user_data.get('opponent_mind_trap'):
-                reduced_damage = round(damage / 2)
-                result_message += f" However, {'Bot' if bot_mode else opponent_id}'s Mind Trap reduces the damage by {reduced_damage}. Total damage: {reduced_damage}."
-
-        elif action == "defend":
-            energy_gain = 10
-            heal = random.randint(15, 25)
-
-            if previous_move == "zenstrike":
-                heal += 10
-                context.user_data['energy_loss'] = 10
-
-            if previous_move == "focus":
-                heal = round(heal * 1.15)
-                synergy_effects['next_move_boost'] = True
-
-            user_hp = min(100, user_hp + heal)
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} centers themselves, a warm energy flowing through their body as they heal for {heal} HP and gain {energy_gain} energy."
-
-        elif action == "focus":
-            energy_gain = random.randint(20, 30)
-
-            if previous_move == "strike":
-                energy_gain += 10
-                synergy_effects['critical_hit_chance'] = 0.30
-            if previous_move == "zenstrike":
-                energy_gain = max(50, energy_gain + 20)
-                synergy_effects['next_move_penalty'] = True
-
-            if previous_move == "mindtrap":
-                context.user_data['energy_loss'] = 15
-
-            context.user_data['focus_active'] = True
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} gathers their strength, eyes closed, focusing their inner energy. They recover {energy_gain} energy, preparing for a decisive move."
+            
+            # Final Narrative for Strike
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} jumps and kicks {'Fab' if bot_mode else 'Bot'}, aiming for a strong hit. {synergy_message} {critical_hit_message} {mind_trap_message}"
 
         elif action == "zenstrike":
             energy_cost = 40
@@ -799,25 +780,55 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 await send_message(update, "Not enough energy to use Zen Strike.")
                 return
             damage = random.randint(25, 35)
+            
             if previous_move == "focus":
                 damage = round(damage * 1.2)
                 critical_hit_chance = 0.30
+                synergy_message = "The focused energy empowers the strike, increasing its potential."
             else:
                 critical_hit_chance = 0.20
+                synergy_message = ""
 
             critical_hit = random.random() < critical_hit_chance
             if critical_hit:
                 damage *= 2
+                critical_hit_message = "A precise strike lands, dealing critical damage!"
+            else:
+                critical_hit_message = ""
 
+            # Check if Mind Trap is active
             if context.user_data.get('opponent_mind_trap'):
-                damage //= 2
+                original_damage = damage
+                damage //= 2  # Reduces the damage by half due to Mind Trap
                 context.user_data['energy_loss'] = 15
+                mind_trap_message = f"However, the Mind Trap weakens the strike, reducing the damage by {original_damage - damage}. Only {damage} damage is dealt."
+            else:
+                mind_trap_message = ""
 
             opponent_hp = max(0, opponent_hp - damage)
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} harnesses their Zen energy, unleashing a powerful Zen Strike on {'Bot' if bot_mode else opponent_id}. The attack deals {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
-            if context.user_data.get('opponent_mind_trap'):
-                reduced_damage = round(damage / 2)
-                result_message += f" However, {'Bot' if bot_mode else opponent_id}'s Mind Trap reduces the damage by {reduced_damage}. Total damage: {reduced_damage}."
+            
+            # Final Narrative for Zen Strike
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} harnesses their Zen energy, unleashing a powerful Zen Strike on {'Fab' if bot_mode else 'Bot'}. {synergy_message} {critical_hit_message} {mind_trap_message}"
+
+        elif action == "focus":
+            energy_gain = random.randint(20, 30)
+
+            if previous_move == "strike":
+                energy_gain += 10
+                synergy_message = "The strike channels energy back into focus, increasing recovery."
+            elif previous_move == "zenstrike":
+                energy_gain = max(50, energy_gain + 20)
+                synergy_message = "After the Zen Strike, a deep focus refills the energy reserves."
+            elif previous_move == "mindtrap":
+                context.user_data['energy_loss'] = 15
+                synergy_message = "The Mind Trap drains some energy even during focus."
+            else:
+                synergy_message = ""
+
+            user_energy = min(100, user_energy + energy_gain)
+            
+            # Final Narrative for Focus
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} gathers their strength, eyes closed, focusing their inner energy. They recover {energy_gain} energy, preparing for a decisive move. {synergy_message}"
 
         elif action == "mindtrap":
             energy_cost = 20
@@ -826,18 +837,25 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 return
             context.user_data['opponent_mind_trap'] = True
 
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} sets a cunning Mind Trap for {'Bot' if bot_mode else opponent_id}, clouding their next move. {'Bot' if bot_mode else opponent_id}'s next action will be less effective, and they may lose energy."
-    
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} sets a cunning Mind Trap for {'Fab' if bot_mode else 'Bot'}, clouding their next move."
+            
             if previous_move == "strike":
                 opponent_hp = max(0, opponent_hp - 5)
-                result_message += "\n\nThe opponent's next `Strike` will be weakened and they will lose energy!"
+                synergy_message = "The strike triggers the trap, reflecting some of the force back."
+                result_message += f"\n\nThe opponent's next `Strike` will be weakened and they will lose energy! {synergy_message}"
             elif previous_move == "defend":
                 reflect_damage = random.randint(5, 10)
                 opponent_hp = max(0, opponent_hp - reflect_damage)
-                result_message += f"\n\nThe opponent's `Defend` caused {reflect_damage} damage to be reflected back by `Mind Trap`!"
+                synergy_message = f"The Mind Trap reflects {reflect_damage} damage as the opponent defends."
+                result_message += f"\n\nThe opponent's `Defend` caused {reflect_damage} damage to be reflected back by `Mind Trap`! {synergy_message}"
             elif previous_move == "focus":
                 context.user_data['energy_loss'] = 15
-                result_message += "\n\nThe opponent's energy will be drained if they attempt to recover!"
+                synergy_message = "The Mind Trap saps energy as the opponent attempts to focus."
+                result_message += f"\n\nThe opponent's energy will be drained if they attempt to recover! {synergy_message}"
+            else:
+                synergy_message = ""
+
+            result_message += f" {synergy_message}"
 
         # Apply energy changes
         user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
