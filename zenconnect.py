@@ -540,6 +540,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
 
         # Automatically send move buttons if the battle is against the bot
         if opponent_id == 7283636452:
+            # Here, ensure only one set of buttons is displayed
             await context.bot.send_message(chat_id=update.effective_chat.id, text="Choose your move:", reply_markup=generate_pvp_move_buttons(user_id))
 
     except mysql.connector.Error as e:
