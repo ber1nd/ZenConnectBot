@@ -757,9 +757,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             critical_hit = random.random() < synergy_effects.get('critical_hit_chance', 0.15)
             if critical_hit:
                 damage *= 2
-                critical_hit_message = "A well-placed strike hits critically, doubling the damage!"
+                critical_hit_message = f"A well-placed strike hits critically, dealing {damage} damage!"
             else:
-                critical_hit_message = ""
+                critical_hit_message = f"The strike deals {damage} damage."
 
             # Check if Mind Trap is active
             if context.user_data.get('opponent_mind_trap'):
@@ -793,9 +793,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             critical_hit = random.random() < critical_hit_chance
             if critical_hit:
                 damage *= 2
-                critical_hit_message = "A precise strike lands, dealing critical damage!"
+                critical_hit_message = f"A precise strike lands, dealing critical damage of {damage}!"
             else:
-                critical_hit_message = ""
+                critical_hit_message = f"The Zen Strike deals {damage} damage."
 
             # Check if Mind Trap is active
             if context.user_data.get('opponent_mind_trap'):
@@ -871,19 +871,23 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             else:
                 synergy_message = ""
 
-            user_energy = min(100, user_energy + energy_gain)  # Apply energy gain only once
-            
+            user_energy = min(100, user_energy + energy_gain)
+
             # Final Narrative for Focus
             result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} gathers their strength, eyes closed, focusing their inner energy. They recover {energy_gain} energy, preparing for a decisive move. {synergy_message}"
 
         # Apply energy changes
-        user_energy = max(0, min(100, user_energy - energy_cost))  # Subtract energy cost
-        user_energy = max(0, user_energy - context.user_data.get('energy_loss', 0))  # Apply energy loss from Mind Trap
-        
-        # Reset synergy effects after applying them
-        context.user_data['previous_move'] = action
+        user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
+
+        # Apply energy loss from previous turn's effects
+        user_energy = max(0, user_energy - context.user_data.get('energy_loss', 0))
+
+        # Reset focus and mind trap effects after applying them
         context.user_data['focus_active'] = False
         context.user_data['opponent_mind_trap'] = False
+
+        # Save the current move as previous_move for next turn's synergy
+        context.user_data['previous_move'] = action
 
         # Store updated energy values
         if is_challenger:
@@ -973,18 +977,21 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
     if not bot_mode and update.callback_query:
         await update.callback_query.answer()
 
-# Ensure that all previous synergies and effects are reset at the start of each battle
-def reset_synergies(context):
-    context.user_data['previous_move'] = None
-    context.user_data['focus_active'] = False
-    context.user_data['opponent_mind_trap'] = False
-    context.user_data['energy_loss'] = 0
-    context.user_data['energy_gain'] = 0
 
 # Call this function at the start of a new battle
 async def start_new_battle(update, context):
     reset_synergies(context)
     # Additional logic to start the new battle
+
+def reset_synergies(context):
+    context.user_data['previous_move'] = None
+    context.user_data['opponent_mind_trap'] = False
+    context.user_data['focus_active'] = False
+    context.user_data['energy_loss'] = 0
+    context.user_data['energy_gain'] = 0
+    context.user_data['challenger_energy'] = 50
+    context.user_data['opponent_energy'] = 50
+
 
 async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db_connection()
