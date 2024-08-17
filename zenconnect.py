@@ -821,27 +821,18 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 return
             context.user_data['opponent_mind_trap'] = True
 
+            result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be 50% effective and they'll lose energy if they attack."
+    
             if previous_move == "strike":
                 opponent_hp = max(0, opponent_hp - 5)
-                result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be 50% effective and they'll lose energy if they attack."
-                result_message += "\n\nThe opponent's attack will be weakened and they will lose energy!"
-
+                result_message += "\n\nThe opponent's next `Strike` will be weakened and they will lose energy!"
             elif previous_move == "defend":
                 reflect_damage = random.randint(5, 10)
                 opponent_hp = max(0, opponent_hp - reflect_damage)
-                result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be reflected by {reflect_damage} damage."
-                result_message += f"\n\nThe opponent's defense caused {reflect_damage} damage to be reflected back by `Mind Trap`!"
-
+                result_message += f"\n\nThe opponent's `Defend` caused {reflect_damage} damage to be reflected back by `Mind Trap`!"
             elif previous_move == "focus":
                 context.user_data['energy_loss'] = 15
-                result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be weakened, and they will lose additional energy if they attempt to recover."
-                result_message += "\n\nThe opponent's energy will be drained!"
-
-            else:
-                result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be 50% effective."
-                result_message += "\n\nThe opponent's next move will be weakened!"
-
-# Include feedback messaging elsewhere in the code to ensure players understand the effects of Mind Trap during the opponent's turn.
+                result_message += "\n\nThe opponent's energy will be drained if they attempt to recover!"
 
         # Apply energy changes
         user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
@@ -878,7 +869,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has been defeated.")
             return
 
-                # Update the battle status
+        # Update the battle status
         if is_challenger:
             cursor.execute("""
                 UPDATE pvp_battles 
@@ -1030,7 +1021,6 @@ async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT
         finally:
             if db.is_connected():
                 db.close()
-        
 
 async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, player_message):
     db = get_db_connection()
@@ -1110,16 +1100,6 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, playe
                 cursor.close()
                 db.close()
 
-
-async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    db = get_db_connection()
-    if db:
-        try:
-            await execute_pvp_move(update, context, db=db)
-        finally:
-            if db.is_connected():
-                db.close()
-
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     db = get_db_connection()
@@ -1160,7 +1140,6 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.close()
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
-
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
