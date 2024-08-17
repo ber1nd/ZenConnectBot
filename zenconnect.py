@@ -942,9 +942,12 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             - Mind Trap: Reduces the effectiveness of the opponent's next move by 50%. Costs 20 energy.
 
             **Synergies:**
-            - If you used "Focus" on the previous turn, "Strike" or "Zen Strike" will deal extra damage or have a higher critical hit chance.
-            - If you used "Zen Strike" on the previous turn, following it with "Defend" will heal you more effectively.
-            - If you used "Mind Trap" on the previous turn, the opponent's next attack will be less effective, and they may lose energy.
+            - **Focus to Strike/Zen Strike**: If you used "Focus" on the previous turn, "Strike" or "Zen Strike" will deal extra damage or have a higher critical hit chance.
+            - **Zen Strike to Defend**: If you used "Zen Strike" on the previous turn, "Defend" will heal you more effectively.
+            - **Strike to Mind Trap**: If you used "Strike" on the previous turn, "Mind Trap" will deal additional damage to the opponent.
+            - **Defend to Mind Trap**: If you used "Defend" on the previous turn, "Mind Trap" will reflect damage back to the opponent.
+            - **Focus to Mind Trap**: If you used "Focus" on the previous turn, "Mind Trap" will cause the opponent to lose additional energy if they attempt to recover.
+            - **Mind Trap to Zen Strike/Strike**: If the opponent was under the effect of "Mind Trap," "Zen Strike" will deal less damage and "Strike" will have reduced effectiveness.
 
             **Strategy considerations:**
             1. **Prioritize winning**: If you can reduce your opponent's HP to 0 with your current energy, use the most effective damaging move available.
