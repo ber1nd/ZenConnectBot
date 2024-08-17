@@ -440,8 +440,7 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # PvP Functionality
 
-@with_database_connection
-async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
+async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     opponent_username = context.args[0].replace('@', '') if context.args else None
 
@@ -449,12 +448,18 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         await update.message.reply_text("Please specify a valid opponent or type 'bot' to challenge the bot.")
         return
 
-    opponent_id = None
-    if opponent_username == 'bot':
-        opponent_id = 7283636452  # Bot's ID
-    else:
-        try:
-            cursor = db.cursor(dictionary=True)
+    db = get_db_connection()
+    if not db:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+        return
+
+    try:
+        cursor = db.cursor(dictionary=True)
+
+        opponent_id = None
+        if opponent_username == 'bot':
+            opponent_id = 7283636452  # Bot's ID
+        else:
             cursor.execute("SELECT user_id FROM users WHERE username = %s", (opponent_username,))
             result = cursor.fetchone()
             if result:
@@ -462,11 +467,6 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
             else:
                 await update.message.reply_text(f"Could not find user with username @{opponent_username}. Please make sure they have interacted with the bot.")
                 return
-        finally:
-            cursor.close()
-
-    try:
-        cursor = db.cursor(dictionary=True)
 
         # Ensure the challenger exists in the users table
         cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
@@ -516,6 +516,8 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     finally:
         if db.is_connected():
             cursor.close()
+            db.close()
+
 
 def fetch_pending_battle(db, user_id):
     with db.cursor(dictionary=True) as cursor:
@@ -537,13 +539,23 @@ def update_battle_status(db, battle_id, challenger_id):
         """, (challenger_id, battle_id))
         db.commit()
 
-@with_database_connection
-async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
+async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     logger.info(f"Accepting PvP challenge for user: {user_id}")
     
+    db = get_db_connection()
+    if not db:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+        return
+
     try:
-        battle = fetch_pending_battle(db, user_id)
+        cursor = db.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT * FROM pvp_battles 
+            WHERE (opponent_id = %s AND status = 'pending')
+            OR (challenger_id = %s AND opponent_id = 7283636452 AND status = 'pending')
+        """, (user_id, user_id))
+        battle = cursor.fetchone()
         
         if not battle:
             logger.info(f"No pending battles found for user: {user_id}")
@@ -552,7 +564,12 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         
         logger.info(f"Found pending battle: {battle}")
         
-        update_battle_status(db, battle['id'], battle['challenger_id'])
+        cursor.execute("""
+            UPDATE pvp_battles 
+            SET status = 'in_progress', current_turn = %s 
+            WHERE id = %s
+        """, (battle['challenger_id'], battle['id']))
+        db.commit()
         logger.info(f"Updated battle status to in_progress for battle ID: {battle['id']}")
 
         await update.message.reply_text("You have accepted the challenge! The battle begins now.")
@@ -577,6 +594,10 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         await update.message.reply_text("An unexpected error occurred. Please try again later.")
         if db.is_connected():
             db.rollback()
+    finally:
+        if db.is_connected():
+            cursor.close()
+            db.close()
 
 def generate_pvp_move_buttons(user_id):
     keyboard = [
@@ -622,7 +643,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
     user_id = 7283636452 if bot_mode else update.effective_user.id
     energy_cost = 0
     energy_gain = 0
-    synergy_effects = {}  # Track synergy effects
+    synergy_effects = {}
 
     valid_moves = ["strike", "defend", "focus", "zenstrike", "mindtrap"]
 
@@ -679,9 +700,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         opponent_id = battle['opponent_id'] if is_challenger else battle['challenger_id']
 
         # Reset energy gain/loss conditions
-        if not is_challenger:
-            context.user_data['opponent_energy_gain'] = 0
-            context.user_data['opponent_energy_loss'] = 0
+        context.user_data['energy_gain'] = 0
+        context.user_data['energy_loss'] = 0
 
         # Track the previous move for synergy
         previous_move = context.user_data.get('previous_move')
@@ -701,8 +721,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 damage = round(damage * 1.1)
                 synergy_effects['critical_hit_chance'] = 0.15
             if previous_move == "mindtrap":
-                damage = round(damage * 0.85)  # Weakened by Mind Trap
-                context.user_data['opponent_energy_loss'] = 10  # Set energy loss for opponent's next move if they attack
+                damage = round(damage * 0.85)
+                context.user_data['energy_loss'] = 10
 
             critical_hit = random.random() < synergy_effects.get('critical_hit_chance', 0.15)
             if critical_hit:
@@ -717,7 +737,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
             if previous_move == "zenstrike":
                 heal += 10
-                context.user_data['opponent_energy_loss'] = 10  # Opponent's next attack is reduced
+                context.user_data['energy_loss'] = 10
 
             if previous_move == "focus":
                 heal = round(heal * 1.15)
@@ -737,7 +757,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 synergy_effects['next_move_penalty'] = True
 
             if previous_move == "mindtrap":
-                context.user_data['opponent_energy_loss'] = 15  # Opponent's next energy gain is reduced
+                context.user_data['energy_loss'] = 15
 
             context.user_data['focus_active'] = True
             result_message = f"{'Bot' if bot_mode else 'You'} used Focus, gained {energy_gain} energy, and increased your critical hit chance for the next move."
@@ -759,9 +779,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if critical_hit:
                 damage *= 2
 
-            if 'mind_trap_effect' in context.user_data:
+            if context.user_data.get('mind_trap_effect'):
                 damage //= 2
-                context.user_data['opponent_energy_loss'] = 15  # Opponent loses energy if they attack
+                context.user_data['energy_loss'] = 15
 
             opponent_hp = max(0, opponent_hp - damage)
             result_message = f"{'Bot' if bot_mode else 'You'} used Zen Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
@@ -777,28 +797,38 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 opponent_hp = max(0, opponent_hp - 5)
                 result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be 50% effective and they'll lose energy if they attack."
 
-            if previous_move == "defend":
+            elif previous_move == "defend":
                 reflect_damage = random.randint(5, 10)
                 opponent_hp = max(0, opponent_hp - reflect_damage)
                 result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be reflected by {reflect_damage} damage."
 
-            if previous_move == "focus":
-                context.user_data['opponent_energy_loss'] = 15  # Opponent loses energy if they attack
+            elif previous_move == "focus":
+                context.user_data['energy_loss'] = 15
                 result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be weakened, and they will lose additional energy if they attempt to recover."
+
+            else:
+                result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be 50% effective."
 
         # Apply energy changes
         user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
 
-        # If the user was attacked and had a synergy effect, apply it now
-        if not is_challenger and context.user_data.get('opponent_energy_loss'):
-            opponent_energy = max(0, opponent_energy - context.user_data['opponent_energy_loss'])
+        # Apply energy loss from previous turn's effects
+        user_energy = max(0, user_energy - context.user_data.get('energy_loss', 0))
 
         # Reset focus and mind trap effects after applying them
         context.user_data['focus_active'] = False
         context.user_data['mind_trap_effect'] = False
 
-        # Save the synergy-related data to context
+        # Save the current move as previous_move for next turn's synergy
         context.user_data['previous_move'] = action
+
+        # Store updated energy values
+        if is_challenger:
+            context.user_data['challenger_energy'] = user_energy
+            context.user_data['opponent_energy'] = opponent_energy
+        else:
+            context.user_data['opponent_energy'] = user_energy
+            context.user_data['challenger_energy'] = opponent_energy
 
         # Check if the battle ends
         if opponent_hp <= 0:
@@ -887,7 +917,7 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor = db.cursor(dictionary=True)
             # Fetch the active battle where the bot is involved
             cursor.execute("""
-                               SELECT * FROM pvp_battles 
+                SELECT * FROM pvp_battles 
                 WHERE (challenger_id = 7283636452 OR opponent_id = 7283636452) AND status = 'in_progress'
             """)
             battle = cursor.fetchone()
@@ -905,7 +935,7 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             opponent_hp = battle['opponent_hp'] if battle['challenger_id'] == 7283636452 else battle['challenger_hp']
 
             # Retrieve bot's energy level
-            bot_energy = context.user_data.get('bot_energy', 100)
+            bot_energy = context.user_data.get('challenger_energy' if battle['challenger_id'] == 7283636452 else 'opponent_energy', 50)
 
             # Generate AI decision-making prompt
             prompt = f"""
@@ -930,7 +960,7 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             - Use "Zen Strike" if you have enough energy, especially if "Focus" was used previously for a critical hit.
             - Use "Mind Trap" to weaken the opponent, particularly if they have high energy or if you want to set up a safer "Zen Strike."
             - Use "Defend" to recover HP and energy, especially if your HP is low or if you need to prepare for a powerful move.
-"""
+            """
 
             # Generate AI response based on the prompt
             ai_response = await generate_response(prompt)
@@ -962,6 +992,7 @@ async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT
             if db.is_connected():
                 db.close()
 
+
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     db = get_db_connection()
@@ -990,6 +1021,7 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.close()
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
