@@ -694,7 +694,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if not bot_mode:
             await update.callback_query.answer("Invalid move!")
         return
-
+    
     try:
         cursor = db.cursor(dictionary=True)
         cursor.execute("""
@@ -773,7 +773,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             opponent_hp = max(0, opponent_hp - damage)
             
             # Final Narrative for Strike
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} jumps and kicks {opponent_name}, aiming for a strong hit. The strike deals {damage} damage. {synergy_message} {critical_hit_message} {mind_trap_message}"
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} jumps and kicks {opponent_name}, aiming for a strong hit. {synergy_message} {critical_hit_message} {mind_trap_message}"
 
         elif action == "zenstrike":
             energy_cost = 40
@@ -809,7 +809,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             opponent_hp = max(0, opponent_hp - damage)
             
             # Final Narrative for Zen Strike
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} harnesses their Zen energy, unleashing a powerful Zen Strike on {opponent_name}. The strike deals {damage} damage. {synergy_message} {critical_hit_message} {mind_trap_message}"
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} harnesses their Zen energy, unleashing a powerful Zen Strike on {opponent_name}. {synergy_message} {critical_hit_message} {mind_trap_message}"
 
         elif action == "mindtrap":
             energy_cost = 20
@@ -871,23 +871,19 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             else:
                 synergy_message = ""
 
-            user_energy = min(100, user_energy + energy_gain)
+            user_energy = min(100, user_energy + energy_gain)  # Apply energy gain only once
             
             # Final Narrative for Focus
             result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} gathers their strength, eyes closed, focusing their inner energy. They recover {energy_gain} energy, preparing for a decisive move. {synergy_message}"
 
         # Apply energy changes
-        user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
-
-        # Apply energy loss from previous turn's effects
-        user_energy = max(0, user_energy - context.user_data.get('energy_loss', 0))
-
-        # Reset focus and mind trap effects after applying them
+        user_energy = max(0, min(100, user_energy - energy_cost))  # Subtract energy cost
+        user_energy = max(0, user_energy - context.user_data.get('energy_loss', 0))  # Apply energy loss from Mind Trap
+        
+        # Reset synergy effects after applying them
+        context.user_data['previous_move'] = action
         context.user_data['focus_active'] = False
         context.user_data['opponent_mind_trap'] = False
-
-        # Save the current move as previous_move for next turn's synergy
-        context.user_data['previous_move'] = action
 
         # Store updated energy values
         if is_challenger:
@@ -965,7 +961,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
         else:
             await bot_pvp_move(update, context)
-    
+        
     except Exception as e:
         logger.error(f"Error in execute_pvp_move: {e}")
         if not bot_mode and update.callback_query:
@@ -974,9 +970,21 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if db.is_connected():
             cursor.close()
 
-        if not bot_mode and update.callback_query:
-            await update.callback_query.answer()
+    if not bot_mode and update.callback_query:
+        await update.callback_query.answer()
 
+# Ensure that all previous synergies and effects are reset at the start of each battle
+def reset_synergies(context):
+    context.user_data['previous_move'] = None
+    context.user_data['focus_active'] = False
+    context.user_data['opponent_mind_trap'] = False
+    context.user_data['energy_loss'] = 0
+    context.user_data['energy_gain'] = 0
+
+# Call this function at the start of a new battle
+async def start_new_battle(update, context):
+    reset_synergies(context)
+    # Additional logic to start the new battle
 
 async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db_connection()
