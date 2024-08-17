@@ -5,11 +5,12 @@ import functools
 from openai import AsyncOpenAI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
-from datetime import datetime
+from datetime import datetime, timedelta  # Make sure timedelta is imported
 import mysql.connector
 from mysql.connector import Error
 from collections import defaultdict
-from dotenv import load_dotenv  # <-- This is the missing import
+from dotenv import load_dotenv  # Make sure dotenv is imported
+import random  # Make sure random is imported
 
 # Set up logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -171,6 +172,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
                 await update.message.reply_text(f"Could not find user with username @{opponent_username}. Please make sure they have interacted with the bot.")
                 return
         finally:
+            cursor.fetchall()  # This ensures that all rows are read and clears the result set
             cursor.close()
 
     try:
@@ -184,6 +186,8 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
             await update.message.reply_text("You are not registered in the system. Please interact with the bot first.")
             return
 
+        cursor.fetchall()  # Clear any remaining rows
+
         # Check if there's an ongoing PvP battle between these two users
         cursor.execute("""
             SELECT * FROM pvp_battles 
@@ -196,6 +200,8 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         if battle:
             await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
             return
+
+        cursor.fetchall()  # Clear any remaining rows
 
         # Initialize energy for both players
         context.user_data['challenger_energy'] = 50
@@ -255,6 +261,9 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
             logger.info(f"No pending battles found for user: {user_id}")
             await update.message.reply_text("You have no pending PvP challenges.")
             return
+
+        # Ensure that all results are read
+        cursor.fetchall()  # This clears the unread results
 
         cursor.execute("""
             UPDATE pvp_battles 
