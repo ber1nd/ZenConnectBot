@@ -951,8 +951,8 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             **Strategy considerations:**
             1. **Prioritize winning**: If you can reduce your opponent's HP to 0 with your current energy, use the most effective damaging move available.
-            2. **Adapt to current scenarios**: If your HP is low, consider using Defend or Mind Trap to mitigate damage. If your opponent has high energy, consider using Mind Trap to weaken their next move.
-            3. **Manage energy efficiently**: If your energy is below 20 and you cannot finish the opponent in one move, consider using Focus or Defend to regain energy before attacking.
+            2. **Energy management**: If your energy is below 20, prioritize "Focus" or "Defend" to regain energy before attempting an attack.
+            3. **Adapt to current scenarios**: If your HP is low, consider using Defend or Mind Trap to mitigate damage. If your opponent has high energy, consider using Mind Trap to weaken their next move.
             4. **Utilize synergies**: If your previous move created a synergy, choose the next move that best capitalizes on that synergy for maximum effect.
 
             Considering the above, choose the most strategic action to maximize your chances of winning in this situation.
