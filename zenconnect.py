@@ -745,7 +745,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 energy_gain += 10
                 synergy_effects['critical_hit_chance'] = 0.30
             if previous_move == "zenstrike":
-                energy_gain = max(50, energy_gain + 20)
+                energy_gain is max(50, energy_gain + 20)
                 synergy_effects['next_move_penalty'] = True
 
             if previous_move == "mindtrap":
@@ -760,7 +760,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 await send_message(update, "Not enough energy to use Zen Strike.")
                 return
             damage = random.randint(25, 35)
-
             if previous_move == "focus":
                 damage = round(damage * 1.2)
                 critical_hit_chance = 0.30
@@ -771,7 +770,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if critical_hit:
                 damage *= 2
 
-            if context.user_data.get('mind_trap_effect'):
+            if context.user_data.get('opponent_mind_trap'):
                 damage //= 2
                 context.user_data['energy_loss'] = 15
 
@@ -809,7 +808,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         # Reset focus and mind trap effects after applying them
         context.user_data['focus_active'] = False
-        context.user_data['mind_trap_effect'] = False
+        context.user_data['opponent_mind_trap'] = False
 
         # Save the current move as previous_move for next turn's synergy
         context.user_data['previous_move'] = action
@@ -907,6 +906,7 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db:
         try:
             cursor = db.cursor(dictionary=True)
+            # Fetch the active battle where the bot is involved
             cursor.execute("""
                 SELECT * FROM pvp_battles 
                 WHERE (challenger_id = 7283636452 OR opponent_id = 7283636452) AND status = 'in_progress'
@@ -921,10 +921,14 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info("It's not the bot's turn.")
                 return
 
+            # Determine bot's HP and opponent's HP
             bot_hp = battle['challenger_hp'] if battle['challenger_id'] == 7283636452 else battle['opponent_hp']
             opponent_hp = battle['opponent_hp'] if battle['challenger_id'] == 7283636452 else battle['challenger_hp']
+
+            # Retrieve bot's energy level
             bot_energy = context.user_data.get('challenger_energy' if battle['challenger_id'] == 7283636452 else 'opponent_energy', 50)
 
+            # Generate AI decision-making prompt
             prompt = f"""
             You are a Zen warrior AI engaged in a strategic duel. Your goal is to win decisively by reducing your opponent's HP to 0 while keeping your HP above 0.
 
@@ -941,31 +945,27 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             - Zen Strike: A powerful move that deals significant damage. Costs 40 energy.
             - Mind Trap: Reduces the effectiveness of the opponent's next move by 50%. Costs 20 energy.
 
-            **Synergies:**
-            - **Focus to Strike/Zen Strike**: If you used "Focus" on the previous turn, "Strike" or "Zen Strike" will deal extra damage or have a higher critical hit chance.
-            - **Zen Strike to Defend**: If you used "Zen Strike" on the previous turn, "Defend" will heal you more effectively.
-            - **Strike to Mind Trap**: If you used "Strike" on the previous turn, "Mind Trap" will deal additional damage to the opponent.
-            - **Defend to Mind Trap**: If you used "Defend" on the previous turn, "Mind Trap" will reflect damage back to the opponent.
-            - **Focus to Mind Trap**: If you used "Focus" on the previous turn, "Mind Trap" will cause the opponent to lose additional energy if they attempt to recover.
-            - **Mind Trap to Zen Strike/Strike**: If the opponent was under the effect of "Mind Trap," "Zen Strike" will deal less damage and "Strike" will have reduced effectiveness.
-
-            **Strategy considerations:**
-            1. **Prioritize winning**: If you can reduce your opponent's HP to 0 with your current energy, use the most effective damaging move available.
-            2. **Energy management**: If your energy is below 20, prioritize "Focus" or "Defend" to regain energy before attempting an attack.
-            3. **Adapt to current scenarios**: If your HP is low, consider using Defend or Mind Trap to mitigate damage. If your opponent has high energy, consider using Mind Trap to weaken their next move.
-            4. **Utilize synergies**: If your previous move created a synergy, choose the next move that best capitalizes on that synergy for maximum effect.
-
-            Considering the above, choose the most strategic action to maximize your chances of winning in this situation.
+            Strategy to win:
+            - Manage your energy carefully; don't allow it to drop too low unless you can deliver a finishing blow.
+            - If you used "Focus" in the previous move, consider following up with "Strike" or "Zen Strike" for enhanced damage.
+            - Use "Zen Strike" if you have enough energy, especially if "Focus" was used previously for a critical hit.
+            - Use "Mind Trap" to weaken the opponent, particularly if they have high energy or if you want to set up a safer "Zen Strike."
+            - Use "Defend" to recover HP and energy, especially if your HP is low or if you need to prepare for a powerful move.
+            - If your energy is too low, prioritize using "Focus" or "Defend" to recover before attempting to attack.
             """
 
+            # Generate AI response based on the prompt
             ai_response = await generate_response(prompt)
 
+            # Extract action from AI response
             action = next((move for move in ["strike", "defend", "focus", "zenstrike", "mindtrap"] if move in ai_response.lower()), "strike")
 
             logger.info(f"Bot chose action: {action} based on AI response: {ai_response}")
 
+            # Execute the chosen move
             await execute_pvp_move(update, context, db, bot_mode=True, action=action)
 
+            # Send AI's explanation to the chat for transparency
             await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Zen Bot's strategy: {ai_response}")
 
         except Exception as e:
