@@ -1013,9 +1013,6 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Execute the chosen move
             await execute_pvp_move(update, context, db, bot_mode=True, action=action)
 
-            # Send AI's explanation to the chat for transparency
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Zen Bot's strategy: {ai_response}")
-
         except Exception as e:
             logger.error(f"Error during bot move execution: {e}")
         finally:
