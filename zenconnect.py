@@ -609,25 +609,25 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
     challenger_name = challenger_name.ljust(max_name_length)
     opponent_name = opponent_name.ljust(max_name_length)
     
-    hp_bar_length = 20
+    hp_bar_length = 10
     energy_bar_length = 10
     
-    challenger_hp_bar = '█' * int(challenger_hp / 5) + '░' * (hp_bar_length - int(challenger_hp / 5))
-    opponent_hp_bar = '█' * int(opponent_hp / 5) + '░' * (hp_bar_length - int(opponent_hp / 5))
+    challenger_hp_bar = '🟥' * int(challenger_hp / 10) + '⬜' * (hp_bar_length - int(challenger_hp / 10))
+    opponent_hp_bar = '🟥' * int(opponent_hp / 10) + '⬜' * (hp_bar_length - int(opponent_hp / 10))
     
-    challenger_energy_bar = '█' * int(challenger_energy / 10) + '░' * (energy_bar_length - int(challenger_energy / 10))
-    opponent_energy_bar = '█' * int(opponent_energy / 10) + '░' * (energy_bar_length - int(opponent_energy / 10))
+    challenger_energy_bar = '🟨' * int(challenger_energy / 10) + '⬜' * (energy_bar_length - int(challenger_energy / 10))
+    opponent_energy_bar = '🟨' * int(opponent_energy / 10) + '⬜' * (energy_bar_length - int(opponent_energy / 10))
     
     battle_view = f"""
-┌{'─' * (max_name_length + 24)}┐
-│ {challenger_name} │ {int(challenger_hp):3d}/100 HP    │
-│ {challenger_hp_bar} │
-│ {challenger_energy_bar} {int(challenger_energy):3d}/100 Energy │
-├{'─' * (max_name_length + 24)}┤
-│ {opponent_name} │ {int(opponent_hp):3d}/100 HP    │
-│ {opponent_hp_bar} │
-│ {opponent_energy_bar} {int(opponent_energy):3d}/100 Energy │
-└{'─' * (max_name_length + 24)}┘
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ 🧘 {challenger_name} 🧘                     ┃
+┃ HP:  {challenger_hp_bar} {challenger_hp:3d}/100    ┃
+┃ ⚡:  {challenger_energy_bar} {challenger_energy:3d}/100    ┃
+┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫
+┃ 🧘 {opponent_name} 🧘                     ┃
+┃ HP:  {opponent_hp_bar} {opponent_hp:3d}/100    ┃
+┃ ⚡:  {opponent_energy_bar} {opponent_energy:3d}/100    ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 """
     return battle_view
 
