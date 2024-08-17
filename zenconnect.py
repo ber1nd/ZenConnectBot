@@ -875,7 +875,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has been defeated.")
             return
 
-        # Update the battle status
+                # Update the battle status
         if is_challenger:
             cursor.execute("""
                 UPDATE pvp_battles 
@@ -928,7 +928,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if opponent_id != 7283636452:
             await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
         else:
-            await bot_pvp_move(update, context)
+            await bot_pvp_move(update, context, player_message=result_message)
 
     except Exception as e:
         logger.error(f"Error in execute_pvp_move: {e}")
