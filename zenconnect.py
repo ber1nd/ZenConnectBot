@@ -625,6 +625,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
     synergy_effects = {}  # Track synergy effects
 
     valid_moves = ["strike", "defend", "focus", "zenstrike", "mindtrap"]
+    result_message = ""  # Initialize result_message with a default value
 
     if not bot_mode:
         if update.callback_query:
