@@ -642,7 +642,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
     if not action or action not in valid_moves:
         logger.error(f"Invalid action received: {action}")
-        await send_message(update, "Invalid move!")
+        if not bot_mode:
+            await update.callback_query.answer("Invalid move!")
         return
 
     try:
@@ -654,11 +655,13 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         battle = cursor.fetchone()
 
         if not battle:
-            await send_message(update, "You are not in an active battle.")
+            if not bot_mode:
+                await send_message(update, "You are not in an active battle.")
             return
 
         if battle['current_turn'] != user_id:
-            await send_message(update, "It's not your turn.")
+            if not bot_mode:
+                await send_message(update, "It's not your turn.")
             return
 
         # Determine if the user is the challenger or opponent
@@ -675,14 +678,11 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         opponent_id = battle['opponent_id'] if is_challenger else battle['challenger_id']
 
-        # Ensure no previous move effects are lingering at the start of a new match
-        if battle['current_turn'] == user_id and context.user_data.get('previous_move') is None:
-            context.user_data['previous_move'] = None
-            context.user_data['focus_active'] = False
-            context.user_data['mind_trap_effect'] = False
-
         # Track the previous move for synergy
         previous_move = context.user_data.get('previous_move')
+
+        # Default result message in case none of the conditional blocks are executed
+        result_message = "An unknown move was executed."
 
         # Action logic with synergy effects
         if action == "strike":
@@ -784,10 +784,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 opponent_energy = max(0, opponent_energy - 15)
                 result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be weakened, and they will lose additional energy if they attempt to recover."
 
-        else:
-            # Default action message if the action is unrecognized (should not occur due to earlier checks)
-            result_message = "An unexpected action occurred."
-
         # Apply energy changes
         user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
 
@@ -811,7 +807,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             await send_message(update, f"{'Bot' if bot_mode else 'You'} have been defeated.")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has been defeated.")
             return
-
         # Update the battle status
         if is_challenger:
             cursor.execute("""
@@ -907,12 +902,13 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Generate AI decision-making prompt
             prompt = f"""
-            You are a Zen warrior AI engaged in a strategic duel. Your goal is to win decisively by reducing your opponent's HP to 0 while keeping your HP above 0. 
-            
+            You are a Zen warrior AI engaged in a strategic duel. Your goal is to win decisively by reducing your opponent's HP to 0 while keeping your HP above 0.
+
             Current situation:
             - Your HP: {bot_hp}/100
             - Opponent's HP: {opponent_hp}/100
             - Your Energy: {bot_energy}/100
+            - Last Move: {context.user_data.get('previous_move', 'None')}
 
             Available actions:
             - Strike: Deal moderate damage to the opponent. Costs 12 energy.
@@ -923,10 +919,11 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             Strategy to win:
             - Manage your energy carefully; don't allow it to drop too low unless you can deliver a finishing blow.
-            - Use "Zen Strike" only if you have sufficient energy and can guarantee significant damage or a win.
-            - If your energy is low, prioritize using "Defend" or "Focus" to regain energy and prolong the fight.
-            - Strike with "Mind Trap" if the opponent has high energy, to reduce their effectiveness in the next turn.
-            """
+            - If you used "Focus" in the previous move, consider following up with "Strike" or "Zen Strike" for enhanced damage.
+            - Use "Zen Strike" if you have enough energy, especially if "Focus" was used previously for a critical hit.
+            - Use "Mind Trap" to weaken the opponent, particularly if they have high energy or if you want to set up a safer "Zen Strike."
+            - Use "Defend" to recover HP and energy, especially if your HP is low or if you need to prepare for a powerful move.
+"""
 
             # Generate AI response based on the prompt
             ai_response = await generate_response(prompt)
