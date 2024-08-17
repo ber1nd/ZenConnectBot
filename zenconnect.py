@@ -734,6 +734,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         # Track the previous move for synergy
         previous_move = context.user_data.get('previous_move')
 
+        # Initialize the result message
+        result_message = ""
+
         # Action logic with synergy effects
         if action == "strike":
             energy_cost = 12
@@ -745,25 +748,31 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if previous_move == "focus":
                 damage = round(damage * 1.1)
                 synergy_effects['critical_hit_chance'] = 0.20
-                result_message = f"{'Bot' if bot_mode else 'You'} used Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''} after a focused attack!"
-
             if previous_move == "zenstrike":
                 damage = round(damage * 1.1)
                 synergy_effects['critical_hit_chance'] = 0.15
-                result_message = f"{'Bot' if bot_mode else 'You'} used Strike and dealt {damage} damage with extra force from the previous Zen Strike."
-
             if previous_move == "mindtrap":
                 damage = round(damage * 0.85)
                 context.user_data['energy_loss'] = 10
-                result_message = f"{'Bot' if bot_mode else 'You'} used Strike, but its power was reduced due to Mind Trap!"
+
+            # Check if Mind Trap is active for the opponent
+            if context.user_data.get('opponent_mind_trap'):
+                original_damage = damage
+                damage = round(damage * 0.5)
+                context.user_data['energy_loss'] = 15
+                reduction_info = f"\n\nMind Trap reduced the damage from {original_damage} to {damage}."
 
             critical_hit = random.random() < synergy_effects.get('critical_hit_chance', 0.15)
             if critical_hit:
                 damage *= 2
-                result_message += " (Critical Hit!)"
 
             opponent_hp = max(0, opponent_hp - damage)
-        
+            result_message = f"{'Bot' if bot_mode else 'You'} used Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
+
+            # Add reduction information to the result message
+            if context.user_data.get('opponent_mind_trap'):
+                result_message += reduction_info
+
         elif action == "defend":
             energy_gain = 10
             heal = random.randint(15, 25)
@@ -771,62 +780,59 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if previous_move == "zenstrike":
                 heal += 10
                 context.user_data['energy_loss'] = 10
-                result_message = f"{'Bot' if bot_mode else 'You'} used Defend and recovered {heal} HP with lingering energy from Zen Strike."
 
             if previous_move == "focus":
                 heal = round(heal * 1.15)
                 synergy_effects['next_move_boost'] = True
-                result_message = f"{'Bot' if bot_mode else 'You'} used Defend and healed {heal} HP, boosted by your Focused state."
 
             user_hp = min(100, user_hp + heal)
-        
+            result_message = f"{'Bot' if bot_mode else 'You'} used Defend, healed {heal} HP, and gained 10 energy."
+
         elif action == "focus":
             energy_gain = random.randint(20, 30)
 
             if previous_move == "strike":
                 energy_gain += 10
                 synergy_effects['critical_hit_chance'] = 0.30
-                result_message = f"{'Bot' if bot_mode else 'You'} used Focus, gained {energy_gain} energy, and increased your critical hit chance from the previous Strike."
-
             if previous_move == "zenstrike":
-                energy_gain += 20
+                energy_gain = min(50, energy_gain + 20)
                 synergy_effects['next_move_penalty'] = True
-                result_message = f"{'Bot' if bot_mode else 'You'} used Focus, recovered {energy_gain} energy, but your next move will have a penalty from the exertion of Zen Strike."
 
             if previous_move == "mindtrap":
                 context.user_data['energy_loss'] = 15
-                result_message = f"{'Bot' if bot_mode else 'You'} used Focus, but your energy was drained due to Mind Trap!"
 
             context.user_data['focus_active'] = True
-        
+            result_message = f"{'Bot' if bot_mode else 'You'} used Focus, gained {energy_gain} energy, and increased your critical hit chance for the next move."
+
         elif action == "zenstrike":
             energy_cost = 40
             if user_energy < energy_cost:
                 await send_message(update, "Not enough energy to use Zen Strike.")
                 return
-            damage = random.randint(20, 30)  # Reduced base damage
-
+            damage = random.randint(25, 35)
             if previous_move == "focus":
                 damage = round(damage * 1.2)
                 critical_hit_chance = 0.30
-                result_message = f"{'Bot' if bot_mode else 'You'} used Zen Strike with Focus, dealing {damage} damage with a heightened chance of a Critical Hit."
-
             else:
                 critical_hit_chance = 0.20
-                result_message = f"{'Bot' if bot_mode else 'You'} used Zen Strike and dealt {damage} damage."
 
             critical_hit = random.random() < critical_hit_chance
             if critical_hit:
                 damage *= 2
-                result_message += " (Critical Hit!)"
 
             if context.user_data.get('opponent_mind_trap'):
+                original_damage = damage
                 damage //= 2
                 context.user_data['energy_loss'] = 15
-                result_message += " But the damage was halved due to Mind Trap!"
+                reduction_info = f"\n\nMind Trap halved the damage from {original_damage} to {damage}."
 
             opponent_hp = max(0, opponent_hp - damage)
-        
+            result_message = f"{'Bot' if bot_mode else 'You'} used Zen Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
+
+            # Add reduction information to the result message
+            if context.user_data.get('opponent_mind_trap'):
+                result_message += reduction_info
+
         elif action == "mindtrap":
             energy_cost = 20
             if user_energy < energy_cost:
@@ -835,7 +841,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             context.user_data['opponent_mind_trap'] = True
 
             result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be 50% effective and they'll lose energy if they attack."
-    
+
             if previous_move == "strike":
                 opponent_hp = max(0, opponent_hp - 5)
                 result_message += "\n\nThe opponent's next `Strike` will be weakened and they will lose energy!"
@@ -1034,84 +1040,6 @@ async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT
             await execute_pvp_move(update, context, db=db)
         finally:
             if db.is_connected():
-                db.close()
-
-async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, player_message):
-    db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
-            # Fetch the active battle where the bot is involved
-            cursor.execute("""
-                SELECT * FROM pvp_battles 
-                WHERE (challenger_id = 7283636452 OR opponent_id = 7283636452) AND status = 'in_progress'
-            """)
-            battle = cursor.fetchone()
-
-            if not battle:
-                logger.info("No active battle found for the bot.")
-                return
-
-            if battle['current_turn'] != 7283636452:
-                logger.info("It's not the bot's turn.")
-                return
-
-            # Determine bot's HP and opponent's HP
-            bot_hp = battle['challenger_hp'] if battle['challenger_id'] == 7283636452 else battle['opponent_hp']
-            opponent_hp = battle['opponent_hp'] if battle['challenger_id'] == 7283636452 else battle['challenger_hp']
-
-            # Retrieve bot's energy level
-            bot_energy = context.user_data.get('challenger_energy' if battle['challenger_id'] == 7283636452 else 'opponent_energy', 50)
-
-            # Generate AI decision-making prompt
-            prompt = f"""
-            You are a Zen warrior AI engaged in a strategic duel. Your goal is to win decisively by reducing your opponent's HP to 0 while keeping your HP above 0.
-
-            Current situation:
-            - Your HP: {bot_hp}/100
-            - Opponent's HP: {opponent_hp}/100
-            - Your Energy: {bot_energy}/100
-            - Last Move: {context.user_data.get('previous_move', 'None')}
-
-            Available actions:
-            - Strike: Deal moderate damage to the opponent. Costs 12 energy.
-            - Defend: Heal yourself and gain energy. Costs 0 energy, gains 10 energy.
-            - Focus: Recover energy and increase your critical hit chances for the next turn. Gains 20-30 energy.
-            - Zen Strike: A powerful move that deals significant damage. Costs 40 energy.
-            - Mind Trap: Reduces the effectiveness of the opponent's next move by 50%. Costs 20 energy.
-
-            Strategy to win:
-            - If your energy is low, prioritize "Focus" or "Defend" to recover energy.
-            - Avoid attempting an action if you don't have enough energy to perform it.
-            - Manage your energy carefully; don't allow it to drop too low unless you can deliver a finishing blow.
-            - If you used "Focus" in the previous move, consider following up with "Strike" or "Zen Strike" for enhanced damage.
-            - Use "Mind Trap" to weaken the opponent, particularly if they have high energy or if you want to set up a safer "Zen Strike."
-            """
-
-            # Generate AI response based on the prompt
-            ai_response = await generate_response(prompt)
-
-            # Extract action from AI response, prioritizing energy management
-            if bot_energy >= 40:
-                action = "zenstrike" if "zenstrike" in ai_response.lower() else "strike"
-            elif bot_energy >= 20:
-                action = "mindtrap" if "mindtrap" in ai_response.lower() else "focus"
-            else:
-                action = "defend"
-
-            logger.info(f"Bot chose action: {action} based on AI response: {ai_response}")
-
-            # Execute the chosen move
-            await execute_pvp_move(update, context, db, bot_mode=True, action=action)
-
-            # Send AI's explanation and player's message combined to the chat for transparency
-            return f"Zen Bot's strategy: {ai_response}\n\n{player_message}"
-
-        except Exception as e:
-            logger.error(f"Error during bot move execution: {e}")
-        finally:
-            if db.is_connected():
-                cursor.close()
                 db.close()
 
 async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
