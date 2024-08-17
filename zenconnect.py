@@ -824,18 +824,24 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if previous_move == "strike":
                 opponent_hp = max(0, opponent_hp - 5)
                 result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be 50% effective and they'll lose energy if they attack."
+                result_message += "\n\nThe opponent's attack will be weakened and they will lose energy!"
 
             elif previous_move == "defend":
                 reflect_damage = random.randint(5, 10)
                 opponent_hp = max(0, opponent_hp - reflect_damage)
                 result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be reflected by {reflect_damage} damage."
+                result_message += f"\n\nThe opponent's defense caused {reflect_damage} damage to be reflected back by `Mind Trap`!"
 
             elif previous_move == "focus":
                 context.user_data['energy_loss'] = 15
                 result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be weakened, and they will lose additional energy if they attempt to recover."
+                result_message += "\n\nThe opponent's energy will be drained!"
 
             else:
                 result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be 50% effective."
+                result_message += "\n\nThe opponent's next move will be weakened!"
+
+# Include feedback messaging elsewhere in the code to ensure players understand the effects of Mind Trap during the opponent's turn.
 
         # Apply energy changes
         user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
