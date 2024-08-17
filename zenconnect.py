@@ -296,24 +296,35 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
 # Function to handle PvP moves
 @with_database_connection
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
-    user_id = 7283636452 if bot_mode else update.effective_user.id
-    energy_cost = 0
-    energy_gain = 0
-
-    if update.callback_query:
-        query = update.callback_query
-        data = query.data.split('_')
-        action = data[1]
-        user_id_from_callback = int(data[-1])
-
-        if user_id_from_callback != user_id:
-            await query.answer("It's not your turn!")
-            return
-    else:
-        await update.message.reply_text("Invalid move. Please use the provided buttons")
-        return
-
     try:
+        # Ensure update is not None
+        if update is None:
+            logger.error("Received a None update object.")
+            return
+
+        user_id = 7283636452 if bot_mode else update.effective_user.id
+        energy_cost = 0
+        energy_gain = 0
+
+        # Handle bot's decision-making if in bot_mode
+        if bot_mode:
+            # Bot AI logic to decide the move
+            possible_actions = ["strike", "defend", "focus", "zenstrike", "mindtrap"]
+            action = random.choice(possible_actions)  # Simple AI logic to choose a random move
+        else:
+            if update.callback_query:
+                query = update.callback_query
+                data = query.data.split('_')
+                action = data[1]
+                user_id_from_callback = int(data[-1])
+
+                if user_id_from_callback != user_id:
+                    await query.answer("It's not your turn!")
+                    return
+            else:
+                await update.message.reply_text("Invalid move. Please use the provided buttons")
+                return
+
         cursor = db.cursor(dictionary=True)
         cursor.execute("""
             SELECT * FROM pvp_battles 
@@ -322,11 +333,13 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         battle = cursor.fetchone()
 
         if not battle:
-            await update.message.reply_text("You are not in an active battle.")
+            if not bot_mode:
+                await update.message.reply_text("You are not in an active battle.")
             return
 
         if battle['current_turn'] != user_id:
-            await update.message.reply_text("It's not your turn.")
+            if not bot_mode:
+                await update.message.reply_text("It's not your turn.")
             return
 
         is_challenger = battle['challenger_id'] == user_id
@@ -342,53 +355,57 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         opponent_id = battle['opponent_id'] if is_challenger else battle['challenger_id']
 
+        # The rest of the PvP move logic follows, applying the chosen action
         if action == "strike":
             energy_cost = 12
             if user_energy < energy_cost:
-                await update.message.reply_text("Not enough energy to use Strike.")
+                if not bot_mode:
+                    await update.message.reply_text("Not enough energy to use Strike.")
                 return
             damage = random.randint(12, 18)
             opponent_hp = max(0, opponent_hp - damage)
-            result_message = f"You used Strike and dealt {damage} damage."
+            result_message = f"{'Bot' if bot_mode else 'You'} used Strike and dealt {damage} damage."
 
         elif action == "defend":
             energy_gain = 10
             heal = random.randint(15, 25)
             user_hp = min(100, user_hp + heal)
-            result_message = f"You used Defend, healed {heal} HP, and gained 10 energy."
+            result_message = f"{'Bot' if bot_mode else 'You'} used Defend, healed {heal} HP, and gained 10 energy."
 
         elif action == "focus":
             energy_gain = random.randint(20, 30)
-            result_message = f"You used Focus, gained {energy_gain} energy."
+            result_message = f"{'Bot' if bot_mode else 'You'} used Focus, gained {energy_gain} energy."
 
         elif action == "zenstrike":
             energy_cost = 40
             if user_energy < energy_cost:
-                await update.message.reply_text("Not enough energy to use Zen Strike.")
+                if not bot_mode:
+                    await update.message.reply_text("Not enough energy to use Zen Strike.")
                 return
             damage = random.randint(25, 35)
             opponent_hp = max(0, opponent_hp - damage)
-            result_message = f"You used Zen Strike and dealt {damage} damage."
+            result_message = f"{'Bot' if bot_mode else 'You'} used Zen Strike and dealt {damage} damage."
 
         elif action == "mindtrap":
             energy_cost = 20
             if user_energy < energy_cost:
-                await update.message.reply_text("Not enough energy to use Mind Trap.")
+                if not bot_mode:
+                    await update.message.reply_text("Not enough energy to use Mind Trap.")
                 return
             opponent_energy = max(0, opponent_energy - 15)
-            result_message = f"You used Mind Trap and reduced your opponent's energy by 15."
+            result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap and reduced your opponent's energy by 15."
 
         user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
 
         if opponent_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (user_id, battle['id']))
             db.commit()
-            await update.message.reply_text("You have won the battle!")
+            await update.message.reply_text(f"{'Bot' if bot_mode else 'You'} have won the battle!")
             return
         elif user_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
             db.commit()
-            await update.message.reply_text("You have been defeated.")
+            await update.message.reply_text(f"{'Bot' if bot_mode else 'You'} have been defeated.")
             return
 
         if is_challenger:
@@ -405,21 +422,30 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             """, (opponent_hp, user_hp, opponent_id, battle['id']))
         db.commit()
 
-        battle_view = f"Your HP: {user_hp} | Opponent HP: {opponent_hp}\nYour Energy: {user_energy} | Opponent Energy: {opponent_energy}"
+        battle_view = f"{result_message}\n\nYour HP: {user_hp} | Opponent HP: {opponent_hp}\nYour Energy: {user_energy} | Opponent Energy: {opponent_energy}"
 
-        await context.bot.send_message(chat_id=battle['group_id'], text=f"{result_message}\n\n{battle_view}")
+        await context.bot.send_message(chat_id=battle['group_id'], text=battle_view)
 
         if opponent_id != 7283636452:
             await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
 
+        if bot_mode:
+            await asyncio.sleep(2)  # Bot "thinking" delay
+            await execute_pvp_move(update, context, db=db, bot_mode=True)
+
     except Error as e:
-        logger.error(f"Error in execute_pvp_move: {e}")
-        await update.message.reply_text("An error occurred while executing the PvP move. Please try again later.")
+        logger.error(f"Database error in execute_pvp_move: {e}")
+        if not bot_mode and update.callback_query:
+            await update.callback_query.answer("An error occurred while executing the PvP move. Please try again later.")
+    except Exception as e:
+        logger.error(f"Unexpected error in execute_pvp_move: {e}")
+        if update.callback_query:
+            await update.callback_query.answer("An unexpected error occurred.")
     finally:
         if db.is_connected():
             cursor.close()
 
-        if update.callback_query:
+        if update and update.callback_query:
             await update.callback_query.answer()
 
 # Function to handle messages
