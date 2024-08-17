@@ -904,13 +904,15 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if opponent_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (user_id, battle['id']))
             db.commit()
-            await send_message(update, f"{'Bot' if bot_mode else update.effective_user.first_name} has won the battle! Your opponent is defeated.")
+            final_action = f"The final move was {action} that dealt {damage} damage." if action else "The battle concluded."
+            await send_message(update, f"{'Bot' if bot_mode else update.effective_user.first_name} has won the battle! Your opponent is defeated. {final_action}")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has won the battle!")
             return
         elif user_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
             db.commit()
-            await send_message(update, f"{'Bot' if bot_mode else update.effective_user.first_name} has been defeated.")
+            final_action = f"The final move was {action} that dealt {damage} damage." if action else "The battle concluded."
+            await send_message(update, f"{'Bot' if bot_mode else update.effective_user.first_name} has been defeated. {final_action}")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{opponent_name} has won the battle!")
             return
 
@@ -985,6 +987,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 async def start_new_battle(update, context):
     reset_synergies(context)
     # Additional logic to start the new battle
+    await update.message.reply_text("A new battle has begun! All synergies and effects have been reset.")
 
 def reset_synergies(context):
     context.user_data['previous_move'] = None
