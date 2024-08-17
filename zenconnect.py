@@ -603,6 +603,9 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         db.commit()
         logger.info(f"Updated battle status to in_progress for battle ID: {battle['id']}")
 
+        # Reset synergies and effects at the start of the new battle
+        await start_new_battle(update, context)
+
         await update.message.reply_text("You have accepted the challenge! The battle begins now.")
         
         # Notify the challenger
