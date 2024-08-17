@@ -864,13 +864,14 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} centers themselves, a warm energy flowing through their body as they heal for{heal} HP and gain {energy_gain} energy.{synergy_message}"
 
         elif action == "focus":
-            energy_gain = random.randint(20, 30)
+            base_energy_gain = random.randint(20, 30)
+            energy_gain = base_energy_gain  # Start with base energy gain
 
             if previous_move == "strike":
                 energy_gain += 10
                 synergy_message = "The strike channels energy back into focus, increasing recovery."
             elif previous_move == "zenstrike":
-                energy_gain = max(50, energy_gain + 20)
+                energy_gain = max(50, base_energy_gain + 20)
                 synergy_message = "After the Zen Strike, a deep focus refills the energy reserves."
             elif previous_move == "mindtrap":
                 context.user_data['energy_loss'] = 15
@@ -878,9 +879,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             else:
                 synergy_message = ""
 
-            # Prevent double energy gain by ensuring we only update once
+            # Apply the calculated energy gain only once
             user_energy = min(100, user_energy + energy_gain)
-        
+
             # Final Narrative for Focus
             result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} gathers their strength, eyes closed, focusing their inner energy. They recover {energy_gain} energy, preparing for a decisive move. {synergy_message}"
 
@@ -991,8 +992,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 # Call this function at the start of a new battle
 async def start_new_battle(update, context):
     reset_synergies(context)
-    # Additional logic to start the new battle
     await update.message.reply_text("A new battle has begun! All synergies and effects have been reset.")
+# Additional logic to start the new battle
 
 def reset_synergies(context):
     context.user_data['previous_move'] = None
