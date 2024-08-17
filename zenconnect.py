@@ -643,7 +643,7 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
     def create_bar(value, max_value, fill_char='█', empty_char='░'):
         bar_length = 10
         filled = int((value / max_value) * bar_length)
-        return f"[{fill_char * filled}{empty_char * (bar_length - filled)}]"
+        return f"{fill_char * filled}{empty_char * (bar_length - filled)}"
 
     c_hp_bar = create_bar(challenger_hp, 100)
     c_energy_bar = create_bar(challenger_energy, 100)
@@ -651,21 +651,22 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
     o_energy_bar = create_bar(opponent_energy, 100)
 
     battle_view = f"""
-༄ ZEN WARRIOR ARENA ༄
+卐 ZEN WARRIOR ARENA 卐
 
-☯ {challenger_name}
-✧ HP    {c_hp_bar} {challenger_hp}/100
-✧ Chi   {c_energy_bar} {challenger_energy}/100
+⚪ {challenger_name}
+✦ HP  [{c_hp_bar}] {challenger_hp}/100
+✦ Chi [{c_energy_bar}] {challenger_energy}/100
 
-        ⚔️  VS  ⚔️
+        ⚔  VS  ⚔
 
-☯ {opponent_name}
-✧ HP    {o_hp_bar} {opponent_hp}/100
-✧ Chi   {c_energy_bar} {opponent_energy}/100
+⚪ {opponent_name}
+✦ HP  [{o_hp_bar}] {opponent_hp}/100
+✦ Chi [{o_energy_bar}] {opponent_energy}/100
 
-༺ Choose Your Path, Warrior ༻
+≼ Choose Your Path, Warrior ≽
 """
     return battle_view
+
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
