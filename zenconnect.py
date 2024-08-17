@@ -775,6 +775,26 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             # Final Narrative for Strike
             result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} jumps and kicks {opponent_name}, aiming for a strong hit. {synergy_message} {critical_hit_message} {mind_trap_message}"
 
+        elif action == "focus":
+            energy_gain = random.randint(20, 30)
+
+            if previous_move == "strike":
+                energy_gain += 10
+                synergy_message = "The strike channels energy back into focus, increasing recovery."
+            elif previous_move == "zenstrike":
+                energy_gain = max(50, energy_gain + 20)
+                synergy_message = "After the Zen Strike, a deep focus refills the energy reserves."
+            elif previous_move == "mindtrap":
+                context.user_data['energy_loss'] = 15
+                synergy_message = "The Mind Trap drains some energy even during focus."
+            else:
+                synergy_message = ""
+
+            user_energy = min(100, user_energy + energy_gain)
+            
+            # Final Narrative for Focus
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} gathers their strength, eyes closed, focusing their inner energy. They recover {energy_gain} energy, preparing for a decisive move. {synergy_message}"
+
         elif action == "zenstrike":
             energy_cost = 40
             if user_energy < energy_cost:
