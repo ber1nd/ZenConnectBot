@@ -734,9 +734,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         # Track the previous move for synergy
         previous_move = context.user_data.get('previous_move')
 
-        # Initialize the result message
-        result_message = ""
-
         # Action logic with synergy effects
         if action == "strike":
             energy_cost = 12
@@ -755,23 +752,15 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 damage = round(damage * 0.85)
                 context.user_data['energy_loss'] = 10
 
-            # Check if Mind Trap is active for the opponent
-            if context.user_data.get('opponent_mind_trap'):
-                original_damage = damage
-                damage = round(damage * 0.5)
-                context.user_data['energy_loss'] = 15
-                reduction_info = f"\n\nMind Trap reduced the damage from {original_damage} to {damage}."
-
             critical_hit = random.random() < synergy_effects.get('critical_hit_chance', 0.15)
             if critical_hit:
                 damage *= 2
 
             opponent_hp = max(0, opponent_hp - damage)
-            result_message = f"{'Bot' if bot_mode else 'You'} used Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
-
-            # Add reduction information to the result message
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} jumps and kicks {'Bot' if bot_mode else opponent_id}, aiming for a strong hit. The attack deals {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
             if context.user_data.get('opponent_mind_trap'):
-                result_message += reduction_info
+                reduced_damage = round(damage / 2)
+                result_message += f" However, {'Bot' if bot_mode else opponent_id}'s Mind Trap reduces the damage by {reduced_damage}. Total damage: {reduced_damage}."
 
         elif action == "defend":
             energy_gain = 10
@@ -786,7 +775,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 synergy_effects['next_move_boost'] = True
 
             user_hp = min(100, user_hp + heal)
-            result_message = f"{'Bot' if bot_mode else 'You'} used Defend, healed {heal} HP, and gained 10 energy."
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} centers themselves, a warm energy flowing through their body as they heal for {heal} HP and gain {energy_gain} energy."
 
         elif action == "focus":
             energy_gain = random.randint(20, 30)
@@ -795,14 +784,14 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 energy_gain += 10
                 synergy_effects['critical_hit_chance'] = 0.30
             if previous_move == "zenstrike":
-                energy_gain = min(50, energy_gain + 20)
+                energy_gain = max(50, energy_gain + 20)
                 synergy_effects['next_move_penalty'] = True
 
             if previous_move == "mindtrap":
                 context.user_data['energy_loss'] = 15
 
             context.user_data['focus_active'] = True
-            result_message = f"{'Bot' if bot_mode else 'You'} used Focus, gained {energy_gain} energy, and increased your critical hit chance for the next move."
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} gathers their strength, eyes closed, focusing their inner energy. They recover {energy_gain} energy, preparing for a decisive move."
 
         elif action == "zenstrike":
             energy_cost = 40
@@ -821,17 +810,14 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 damage *= 2
 
             if context.user_data.get('opponent_mind_trap'):
-                original_damage = damage
                 damage //= 2
                 context.user_data['energy_loss'] = 15
-                reduction_info = f"\n\nMind Trap halved the damage from {original_damage} to {damage}."
 
             opponent_hp = max(0, opponent_hp - damage)
-            result_message = f"{'Bot' if bot_mode else 'You'} used Zen Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
-
-            # Add reduction information to the result message
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} harnesses their Zen energy, unleashing a powerful Zen Strike on {'Bot' if bot_mode else opponent_id}. The attack deals {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
             if context.user_data.get('opponent_mind_trap'):
-                result_message += reduction_info
+                reduced_damage = round(damage / 2)
+                result_message += f" However, {'Bot' if bot_mode else opponent_id}'s Mind Trap reduces the damage by {reduced_damage}. Total damage: {reduced_damage}."
 
         elif action == "mindtrap":
             energy_cost = 20
@@ -840,8 +826,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 return
             context.user_data['opponent_mind_trap'] = True
 
-            result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be 50% effective and they'll lose energy if they attack."
-
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} sets a cunning Mind Trap for {'Bot' if bot_mode else opponent_id}, clouding their next move. {'Bot' if bot_mode else opponent_id}'s next action will be less effective, and they may lose energy."
+    
             if previous_move == "strike":
                 opponent_hp = max(0, opponent_hp - 5)
                 result_message += "\n\nThe opponent's next `Strike` will be weakened and they will lose energy!"
@@ -878,13 +864,13 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if opponent_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (user_id, battle['id']))
             db.commit()
-            await send_message(update, f"{'Bot' if bot_mode else 'You'} have won the battle! Your opponent is defeated.")
+            await send_message(update, f"{'Bot' if bot_mode else update.effective_user.first_name} has won the battle! Your opponent is defeated.")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has won the battle!")
             return
         elif user_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
             db.commit()
-            await send_message(update, f"{'Bot' if bot_mode else 'You'} have been defeated.")
+            await send_message(update, f"{'Bot' if bot_mode else update.effective_user.first_name} has been defeated.")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has been defeated.")
             return
 
@@ -941,7 +927,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if opponent_id != 7283636452:
             await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
         else:
-            await bot_pvp_move(update, context)  # Remove 'player_message' argument
+            await bot_pvp_move(update, context)
 
     except Exception as e:
         logger.error(f"Error in execute_pvp_move: {e}")
