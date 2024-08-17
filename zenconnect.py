@@ -534,6 +534,8 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
 
         if opponent_id == 7283636452:
             await update.message.reply_text("You have challenged the bot! The battle will begin now.")
+            # Call start_new_battle for bot-initiated battle
+            await start_new_battle(update, context)
             await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
         else:
             await update.message.reply_text(f"Challenge sent to @{opponent_username}! They need to accept the challenge by using /acceptpvp.")
