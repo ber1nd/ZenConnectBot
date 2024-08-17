@@ -457,6 +457,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         else:
             cursor.execute("SELECT user_id FROM users WHERE username = %s", (opponent_username,))
             result = cursor.fetchone()
+            cursor.fetchall()  # Consume any remaining results
             if result:
                 opponent_id = result['user_id']
             else:
@@ -466,6 +467,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         # Ensure the challenger exists in the users table
         cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
         challenger = cursor.fetchone()
+        cursor.fetchall()  # Consume any remaining results
 
         if not challenger:
             await update.message.reply_text("You are not registered in the system. Please interact with the bot first.")
@@ -479,6 +481,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
             AND status = 'in_progress'
         """, (user_id, opponent_id, opponent_id, user_id))
         battle = cursor.fetchone()
+        cursor.fetchall()  # Consume any remaining results
 
         if battle:
             await update.message.reply_text("There's already an ongoing battle between you and this opponent.")
@@ -505,9 +508,12 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         if opponent_id == 7283636452:
             await context.bot.send_message(chat_id=update.effective_chat.id, text="Choose your move:", reply_markup=generate_pvp_move_buttons(user_id))
 
-    except Error as e:
-        logger.error(f"Database error in start_pvp: {e}")
+    except mysql.connector.Error as e:
+        logger.error(f"MySQL error in start_pvp: {e}")
         await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
+    except Exception as e:
+        logger.error(f"Unexpected error in start_pvp: {e}", exc_info=True)
+        await update.message.reply_text("An unexpected error occurred. Please try again later.")
 
 
 def fetch_pending_battle(db, user_id):
@@ -543,6 +549,9 @@ async def accept_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
             OR (challenger_id = %s AND opponent_id = 7283636452 AND status = 'pending')
         """, (user_id, user_id))
         battle = cursor.fetchone()
+        
+        # Consume any remaining results
+        cursor.fetchall()
         
         if not battle:
             logger.info(f"No pending battles found for user: {user_id}")
