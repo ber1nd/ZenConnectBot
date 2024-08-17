@@ -439,6 +439,37 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 # PvP Functionality
+
+async def send_game_rules(context: ContextTypes.DEFAULT_TYPE, user_id1: int, user_id2: int):
+    rules_message = """
+# Zen Warrior PvP Game Rules
+
+Welcome to Zen Warrior PvP, a battle of wisdom and strategy!
+
+## Core Mechanics:
+- Each warrior starts with 100 HP and 50 Energy
+- The battle continues until one warrior's HP reaches 0
+- Energy is used to perform moves and is recovered over time
+
+## Moves:
+1. **Strike**: A basic attack (Cost: 12 Energy)
+2. **Defend**: Heal and gain energy (Cost: 0 Energy, Gain: 10 Energy)
+3. **Focus**: Recover energy and increase critical hit chance (Gain: 20-30 Energy)
+4. **Zen Strike**: A powerful attack (Cost: 40 Energy)
+5. **Mind Trap**: Weaken opponent's next move (Cost: 20 Energy)
+
+## Key Synergies:
+- **Focus → Strike**: Increased damage and critical hit chance
+- **Focus → Zen Strike**: Significantly increased damage
+- **Strike → Focus**: Extra energy gain
+- **Defend → Mind Trap**: Reflect damage on the opponent's next attack
+
+Remember, true mastery comes from understanding the flow of energy and the balance of actions. May your battles be enlightening!
+    """
+    await context.bot.send_message(chat_id=user_id1, text=rules_message, parse_mode='Markdown')
+    if user_id2 != 7283636452:  # Don't send to the bot
+        await context.bot.send_message(chat_id=user_id2, text=rules_message, parse_mode='Markdown')
+
 @with_database_connection
 async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
     user_id = update.effective_user.id
@@ -497,6 +528,9 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
             VALUES (%s, %s, %s, %s, 'pending')
         """, (user_id, opponent_id, update.effective_chat.id, user_id))
         db.commit()
+
+        # Send game rules to both players
+        await send_game_rules(context, user_id, opponent_id)
 
         if opponent_id == 7283636452:
             await update.message.reply_text("You have challenged the bot! The battle will begin now.")
