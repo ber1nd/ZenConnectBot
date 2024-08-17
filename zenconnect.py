@@ -9,12 +9,13 @@ from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
 from collections import defaultdict
+from dotenv import load_dotenv  # <-- This is the missing import
 
 # Set up logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+load_dotenv()  # Now the function should work correctly
 
 client = AsyncOpenAI(api_key=os.getenv("API_KEY"))
 
@@ -23,6 +24,7 @@ rate_limit_dict = defaultdict(list)
 
 # Telegram payment provider token
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN")
+
 
 def get_db_connection():
     try:
