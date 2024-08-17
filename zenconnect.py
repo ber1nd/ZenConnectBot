@@ -757,16 +757,16 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             critical_hit = random.random() < synergy_effects.get('critical_hit_chance', 0.15)
             if critical_hit:
                 damage *= 2
-                critical_hit_message = "A well-placed strike hits critically, doubling the damage!"
+                critical_hit_message = f"A well-placed strike hits critically, dealing {damage} damage!"
             else:
-                critical_hit_message = ""
+                critical_hit_message = f"The strike deals {damage} damage."
 
             # Check if Mind Trap is active
             if context.user_data.get('opponent_mind_trap'):
                 original_damage = damage
                 damage //= 2  # Reduces the damage by half due to Mind Trap
                 context.user_data['energy_loss'] = 10
-                mind_trap_message = f"But the Mind Trap dampens the force, reducing the damage by {original_damage - damage}. Only {damage} damage is dealt."
+                mind_trap_message = f"However, the Mind Trap dampens the force, reducing the damage by {original_damage - damage}. Only {damage} damage is dealt."
             else:
                 mind_trap_message = ""
 
@@ -793,9 +793,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             critical_hit = random.random() < critical_hit_chance
             if critical_hit:
                 damage *= 2
-                critical_hit_message = "A precise strike lands, dealing critical damage!"
+                critical_hit_message = f"A precise strike lands, dealing critical damage of {damage}!"
             else:
-                critical_hit_message = ""
+                critical_hit_message = f"The Zen Strike deals {damage} damage."
 
             # Check if Mind Trap is active
             if context.user_data.get('opponent_mind_trap'):
@@ -872,7 +872,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 synergy_message = ""
 
             user_energy = min(100, user_energy + energy_gain)
-            
             # Final Narrative for Focus
             result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} gathers their strength, eyes closed, focusing their inner energy. They recover {energy_gain} energy, preparing for a decisive move. {synergy_message}"
 
