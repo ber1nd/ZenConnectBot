@@ -642,8 +642,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
     if not action or action not in valid_moves:
         logger.error(f"Invalid action received: {action}")
-        if not bot_mode:
-            await update.callback_query.answer("Invalid move!")
+        await send_message(update, "Invalid move!")
         return
 
     try:
@@ -655,18 +654,12 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         battle = cursor.fetchone()
 
         if not battle:
-            if not bot_mode:
-                await send_message(update, "You are not in an active battle.")
+            await send_message(update, "You are not in an active battle.")
             return
 
         if battle['current_turn'] != user_id:
-            if not bot_mode:
-                await send_message(update, "It's not your turn.")
+            await send_message(update, "It's not your turn.")
             return
-
-        # Ensure previous move is reset at the start of the match
-        if battle['challenger_hp'] == 100 and battle['opponent_hp'] == 100:
-            context.user_data['previous_move'] = None
 
         # Determine if the user is the challenger or opponent
         is_challenger = battle['challenger_id'] == user_id
@@ -682,6 +675,12 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         opponent_id = battle['opponent_id'] if is_challenger else battle['challenger_id']
 
+        # Ensure no previous move effects are lingering at the start of a new match
+        if battle['current_turn'] == user_id and context.user_data.get('previous_move') is None:
+            context.user_data['previous_move'] = None
+            context.user_data['focus_active'] = False
+            context.user_data['mind_trap_effect'] = False
+
         # Track the previous move for synergy
         previous_move = context.user_data.get('previous_move')
 
@@ -691,7 +690,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if user_energy < energy_cost:
                 await send_message(update, "Not enough energy to use Strike.")
                 return
-            damage = round(random.randint(12, 18), 2)
+            damage = random.randint(12, 18)
 
             if previous_move == "focus":
                 damage *= 1.1
@@ -707,13 +706,12 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if critical_hit:
                 damage *= 2
 
-            damage = int(damage)  # Convert to integer
             opponent_hp = max(0, opponent_hp - damage)
             result_message = f"{'Bot' if bot_mode else 'You'} used Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
 
         elif action == "defend":
             energy_gain = 10
-            heal = round(random.randint(15, 25), 2)
+            heal = random.randint(15, 25)
 
             if previous_move == "zenstrike":
                 heal += 10
@@ -723,12 +721,11 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 heal *= 1.15
                 synergy_effects['next_move_boost'] = True
 
-            heal = int(heal)  # Convert to integer
             user_hp = min(100, user_hp + heal)
             result_message = f"{'Bot' if bot_mode else 'You'} used Defend, healed {heal} HP, and gained 10 energy."
 
         elif action == "focus":
-            energy_gain = round(random.randint(20, 30), 2)
+            energy_gain = random.randint(20, 30)
 
             if previous_move == "strike":
                 energy_gain += 10
@@ -740,7 +737,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if previous_move == "mindtrap":
                 opponent_energy = max(0, opponent_energy - 15)
 
-            energy_gain = int(energy_gain)  # Convert to integer
             context.user_data['focus_active'] = True
             result_message = f"{'Bot' if bot_mode else 'You'} used Focus, gained {energy_gain} energy, and increased your critical hit chance for the next move."
 
@@ -749,7 +745,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if user_energy < energy_cost:
                 await send_message(update, "Not enough energy to use Zen Strike.")
                 return
-            damage = round(random.randint(25, 35), 2)
+            damage = random.randint(25, 35)
 
             if previous_move == "focus":
                 damage *= 1.2
@@ -765,7 +761,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 damage //= 2
                 opponent_energy = max(0, opponent_energy - 15)
 
-            damage = int(damage)  # Convert to integer
             opponent_hp = max(0, opponent_hp - damage)
             result_message = f"{'Bot' if bot_mode else 'You'} used Zen Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
 
@@ -781,14 +776,17 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be 50% effective and they'll lose energy if they attack."
 
             if previous_move == "defend":
-                reflect_damage = round(random.randint(5, 10), 2)
-                reflect_damage = int(reflect_damage)  # Convert to integer
+                reflect_damage = random.randint(5, 10)
                 opponent_hp = max(0, opponent_hp - reflect_damage)
                 result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be reflected by {reflect_damage} damage."
 
             if previous_move == "focus":
                 opponent_energy = max(0, opponent_energy - 15)
                 result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be weakened, and they will lose additional energy if they attempt to recover."
+
+        else:
+            # Default action message if the action is unrecognized (should not occur due to earlier checks)
+            result_message = "An unexpected action occurred."
 
         # Apply energy changes
         user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
@@ -816,7 +814,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         # Update the battle status
         if is_challenger:
-                        cursor.execute("""
+            cursor.execute("""
                 UPDATE pvp_battles 
                 SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
                 WHERE id = %s
