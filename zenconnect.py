@@ -659,7 +659,7 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
 │                                         │
 │  🧘 {c_name}        🧘 {o_name}  │
 │                                         │
-│  HP   {c_hp_bar} {challenger_hp:3d}                │
+���  HP   {c_hp_bar} {challenger_hp:3d}                │
 │  ⚡   {c_energy_bar} {challenger_energy:3d}                │
 │                                         │
 │           ☯️ VS ☯️            │
@@ -667,7 +667,7 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
 │  HP   {o_hp_bar} {opponent_hp:3d}                │
 │  ⚡   {o_energy_bar} {opponent_energy:3d}                │
 │                                         │
-╰─────────────────────────────────────────╯
+╰────────────────────────────────────────╯
 """
     return battle_view
 
@@ -761,7 +761,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 damage *= 2
 
             opponent_hp = max(0, opponent_hp - damage)
-            result_message = f"{'Bot' if bot_mode else 'You'} used Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
+            result_message = f"You used Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
 
         elif action == "defend":
             energy_gain = 10
@@ -776,7 +776,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 synergy_effects['next_move_boost'] = True
 
             user_hp = min(100, user_hp + heal)
-            result_message = f"{'Bot' if bot_mode else 'You'} used Defend, healed {heal} HP, and gained 10 energy."
+            result_message = f"You used Defend, healed {heal} HP, and gained 10 energy."
 
         elif action == "focus":
             energy_gain = random.randint(20, 30)
@@ -792,7 +792,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 context.user_data['energy_loss'] = 15
 
             context.user_data['focus_active'] = True
-            result_message = f"{'Bot' if bot_mode else 'You'} used Focus, gained {energy_gain} energy, and increased your critical hit chance for the next move."
+            result_message = f"You used Focus, gained {energy_gain} energy, and increased your critical hit chance for the next move."
 
         elif action == "zenstrike":
             energy_cost = 40
@@ -815,7 +815,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 context.user_data['energy_loss'] = 15
 
             opponent_hp = max(0, opponent_hp - damage)
-            result_message = f"{'Bot' if bot_mode else 'You'} used Zen Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
+            result_message = f"You used Zen Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
 
         elif action == "mindtrap":
             energy_cost = 20
@@ -826,19 +826,19 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
             if previous_move == "strike":
                 opponent_hp = max(0, opponent_hp - 5)
-                result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be 50% effective and they'll lose energy if they attack."
+                result_message = f"You used Mind Trap. The opponent's next move will be 50% effective and they'll lose energy if they attack."
 
             elif previous_move == "defend":
                 reflect_damage = random.randint(5, 10)
                 opponent_hp = max(0, opponent_hp - reflect_damage)
-                result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be reflected by {reflect_damage} damage."
+                result_message = f"You used Mind Trap. The opponent's next move will be reflected by {reflect_damage} damage."
 
             elif previous_move == "focus":
                 context.user_data['energy_loss'] = 15
-                result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be weakened, and they will lose additional energy if they attempt to recover."
+                result_message = f"You used Mind Trap. The opponent's next move will be weakened, and they will lose additional energy if they attempt to recover."
 
             else:
-                result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be 50% effective."
+                result_message = f"You used Mind Trap. The opponent's next move will be 50% effective."
 
         # Apply energy changes
         user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
@@ -861,74 +861,80 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             context.user_data['opponent_energy'] = user_energy
             context.user_data['challenger_energy'] = opponent_energy
 
-        # Check if the battle ends
-        if opponent_hp <= 0:
-            cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (user_id, battle['id']))
-            db.commit()
-            await send_message(update, f"{'Bot' if bot_mode else 'You'} have won the battle! Your opponent is defeated.")
-            await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has won the battle!")
-            return
-        elif user_hp <= 0:
-            cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
-            db.commit()
-            await send_message(update, f"{'Bot' if bot_mode else 'You'} have been defeated.")
-            await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has been defeated.")
-            return
-
-        # Update the battle status
-        if is_challenger:
-            cursor.execute("""
-                UPDATE pvp_battles 
-                SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
-                WHERE id = %s
-            """, (user_hp, opponent_hp, opponent_id, battle['id']))
-        else:
-            cursor.execute("""
-                UPDATE pvp_battles 
-                SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
-                WHERE id = %s
-            """, (opponent_hp, user_hp, opponent_id, battle['id']))
-        db.commit()
-
-        # Create the battle view
+        # Bot's move
         if bot_mode:
-            player_name = "Bot"
-            opponent_name = update.effective_user.first_name
-        elif is_challenger:
-            player_name = update.effective_user.first_name
-            opponent_name = "Bot" if opponent_id == 7283636452 else "Opponent"
+            bot_action = await bot_pvp_move(update, context, result_message)  # The bot move is integrated here
+            combined_message = f"{result_message}\n\n{bot_action}\n"
         else:
-            player_name = "Bot" if user_id == 7283636452 else "Opponent"
-            opponent_name = update.effective_user.first_name
+            combined_message = result_message
+    # Check if the battle ends
+            if opponent_hp <= 0:
+                cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (user_id, battle['id']))
+                db.commit()
+                await send_message(update, f"{'Bot' if bot_mode else 'You'} have won the battle! Your opponent is defeated.")
+                await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has won the battle!")
+                return
+            elif user_hp <= 0:
+                cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
+                db.commit()
+                await send_message(update, f"{'Bot' if bot_mode else 'You'} have been defeated.")
+                await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has been defeated.")
+                return
 
-        battle_view = create_battle_view(
-            player_name,
-            user_hp,
-            user_energy,
-            opponent_name,
-            opponent_hp,
-            opponent_energy
-        )
+            # Update the battle status
+            if is_challenger:
+                cursor.execute("""
+                    UPDATE pvp_battles 
+                    SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
+                    WHERE id = %s
+                """, (user_hp, opponent_hp, opponent_id, battle['id']))
+            else:
+                cursor.execute("""
+                    UPDATE pvp_battles 
+                    SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
+                    WHERE id = %s
+                """, (opponent_hp, user_hp, opponent_id, battle['id']))
+            db.commit()
 
-        # Send the result with updated HP and energy bars
-        try:
-            await context.bot.send_message(
-                chat_id=battle['group_id'], 
-                text=f"{escape_markdown(result_message)}\n\n{battle_view}",
-                parse_mode='MarkdownV2'
+            # Create the battle view
+            if bot_mode:
+                player_name = "Bot"
+                opponent_name = update.effective_user.first_name
+            elif is_challenger:
+                player_name = update.effective_user.first_name
+                opponent_name = "Bot" if opponent_id == 7283636452 else "Opponent"
+            else:
+                player_name = "Bot" if user_id == 7283636452 else "Opponent"
+                opponent_name = update.effective_user.first_name
+
+            battle_view = create_battle_view(
+                player_name,
+                user_hp,
+                user_energy,
+                opponent_name,
+                opponent_hp,
+                opponent_energy
             )
-        except BadRequest as e:
-            logger.error(f"Error sending battle update: {e}")
-            await context.bot.send_message(
-                chat_id=battle['group_id'],
-                text="An error occurred while updating the battle. Please check /pvpstatus for the current state."
-            )
 
-        # Notify players in the group chat
-        if opponent_id != 7283636452:
-            await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
-        else:
-            await bot_pvp_move(update, context)
+            # Send the result with updated HP and energy bars
+            try:
+                await context.bot.send_message(
+                    chat_id=battle['group_id'], 
+                    text=f"{escape_markdown(combined_message)}\n\n{battle_view}",
+                    parse_mode='MarkdownV2'
+                )
+            except BadRequest as e:
+                logger.error(f"Error sending battle update: {e}")
+                await context.bot.send_message(
+                    chat_id=battle['group_id'],
+                    text="An error occurred while updating the battle. Please check /pvpstatus for the current state."
+                )
+
+            # Notify players in the group chat
+            if opponent_id != 7283636452:
+                await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
+            else:
+                await context.bot.send_message(chat_id=battle['group_id'], text="Choose your move:", reply_markup=generate_pvp_move_buttons(user_id))
 
     except Exception as e:
         logger.error(f"Error in execute_pvp_move: {e}")
@@ -938,10 +944,11 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if db.is_connected():
             cursor.close()
 
-        if not bot_mode and update.callback_query:
-            await update.callback_query.answer()
+            if not bot_mode and update.callback_query:
+                await update.callback_query.answer()
+        
 
-async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, player_message):
     db = get_db_connection()
     if db:
         try:
@@ -1009,8 +1016,8 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Execute the chosen move
             await execute_pvp_move(update, context, db, bot_mode=True, action=action)
 
-            # Send AI's explanation to the chat for transparency
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Zen Bot's strategy: {ai_response}")
+            # Send AI's explanation and player's message combined to the chat for transparency
+            return f"Zen Bot's strategy: {ai_response}\n\n{player_message}"
 
         except Exception as e:
             logger.error(f"Error during bot move execution: {e}")
@@ -1018,6 +1025,7 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if db.is_connected():
                 cursor.close()
                 db.close()
+
 
 async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db_connection()
