@@ -639,29 +639,35 @@ def escape_markdown(text):
     return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
 
 def create_battle_view(challenger_name, challenger_hp, challenger_energy, opponent_name, opponent_hp, opponent_energy):
-    max_name_length = max(len(challenger_name), len(opponent_name))
-    challenger_name = challenger_name.ljust(max_name_length)
-    opponent_name = opponent_name.ljust(max_name_length)
-    
-    hp_bar_length = 10
-    energy_bar_length = 10
-    
-    challenger_hp_bar = '🟥' * int(challenger_hp / 10) + '⬜' * (hp_bar_length - int(challenger_hp / 10))
-    opponent_hp_bar = '🟥' * int(opponent_hp / 10) + '⬜' * (hp_bar_length - int(opponent_hp / 10))
-    
-    challenger_energy_bar = '🟨' * int(challenger_energy / 10) + '⬜' * (energy_bar_length - int(challenger_energy / 10))
-    opponent_energy_bar = '🟨' * int(opponent_energy / 10) + '⬜' * (energy_bar_length - int(opponent_energy / 10))
-    
+    def create_bar(value, max_value, fill_char, empty_char):
+        bar_length = 10
+        filled = int((value / max_value) * bar_length)
+        return f"{fill_char * filled}{empty_char * (bar_length - filled)}"
+
+    def format_name(name, length=12):
+        return name[:length].center(length)
+
+    c_name = format_name(challenger_name)
+    o_name = format_name(opponent_name)
+    c_hp_bar = create_bar(challenger_hp, 100, "🟥", "⬜")
+    o_hp_bar = create_bar(opponent_hp, 100, "🟥", "⬜")
+    c_energy_bar = create_bar(challenger_energy, 100, "🟨", "⬜")
+    o_energy_bar = create_bar(opponent_energy, 100, "🟨", "⬜")
+
     battle_view = f"""
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ 🧘 {challenger_name} 🧘                     ┃
-┃ HP:  {challenger_hp_bar} {challenger_hp:3d}/100    ┃
-┃ ⚡:  {challenger_energy_bar} {challenger_energy:3d}/100    ┃
-┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫
-┃ 🧘 {opponent_name} 🧘                     ┃
-┃ HP:  {opponent_hp_bar} {opponent_hp:3d}/100    ┃
-┃ ⚡:  {opponent_energy_bar} {opponent_energy:3d}/100    ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+╭──────────── 🎋 Zen Arena 🎋 ────────────╮
+│                                         │
+│  🧘 {c_name}        🧘 {o_name}  │
+│                                         │
+│  HP   {c_hp_bar} {challenger_hp:3d}                │
+│  ⚡   {c_energy_bar} {challenger_energy:3d}                │
+│                                         │
+│           ☯️ VS ☯️            │
+│                                         │
+│  HP   {o_hp_bar} {opponent_hp:3d}                │
+│  ⚡   {o_energy_bar} {opponent_energy:3d}                │
+│                                         │
+╰─────────────────────────────────────────╯
 """
     return battle_view
 
