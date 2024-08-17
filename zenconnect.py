@@ -787,7 +787,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if user_energy < energy_cost:
                 await send_message(update, "Not enough energy to use Zen Strike.")
                 return
-            damage = random.randint(25, 35)
+            damage = random.randint(20, 30)
             
             if previous_move == "focus":
                 damage = round(damage * 1.2)
@@ -864,16 +864,13 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} centers themselves, a warm energy flowing through their body as they heal for{heal} HP and gain {energy_gain} energy.{synergy_message}"
 
         elif action == "focus":
-            base_energy_gain = random.randint(20, 30)  # Base energy gain for focus
-            energy_gain = base_energy_gain  # Initial assignment of energy_gain
-    
-            # Synergy effects
+            energy_gain = random.randint(20, 30)  # Ensure this gain is between 20-30
+
             if previous_move == "strike":
                 energy_gain += 10
                 synergy_message = "The strike channels energy back into focus, increasing recovery."
             elif previous_move == "zenstrike":
-                # Ensure Zen Strike adds, but not multiple times
-                energy_gain = max(50, base_energy_gain + 20)
+                energy_gain += 20  # Directly add the bonus from Zen Strike
                 synergy_message = "After the Zen Strike, a deep focus refills the energy reserves."
             elif previous_move == "mindtrap":
                 context.user_data['energy_loss'] = 15
@@ -881,9 +878,12 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             else:
                 synergy_message = ""
 
-            # Apply the calculated energy gain only once
-            user_energy = min(100, user_energy + energy_gain)  # Cap the energy at 100
-    
+            # Apply Mind Trap effect
+            energy_gain = max(0, energy_gain - context.user_data.get('energy_loss', 0))
+
+            # Ensure energy doesn't exceed the maximum of 100
+            user_energy = min(100, user_energy + energy_gain)
+
             # Final Narrative for Focus
             result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} gathers their strength, eyes closed, focusing their inner energy. They recover {energy_gain} energy, preparing for a decisive move. {synergy_message}"
 
