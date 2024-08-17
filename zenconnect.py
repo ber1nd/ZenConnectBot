@@ -678,11 +678,13 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         opponent_id = battle['opponent_id'] if is_challenger else battle['challenger_id']
 
+        # Reset energy gain/loss conditions
+        if not is_challenger:
+            context.user_data['opponent_energy_gain'] = 0
+            context.user_data['opponent_energy_loss'] = 0
+
         # Track the previous move for synergy
         previous_move = context.user_data.get('previous_move')
-
-        # Default result message in case none of the conditional blocks are executed
-        result_message = "An unknown move was executed."
 
         # Action logic with synergy effects
         if action == "strike":
@@ -693,14 +695,14 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             damage = random.randint(12, 18)
 
             if previous_move == "focus":
-                damage *= 1.1
+                damage = round(damage * 1.1)
                 synergy_effects['critical_hit_chance'] = 0.20
             if previous_move == "zenstrike":
-                damage *= 1.1
+                damage = round(damage * 1.1)
                 synergy_effects['critical_hit_chance'] = 0.15
             if previous_move == "mindtrap":
-                damage *= 0.85  # Weakened by Mind Trap
-                opponent_energy = max(0, opponent_energy - 10)
+                damage = round(damage * 0.85)  # Weakened by Mind Trap
+                context.user_data['opponent_energy_loss'] = 10  # Set energy loss for opponent's next move if they attack
 
             critical_hit = random.random() < synergy_effects.get('critical_hit_chance', 0.15)
             if critical_hit:
@@ -715,10 +717,10 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
             if previous_move == "zenstrike":
                 heal += 10
-                opponent_energy = max(0, opponent_energy - 10)  # Opponent's next attack is reduced
+                context.user_data['opponent_energy_loss'] = 10  # Opponent's next attack is reduced
 
             if previous_move == "focus":
-                heal *= 1.15
+                heal = round(heal * 1.15)
                 synergy_effects['next_move_boost'] = True
 
             user_hp = min(100, user_hp + heal)
@@ -735,7 +737,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 synergy_effects['next_move_penalty'] = True
 
             if previous_move == "mindtrap":
-                opponent_energy = max(0, opponent_energy - 15)
+                context.user_data['opponent_energy_loss'] = 15  # Opponent's next energy gain is reduced
 
             context.user_data['focus_active'] = True
             result_message = f"{'Bot' if bot_mode else 'You'} used Focus, gained {energy_gain} energy, and increased your critical hit chance for the next move."
@@ -748,7 +750,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             damage = random.randint(25, 35)
 
             if previous_move == "focus":
-                damage *= 1.2
+                damage = round(damage * 1.2)
                 critical_hit_chance = 0.30
             else:
                 critical_hit_chance = 0.20
@@ -759,7 +761,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
             if 'mind_trap_effect' in context.user_data:
                 damage //= 2
-                opponent_energy = max(0, opponent_energy - 15)
+                context.user_data['opponent_energy_loss'] = 15  # Opponent loses energy if they attack
 
             opponent_hp = max(0, opponent_hp - damage)
             result_message = f"{'Bot' if bot_mode else 'You'} used Zen Strike and dealt {damage} damage{' (Critical Hit!)' if critical_hit else ''}."
@@ -781,11 +783,15 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be reflected by {reflect_damage} damage."
 
             if previous_move == "focus":
-                opponent_energy = max(0, opponent_energy - 15)
+                context.user_data['opponent_energy_loss'] = 15  # Opponent loses energy if they attack
                 result_message = f"{'Bot' if bot_mode else 'You'} used Mind Trap. The opponent's next move will be weakened, and they will lose additional energy if they attempt to recover."
 
         # Apply energy changes
         user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
+
+        # If the user was attacked and had a synergy effect, apply it now
+        if not is_challenger and context.user_data.get('opponent_energy_loss'):
+            opponent_energy = max(0, opponent_energy - context.user_data['opponent_energy_loss'])
 
         # Reset focus and mind trap effects after applying them
         context.user_data['focus_active'] = False
@@ -807,6 +813,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             await send_message(update, f"{'Bot' if bot_mode else 'You'} have been defeated.")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has been defeated.")
             return
+
         # Update the battle status
         if is_challenger:
             cursor.execute("""
