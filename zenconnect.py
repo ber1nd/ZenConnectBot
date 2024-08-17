@@ -954,7 +954,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if not bot_mode and update.callback_query:
             await update.callback_query.answer()
 
-
 async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db_connection()
     if db:
@@ -1000,21 +999,26 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             - Mind Trap: Reduces the effectiveness of the opponent's next move by 50%. Costs 20 energy.
 
             Strategy to win:
-            - If your energy is low, prioritize "Focus" or "Defend" to recover energy.
+            - If your energy is low (below 20), prioritize "Focus" or "Defend" to recover energy.
             - Avoid attempting an action if you don't have enough energy to perform it.
             - Manage your energy carefully; don't allow it to drop too low unless you can deliver a finishing blow.
             - If you used "Focus" in the previous move, consider following up with "Strike" or "Zen Strike" for enhanced damage.
             - Use "Mind Trap" to weaken the opponent, particularly if they have high energy or if you want to set up a safer "Zen Strike."
+            - Prioritize "Zen Strike" if the opponent's HP is low enough for a potential finishing blow.
             """
 
             # Generate AI response based on the prompt
             ai_response = await generate_response(prompt)
 
             # Extract action from AI response, prioritizing energy management
-            if bot_energy >= 40:
-                action = "zenstrike" if "zenstrike" in ai_response.lower() else "strike"
-            elif bot_energy >= 20:
-                action = "mindtrap" if "mindtrap" in ai_response.lower() else "focus"
+            if "zen strike" in ai_response.lower() and bot_energy >= 40:
+                action = "zenstrike"
+            elif "strike" in ai_response.lower() and bot_energy >= 12:
+                action = "strike"
+            elif "mind trap" in ai_response.lower() and bot_energy >= 20:
+                action = "mindtrap"
+            elif "focus" in ai_response.lower():
+                action = "focus"
             else:
                 action = "defend"
 
@@ -1032,6 +1036,7 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if db.is_connected():
                 cursor.close()
                 db.close()
+
 
 async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db_connection()
