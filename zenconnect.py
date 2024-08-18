@@ -757,8 +757,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 synergy_effects['critical_hit_chance'] = 0.15
             else:
                 synergy_message = ""
+                synergy_effects['critical_hit_chance'] = 0.10
 
-            critical_hit = random.random() < synergy_effects.get('critical_hit_chance', 0.15)
+            critical_hit = random.random() < synergy_effects['critical_hit_chance']
             if critical_hit:
                 damage *= 2
                 critical_hit_message = "A well-placed strike hits critically, doubling the damage!"
@@ -894,14 +895,10 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         # Save the current move as previous_move for next turn's synergy
         if is_challenger:
             context.user_data['challenger_previous_move'] = action
-        else:
-            context.user_data['opponent_previous_move'] = action
-
-        # Store updated energy values
-        if is_challenger:
             context.user_data['challenger_energy'] = user_energy
             context.user_data['opponent_energy'] = opponent_energy
         else:
+            context.user_data['opponent_previous_move'] = action
             context.user_data['opponent_energy'] = user_energy
             context.user_data['challenger_energy'] = opponent_energy
 
@@ -909,14 +906,14 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if opponent_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (user_id, battle['id']))
             db.commit()
-            final_action = f"The final move was {action} that dealt {damage} damage." if action else "The battle concluded."
+            final_action = f"The final move was {action} that dealt {damage} damage." if 'damage' in locals() else "The battle concluded."
             await send_message(update, f"{'Bot' if bot_mode else update.effective_user.first_name} has won the battle! Your opponent is defeated. {final_action}")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has won the battle!")
             return
         elif user_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
             db.commit()
-            final_action = f"The final move was {action} that dealt {damage} damage." if action else "The battle concluded."
+            final_action = f"The final move was {action} that dealt {damage} damage." if 'damage' in locals() else "The battle concluded."
             await send_message(update, f"{'Bot' if bot_mode else update.effective_user.first_name} has been defeated. {final_action}")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{opponent_name} has won the battle!")
             return
@@ -991,10 +988,10 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 async def start_new_battle(update, context):
     reset_synergies(context)
     await update.message.reply_text("A new battle has begun! All synergies and effects have been reset.")
-# Additional logic to start the new battle
 
 def reset_synergies(context):
-    context.user_data['previous_move'] = None
+    context.user_data['challenger_previous_move'] = None
+    context.user_data['opponent_previous_move'] = None
     context.user_data['opponent_mind_trap'] = False
     context.user_data['focus_active'] = False
     context.user_data['energy_loss'] = 0
@@ -1027,8 +1024,13 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bot_hp = battle['challenger_hp'] if battle['challenger_id'] == 7283636452 else battle['opponent_hp']
             opponent_hp = battle['opponent_hp'] if battle['challenger_id'] == 7283636452 else battle['challenger_hp']
 
-            # Retrieve bot's energy level
-            bot_energy = context.user_data.get('challenger_energy' if battle['challenger_id'] == 7283636452 else 'opponent_energy', 50)
+            # Retrieve bot's energy level and previous move
+            if battle['challenger_id'] == 7283636452:
+                bot_energy = context.user_data.get('challenger_energy', 50)
+                previous_move = context.user_data.get('challenger_previous_move', 'None')
+            else:
+                bot_energy = context.user_data.get('opponent_energy', 50)
+                previous_move = context.user_data.get('opponent_previous_move', 'None')
 
             # Generate AI decision-making prompt
             prompt = f"""
@@ -1038,7 +1040,7 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             - Your HP: {bot_hp}/100
             - Opponent's HP: {opponent_hp}/100
             - Your Energy: {bot_energy}/100
-            - Last Move: {context.user_data.get('previous_move', 'None')}
+            - Your Last Move: {previous_move}
 
             Available actions:
             - Strike: Deal moderate damage to the opponent. Costs 12 energy.
