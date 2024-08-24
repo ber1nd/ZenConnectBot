@@ -1005,92 +1005,324 @@ def reset_synergies(context):
     context.user_data['opponent_energy'] = 50
 
 
-async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
+async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
+    user_id = 7283636452 if bot_mode else update.effective_user.id
+    energy_cost = 0
+    energy_gain = 0
+    synergy_effects = {}
+
+    valid_moves = ["strike", "defend", "focus", "zenstrike", "mindtrap"]
+
+    if not bot_mode:
+        if update.callback_query:
+            query = update.callback_query
+            data = query.data.split('_')
+            action = data[1]
+            user_id_from_callback = int(data[-1])
+
+            if user_id_from_callback != user_id:
+                await query.answer("It's not your turn!")
+                return
+        else:
+            await update.message.reply_text("Invalid move. Please use the provided buttons.")
+            return
+
+    if not action or action not in valid_moves:
+        logger.error(f"Invalid action received: {action}")
+        if not bot_mode:
+            await update.callback_query.answer("Invalid move!")
+        return
+
+    try:
+        cursor = db.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT * FROM pvp_battles 
+            WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
+        """, (user_id, user_id))
+        battle = cursor.fetchone()
+
+        if not battle:
+            if not bot_mode:
+                await send_message(update, "You are not in an active battle.")
+            return
+
+        if battle['current_turn'] != user_id:
+            if not bot_mode:
+                await send_message(update, "It's not your turn.")
+            return
+
+        # Determine if the user is the challenger or opponent
+        is_challenger = battle['challenger_id'] == user_id
+
+        if is_challenger:
+            user_hp, opponent_hp = battle['challenger_hp'], battle['opponent_hp']
+            user_energy = context.user_data.get('challenger_energy', 50)
+            opponent_energy = context.user_data.get('opponent_energy', 50)
+        else:
+            user_hp, opponent_hp = battle['opponent_hp'], battle['challenger_hp']
+            user_energy = context.user_data.get('opponent_energy', 50)
+            opponent_energy = context.user_data.get('challenger_energy', 50)
+
+        # Determine the correct previous move based on whether it's the bot or the player
+        if bot_mode:
+            previous_move = context.user_data.get('bot_previous_move')
+        else:
+            previous_move = context.user_data.get('player_previous_move')
+
+        opponent_id = battle['opponent_id'] if is_challenger else battle['challenger_id']
+        opponent_name = "Bot" if opponent_id == 7283636452 else update.effective_user.first_name if bot_mode else "Opponent"
+
+        # Reset energy gain/loss conditions
+        context.user_data['energy_gain'] = 0
+        context.user_data['energy_loss'] = 0
+
+        # Action logic with synergy effects
+        if action == "strike":
+            energy_cost = 12
+            if user_energy < energy_cost:
+                await send_message(update, "Not enough energy to use Strike.")
+                return
+            damage = random.randint(12, 18)
+
+            if previous_move == "focus" and not bot_mode:
+                damage = round(damage * 1.1)
+                synergy_message = "The focus enhances the strike, adding extra force."
+                synergy_effects['critical_hit_chance'] = 0.20
+            elif previous_move == "zenstrike":
+                damage = round(damage * 1.1)
+                synergy_message = "The momentum from the Zen Strike increases the strike's power."
+                synergy_effects['critical_hit_chance'] = 0.15
+            else:
+                synergy_message = ""
+                synergy_effects['critical_hit_chance'] = 0.10
+
+            critical_hit = random.random() < synergy_effects['critical_hit_chance']
+            if critical_hit:
+                damage *= 2
+                critical_hit_message = "A well-placed strike hits critically, doubling the damage!"
+            else:
+                critical_hit_message = ""
+
+            # Check if Mind Trap is active
+            if context.user_data.get('opponent_mind_trap'):
+                original_damage = damage
+                damage //= 2  # Reduces the damage by half due to Mind Trap
+                context.user_data['energy_loss'] = 10
+                mind_trap_message = f"But the Mind Trap dampens the force, reducing the damage by {original_damage - damage}. Only {damage} damage is dealt."
+            else:
+                mind_trap_message = ""
+
+            opponent_hp = max(0, opponent_hp - damage)
+            
+            # Final Narrative for Strike
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} jumps and kicks {opponent_name}, aiming for a strong hit. {synergy_message} {critical_hit_message} {mind_trap_message} The strike deals {damage} damage."
+
+        elif action == "zenstrike":
+            energy_cost = 40
+            if user_energy < energy_cost:
+                await send_message(update, "Not enough energy to use Zen Strike.")
+                return
+            damage = random.randint(20, 30)
+            
+            if previous_move == "focus" and not bot_mode:
+                damage = round(damage * 1.2)
+                critical_hit_chance = 0.30
+                synergy_message = "The focused energy empowers the strike, increasing its potential."
+            else:
+                critical_hit_chance = 0.20
+                synergy_message = ""
+
+            critical_hit = random.random() < critical_hit_chance
+            if critical_hit:
+                damage *= 2
+                critical_hit_message = "A precise strike lands, dealing critical damage!"
+            else:
+                critical_hit_message = ""
+
+            # Check if Mind Trap is active
+            if context.user_data.get('opponent_mind_trap'):
+                original_damage = damage
+                damage //= 2  # Reduces the damage by half due to Mind Trap
+                context.user_data['energy_loss'] = 15
+                mind_trap_message = f"However, the Mind Trap weakens the strike, reducing the damage by {original_damage - damage}. Only {damage} damage is dealt."
+            else:
+                mind_trap_message = ""
+
+            opponent_hp = max(0, opponent_hp - damage)
+            
+            # Final Narrative for Zen Strike
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} harnesses their Zen energy, unleashing a powerful Zen Strike on {opponent_name}. {synergy_message} {critical_hit_message} {mind_trap_message} The Zen Strike deals {damage} damage."
+
+        elif action == "mindtrap":
+            energy_cost = 20
+            if user_energy < energy_cost:
+                await send_message(update, "Not enough energy to use Mind Trap.")
+                return
+            context.user_data['opponent_mind_trap'] = True
+
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} sets a cunning Mind Trap for {opponent_name}, clouding their next move."
+    
+            if previous_move == "strike":
+                opponent_hp = max(0, opponent_hp - 5)
+                synergy_message = "The strike triggers the trap, reflecting some of the force back."
+                result_message += f"\n\nThe opponent's next `Strike` will be weakened and they will lose energy! {synergy_message}"
+            elif previous_move == "defend":
+                reflect_damage = random.randint(5, 10)
+                opponent_hp = max(0, opponent_hp - reflect_damage)
+                synergy_message = f"The Mind Trap reflects {reflect_damage} damage as the opponent defends."
+                result_message += f"\n\nThe opponent's `Defend` caused {reflect_damage} damage to be reflected back by `Mind Trap`! {synergy_message}"
+            elif previous_move == "focus" and not bot_mode:
+                context.user_data['energy_loss'] = 15
+                synergy_message = "The Mind Trap drains some energy as the opponent attempts to focus."
+                result_message += f"\n\nThe opponent's energy will be drained if they attempt to recover! {synergy_message}"
+            else:
+                synergy_message = ""
+
+            result_message += f" {synergy_message}"
+
+        elif action == "defend":
+            energy_gain = 10
+            heal = random.randint(15, 25)
+
+            if previous_move == "zenstrike":
+                heal += 10
+                synergy_message = "The residual energy from Zen Strike enhances the healing effect."
+            elif previous_move == "focus" and not bot_mode:
+                heal = round(heal * 1.15)
+                synergy_message = "The focus sharpens the mind, increasing the healing effect."
+            else:
+                synergy_message = ""
+
+            user_hp = min(100, user_hp + heal)
+            
+            # Final Narrative for Defend
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} centers themselves, a warm energy flowing through their body as they heal for {heal} HP and gain {energy_gain} energy. {synergy_message}"
+
+        elif action == "focus":
+            energy_gain = random.randint(20, 30)  # Ensure this gain is between 20-30
+
+            if previous_move == "strike":
+                energy_gain += 10
+                synergy_message = "The strike channels energy back into focus, increasing recovery."
+            elif previous_move == "zenstrike":
+                energy_gain += 20  # Directly add the bonus from Zen Strike
+                synergy_message = "After the Zen Strike, a deep focus refills the energy reserves."
+            elif previous_move == "mindtrap":
+                context.user_data['energy_loss'] = 15
+                synergy_message = "The Mind Trap drains some energy even during focus."
+            else:
+                synergy_message = ""
+
+            # Apply Mind Trap effect
+            energy_gain = max(0, energy_gain - context.user_data.get('energy_loss', 0))
+
+            # Final Narrative for Focus
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} gathers their strength, eyes closed, focusing their inner energy. They recover {energy_gain} energy, preparing for a decisive move. {synergy_message}"
+
+        # Apply energy changes
+        user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
+
+        # Apply energy loss from previous turn's effects
+        user_energy = max(0, user_energy - context.user_data.get('energy_loss', 0))
+
+        # Reset focus and mind trap effects after applying them
+        context.user_data['focus_active'] = False
+        context.user_data['opponent_mind_trap'] = False
+
+        # Save the current move as previous_move for next turn's synergy
+        if bot_mode:
+            context.user_data['bot_previous_move'] = action
+        else:
+            context.user_data['player_previous_move'] = action
+
+        if is_challenger:
+            context.user_data['challenger_energy'] = user_energy
+            context.user_data['opponent_energy'] = opponent_energy
+        else:
+            context.user_data['opponent_energy'] = user_energy
+            context.user_data['challenger_energy'] = opponent_energy
+
+        # Check if the battle ends
+        if opponent_hp <= 0:
+            cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (user_id, battle['id']))
+            db.commit()
+            final_action = f"The final move was {action} that dealt {damage} damage." if 'damage' in locals() else "The battle concluded."
+            await send_message(update, f"{'Bot' if bot_mode else update.effective_user.first_name} has won the battle! Your opponent is defeated. {final_action}")
+            await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has won the battle!")
+            return
+        elif user_hp <= 0:
+            cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
+            db.commit()
+            final_action = f"The final move was {action} that dealt {damage} damage." if 'damage' in locals() else "The battle concluded."
+            await send_message(update, f"{'Bot' if bot_mode else update.effective_user.first_name} has been defeated. {final_action}")
+            await context.bot.send_message(chat_id=battle['group_id'], text=f"{opponent_name} has won the battle!")
+            return
+
+        # Update the battle status
+        if is_challenger:
             cursor.execute("""
-                SELECT * FROM pvp_battles 
-                WHERE (challenger_id = 7283636452 OR opponent_id = 7283636452) AND status = 'in_progress'
-            """)
-            battle = cursor.fetchone()
+                UPDATE pvp_battles 
+                SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
+                WHERE id = %s
+            """, (user_hp, opponent_hp, opponent_id, battle['id']))
+        else:
+            cursor.execute("""
+                UPDATE pvp_battles 
+                SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
+                WHERE id = %s
+            """, (opponent_hp, user_hp, opponent_id, battle['id']))
+        db.commit()
 
-            if not battle:
-                logger.info("No active battle found for the bot.")
-                return
+        # Create the battle view
+        if bot_mode:
+            player_name = "Bot"
+            opponent_name = update.effective_user.first_name
+        elif is_challenger:
+            player_name = update.effective_user.first_name
+            opponent_name = "Bot" if opponent_id == 7283636452 else "Opponent"
+        else:
+            player_name = "Bot" if user_id == 7283636452 else "Opponent"
+            opponent_name = update.effective_user.first_name
 
-            if battle['current_turn'] != 7283636452:
-                logger.info("It's not the bot's turn.")
-                return
+        battle_view = create_battle_view(
+            player_name,
+            user_hp,
+            user_energy,
+            opponent_name,
+            opponent_hp,
+            opponent_energy
+        )
 
-            # Determine if the bot is the challenger or opponent
-            bot_is_challenger = battle['challenger_id'] == 7283636452
+        # Send the result with updated HP and energy bars
+        try:
+            await context.bot.send_message(
+                chat_id=battle['group_id'], 
+                text=f"{escape_markdown(result_message)}\n\n{battle_view}",
+                parse_mode='MarkdownV2'
+            )
+        except BadRequest as e:
+            logger.error(f"Error sending battle update: {e}")
+            await context.bot.send_message(
+                chat_id=battle['group_id'],
+                text="An error occurred while updating the battle. Please check /pvpstatus for the current state."
+            )
 
-            # Retrieve bot's HP, energy, and previous move
-            if bot_is_challenger:
-                bot_hp = battle['challenger_hp']
-                bot_energy = context.user_data.get('challenger_energy', 50)
-                bot_previous_move = context.user_data.get('challenger_previous_move', 'None')
-                opponent_hp = battle['opponent_hp']
-            else:
-                bot_hp = battle['opponent_hp']
-                bot_energy = context.user_data.get('opponent_energy', 50)
-                bot_previous_move = context.user_data.get('opponent_previous_move', 'None')
-                opponent_hp = battle['challenger_hp']
+        # Notify players in the group chat
+        if opponent_id != 7283636452:
+            await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
+        else:
+            await bot_pvp_move(update, context)
+    
+    except Exception as e:
+        logger.error(f"Error in execute_pvp_move: {e}")
+        if not bot_mode and update.callback_query:
+            await update.callback_query.answer("An error occurred while executing the PvP move. Please try again later.")
+    finally:
+        if db.is_connected():
+            cursor.close()
 
-            # Generate AI decision-making prompt
-            prompt = f"""
-            You are a Zen warrior AI engaged in a strategic duel. Your goal is to win decisively by reducing your opponent's HP to 0 while keeping your HP above 0.
-
-            Current situation:
-            - Your HP: {bot_hp}/100
-            - Opponent's HP: {opponent_hp}/100
-            - Your Energy: {bot_energy}/100
-            - Your Last Move: {bot_previous_move}
-
-            Available actions:
-            - Strike: Deal moderate damage to the opponent. Costs 12 energy.
-            - Defend: Heal yourself and gain energy. Costs 0 energy, gains 10 energy.
-            - Focus: Recover energy and increase your critical hit chances for the next turn. Gains 20-30 energy.
-            - Zen Strike: A powerful move that deals significant damage. Costs 40 energy.
-            - Mind Trap: Reduces the effectiveness of the opponent's next move by 50%. Costs 20 energy.
-
-            Strategy to win:
-            - If your energy is low (below 20), prioritize "Focus" or "Defend" to recover energy.
-            - Avoid attempting an action if you don't have enough energy to perform it.
-            - Manage your energy carefully; don't allow it to drop too low unless you can deliver a finishing blow.
-            - If you used "Focus" in the previous move, consider following up with "Strike" or "Zen Strike" for enhanced damage.
-            - Use "Mind Trap" to weaken the opponent, particularly if they have high energy or if you want to set up a safer "Zen Strike."
-            - Prioritize "Zen Strike" if the opponent's HP is low enough for a potential finishing blow.
-            """
-
-            # Generate AI response based on the prompt
-            ai_response = await generate_response(prompt)
-
-            # Extract action from AI response, prioritizing energy management
-            if "zen strike" in ai_response.lower() and bot_energy >= 40:
-                action = "zenstrike"
-            elif "strike" in ai_response.lower() and bot_energy >= 12:
-                action = "strike"
-            elif "mind trap" in ai_response.lower() and bot_energy >= 20:
-                action = "mindtrap"
-            elif "focus" in ai_response.lower():
-                action = "focus"
-            else:
-                action = "defend"
-
-            logger.info(f"Bot chose action: {action} based on AI response: {ai_response}")
-
-            # Execute the chosen move
-            await execute_pvp_move(update, context, db, bot_mode=True, action=action)
-
-        except Exception as e:
-            logger.error(f"Error during bot move execution: {e}")
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
+        if not bot_mode and update.callback_query:
+            await update.callback_query.answer()
 
 
 async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
