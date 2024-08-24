@@ -1427,6 +1427,12 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             synergy_message = ""
             critical_hit_chance = 0.10
 
+        # Additional synergy: Strike → Mind Trap
+        if current_synergy.get('mindtrap'):
+            opponent_energy = max(0, opponent_energy - 10)
+            opponent_hp = max(0, opponent_hp - 10)  # Additional damage
+            synergy_message += " The strike disorients the opponent, reducing their energy."
+
         critical_hit = random.random() < critical_hit_chance
         if critical_hit:
             damage *= 2
@@ -1451,6 +1457,11 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             critical_hit_chance = 0.20
             synergy_message = ""
 
+        # Additional synergy: Zen Strike → Mind Trap
+        if current_synergy.get('mindtrap'):
+            opponent_energy = max(0, opponent_energy - 15)
+            synergy_message += " The mind trap drains additional energy from the opponent."
+
         critical_hit = random.random() < critical_hit_chance
         if critical_hit:
             damage *= 2
@@ -1468,6 +1479,11 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         context.user_data[f'{player_key}_next_turn_synergy'] = {'mindtrap': True}
         result_message = f"{'Bot' if bot_mode else 'You'} set a cunning Mind Trap for {opponent_name}, clouding their next move."
 
+        # Additional synergy: Mind Trap → Defend
+        if current_synergy.get('defend'):
+            user_hp = min(100, user_hp + 10)
+            result_message += " The mind trap also reflects damage back to the opponent."
+
     elif action == "defend":
         energy_gain = 10
         heal = random.randint(15, 25)
@@ -1478,8 +1494,9 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         elif current_synergy.get('focus'):
             heal = round(heal * 1.15)
             synergy_message = "The focus sharpens the mind, increasing the healing effect."
-        else:
-            synergy_message = ""
+        elif current_synergy.get('mindtrap'):
+            heal = round(heal * 1.15)
+            synergy_message = "The mind trap enhances your defensive stance, boosting healing."
 
         user_hp = min(100, user_hp + heal)
         result_message = f"{'Bot' if bot_mode else 'You'} center yourself, a warm energy flowing through your body as you heal for {heal} HP and gain {energy_gain} energy. {synergy_message}"
@@ -1488,6 +1505,11 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         energy_gain = random.randint(20, 30)
         context.user_data[f'{player_key}_next_turn_synergy'] = {'focus': True}
         result_message = f"{'Bot' if bot_mode else 'You'} gather your strength, eyes closed, focusing your inner energy. You recover {energy_gain} energy, preparing for a decisive move."
+
+        # Additional synergy: Focus → Mind Trap
+        if current_synergy.get('mindtrap'):
+            opponent_energy = max(0, opponent_energy - 15)
+            result_message += " The focused energy drains additional energy from the opponent."
 
     user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
     return result_message, user_hp, opponent_hp, user_energy
