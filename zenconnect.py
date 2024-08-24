@@ -1413,6 +1413,8 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     energy_cost = 0
     energy_gain = 0
 
+    opponent_energy = context.user_data.get(f'{player_key}_opponent_energy', 50)  # Ensure opponent_energy is initialized
+
     if action == "strike":
         energy_cost = 12
         if user_energy < energy_cost:
@@ -1512,8 +1514,11 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             result_message += " The focused energy drains additional energy from the opponent."
 
     user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
-    return result_message, user_hp, opponent_hp, user_energy
 
+    # Update opponent's energy in context for next turn
+    context.user_data[f'{player_key}_opponent_energy'] = opponent_energy
+
+    return result_message, user_hp, opponent_hp, user_energy
 
 # Call this function at the start of a new battle
 async def start_new_battle(update, context):
