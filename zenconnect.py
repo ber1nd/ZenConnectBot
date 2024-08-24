@@ -731,18 +731,15 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             user_energy = context.user_data.get('opponent_energy', 50)
             opponent_energy = context.user_data.get('challenger_energy', 50)
 
-        # Determine the correct previous move based on whether it's the bot or the player
-        if bot_mode:
-            previous_move = context.user_data.get('opponent_previous_move' if is_challenger else 'challenger_previous_move')
-        else:
-            previous_move = context.user_data.get('challenger_previous_move' if is_challenger else 'opponent_previous_move')
-
         opponent_id = battle['opponent_id'] if is_challenger else battle['challenger_id']
         opponent_name = "Bot" if opponent_id == 7283636452 else update.effective_user.first_name if bot_mode else "Opponent"
 
         # Reset energy gain/loss conditions
         context.user_data['energy_gain'] = 0
         context.user_data['energy_loss'] = 0
+
+        # Track the previous move for synergy
+        previous_move = context.user_data.get('opponent_previous_move' if is_challenger else 'challenger_previous_move')
 
         # Action logic with synergy effects
         if action == "strike":
@@ -752,7 +749,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 return
             damage = random.randint(12, 18)
 
-            if previous_move == "focus" and not bot_mode:
+            if previous_move == "focus":
                 damage = round(damage * 1.1)
                 synergy_message = "The focus enhances the strike, adding extra force."
                 synergy_effects['critical_hit_chance'] = 0.20
@@ -792,7 +789,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 return
             damage = random.randint(20, 30)
             
-            if previous_move == "focus" and not bot_mode:
+            if previous_move == "focus":
                 damage = round(damage * 1.2)
                 critical_hit_chance = 0.30
                 synergy_message = "The focused energy empowers the strike, increasing its potential."
@@ -839,9 +836,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 opponent_hp = max(0, opponent_hp - reflect_damage)
                 synergy_message = f"The Mind Trap reflects {reflect_damage} damage as the opponent defends."
                 result_message += f"\n\nThe opponent's `Defend` caused {reflect_damage} damage to be reflected back by `Mind Trap`! {synergy_message}"
-            elif previous_move == "focus" and not bot_mode:
+            elif previous_move == "focus":
                 context.user_data['energy_loss'] = 15
-                synergy_message = "The Mind Trap drains some energy as the opponent attempts to focus."
+                synergy_message = "The Mind Trap drains energy as the opponent attempts to focus."
                 result_message += f"\n\nThe opponent's energy will be drained if they attempt to recover! {synergy_message}"
             else:
                 synergy_message = ""
@@ -855,7 +852,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if previous_move == "zenstrike":
                 heal += 10
                 synergy_message = "The residual energy from Zen Strike enhances the healing effect."
-            elif previous_move == "focus" and not bot_mode:
+            elif previous_move == "focus":
                 heal = round(heal * 1.15)
                 synergy_message = "The focus sharpens the mind, increasing the healing effect."
             else:
@@ -986,8 +983,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if db.is_connected():
             cursor.close()
 
-        if not bot_mode and update.callback_query:
-            await update.callback_query.answer()
 
 # Call this function at the start of a new battle
 async def start_new_battle(update, context):
@@ -996,14 +991,13 @@ async def start_new_battle(update, context):
 
 def reset_synergies(context):
     context.user_data['challenger_previous_move'] = None
-    context.user_data['opponent_previous_move'] = None
+    context.user_data['opponent_previous_move'] = None  # Track opponent's last move
     context.user_data['opponent_mind_trap'] = False
     context.user_data['focus_active'] = False
     context.user_data['energy_loss'] = 0
     context.user_data['energy_gain'] = 0
     context.user_data['challenger_energy'] = 50
     context.user_data['opponent_energy'] = 50
-
 
 async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db_connection()
@@ -1451,7 +1445,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         context.user_data['energy_loss'] = 0
 
         # Track the previous move for synergy
-        previous_move = context.user_data.get('previous_move')
+        previous_move = context.user_data.get('opponent_previous_move' if is_challenger else 'challenger_previous_move')
 
         # Action logic with synergy effects
         if action == "strike":
@@ -1471,8 +1465,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 synergy_effects['critical_hit_chance'] = 0.15
             else:
                 synergy_message = ""
+                synergy_effects['critical_hit_chance'] = 0.10
 
-            critical_hit = random.random() < synergy_effects.get('critical_hit_chance', 0.15)
+            critical_hit = random.random() < synergy_effects['critical_hit_chance']
             if critical_hit:
                 damage *= 2
                 critical_hit_message = "A well-placed strike hits critically, doubling the damage!"
@@ -1572,7 +1567,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             user_hp = min(100, user_hp + heal)
             
             # Final Narrative for Defend
-            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} centers themselves, a warm energy flowing through their body as they heal for{heal} HP and gain {energy_gain} energy.{synergy_message}"
+            result_message = f"{'Bot' if bot_mode else update.effective_user.first_name} centers themselves, a warm energy flowing through their body as they heal for {heal} HP and gain {energy_gain} energy. {synergy_message}"
 
         elif action == "focus":
             energy_gain = random.randint(20, 30)  # Ensure this gain is between 20-30
@@ -1606,13 +1601,12 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         context.user_data['opponent_mind_trap'] = False
 
         # Save the current move as previous_move for next turn's synergy
-        context.user_data['previous_move'] = action
-
-        # Store updated energy values
         if is_challenger:
+            context.user_data['challenger_previous_move'] = action
             context.user_data['challenger_energy'] = user_energy
             context.user_data['opponent_energy'] = opponent_energy
         else:
+            context.user_data['opponent_previous_move'] = action
             context.user_data['opponent_energy'] = user_energy
             context.user_data['challenger_energy'] = opponent_energy
 
@@ -1620,14 +1614,14 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if opponent_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (user_id, battle['id']))
             db.commit()
-            final_action = f"The final move was {action} that dealt {damage} damage." if action else "The battle concluded."
+            final_action = f"The final move was {action} that dealt {damage} damage." if 'damage' in locals() else "The battle concluded."
             await send_message(update, f"{'Bot' if bot_mode else update.effective_user.first_name} has won the battle! Your opponent is defeated. {final_action}")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{'Bot' if bot_mode else update.effective_user.username} has won the battle!")
             return
         elif user_hp <= 0:
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (opponent_id, battle['id']))
             db.commit()
-            final_action = f"The final move was {action} that dealt {damage} damage." if action else "The battle concluded."
+            final_action = f"The final move was {action} that dealt {damage} damage." if 'damage' in locals() else "The battle concluded."
             await send_message(update, f"{'Bot' if bot_mode else update.effective_user.first_name} has been defeated. {final_action}")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{opponent_name} has won the battle!")
             return
@@ -1700,17 +1694,16 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 async def start_new_battle(update, context):
     reset_synergies(context)
     await update.message.reply_text("A new battle has begun! All synergies and effects have been reset.")
-# Additional logic to start the new battle
 
 def reset_synergies(context):
-    context.user_data['previous_move'] = None
+    context.user_data['challenger_previous_move'] = None
+    context.user_data['opponent_previous_move'] = None  # Track opponent's last move
     context.user_data['opponent_mind_trap'] = False
     context.user_data['focus_active'] = False
     context.user_data['energy_loss'] = 0
     context.user_data['energy_gain'] = 0
     context.user_data['challenger_energy'] = 50
     context.user_data['opponent_energy'] = 50
-
 
 async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db_connection()
