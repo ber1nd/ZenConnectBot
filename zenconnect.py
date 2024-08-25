@@ -1203,7 +1203,16 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     result_message = f"{dynamic_message}\n\n{synergy_effect}"
     
     return result_message, user_hp, opponent_hp, user_energy, damage, heal, energy_cost, energy_gain, synergy_effect
-    
+
+import re
+
+def escape_markdown_v2(text):
+    """
+    Helper function to escape special characters for MarkdownV2 format.
+    """
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    return re.sub(f"([{''.join(map(re.escape, special_chars))}])", r'\\\1', str(text))
+   
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
     
@@ -1301,11 +1310,16 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         # New section: Creating detailed move summary
         numeric_stats = f"Move: {action.capitalize()}, Effect: {synergy_effect or 'None'}, Numeric Stats: Damage: {damage:.1f}, Heal: {heal:.1f}, Energy Cost: {energy_cost:.1f}, Energy Gained: {energy_gain:.1f}, Synergy: {synergy_effect or 'None'}"
 
+        # Escape special characters for MarkdownV2
+        escaped_result_message = escape_markdown_v2(result_message)
+        escaped_battle_view = escape_markdown_v2(battle_view)
+        escaped_numeric_stats = escape_markdown_v2(numeric_stats)
+
         # Send the result of the action along with the updated battle view
         try:
             await context.bot.send_message(
                 chat_id=battle['group_id'], 
-                text=f"{escape_markdown(result_message)}\n\n{battle_view}\n\n{escape_markdown(numeric_stats)}",
+                text=f"{escaped_result_message}\n\n{escaped_battle_view}\n\n{escaped_numeric_stats}",
                 parse_mode='MarkdownV2'
             )
         except BadRequest as e:
@@ -1314,6 +1328,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 chat_id=battle['group_id'],
                 text="An error occurred while updating the battle. Please check /pvpstatus for the current state."
             )
+
 
         # Notify the next player
         if opponent_id != 7283636452:
