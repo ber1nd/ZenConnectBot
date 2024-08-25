@@ -1166,12 +1166,12 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         base_energy_gain = random.randint(20, 30)
         energy_gain = base_energy_gain * mind_trap_multiplier
         context.user_data[f'{player_key}_next_turn_synergy'] = {'focus': True}
-        synergy_effect = f"Focus prepares you for the next move, recovering {energy_gain} energy."
+        synergy_effect = f"Focus prepares you for the next move, recovering {energy_gain:.1f} energy."
 
         if current_synergy.get('zenstrike'):
             energy_gain *= 2
             context.user_data[f'{player_key}_next_move_penalty'] = 0.9  # 10% reduction in next move's effectiveness
-            synergy_effect += " Zen Strike boosts Focus, doubling energy gain but slightly reducing next move's power."
+            synergy_effect += f" Zen Strike boosts Focus, doubling energy gain to {energy_gain:.1f} but slightly reducing next move's power."
 
     # Update energy and previous move
     user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
@@ -1186,10 +1186,10 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     # Generate dynamic message
     dynamic_message = await generate_response(f"""
     {'' if bot_mode else 'You'} just performed {action}.
-    Damage dealt: {damage if action in ['strike', 'zenstrike'] else 'N/A'}
-    Healing done: {heal if action == 'defend' else 'N/A'}
-    Energy cost: {energy_cost} 
-    Energy gained: {energy_gain if action in ['defend', 'focus'] else 'N/A'}
+    Damage dealt: {damage:.1f if action in ['strike', 'zenstrike'] else 'N/A'}
+    Healing done: {heal:.1f if action == 'defend' else 'N/A'}
+    Energy cost: {energy_cost:.1f} 
+    Energy gained: {energy_gain:.1f if action in ['defend', 'focus'] else 'N/A'}
     Synergy effect: {synergy_effect}
     Opponent: {opponent_name}
     """, elaborate=True)
