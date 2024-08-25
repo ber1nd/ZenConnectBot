@@ -1198,6 +1198,16 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             context.user_data[f'{opponent_key}_next_focus_reduction'] = 0.5
             synergy_effect += " Your previous Mind Trap enhances Focus, boosting your energy gain and reducing the effectiveness of the opponent's next Focus."
 
+    elif action == "mindtrap":
+        energy_cost = energy_costs["mindtrap"]  # This is now properly set to consume energy
+        context.user_data[f'{opponent_key}_mind_trap_active'] = True
+        context.user_data[f'{opponent_key}_energy_loss'] = 10
+        synergy_effect = "Mind Trap set. Your opponent's next move will be weakened, and they'll lose energy if they attack."
+
+        if previous_move == 'defend':
+            context.user_data[f'{player_key}_reflect_damage'] = 0.1
+            synergy_effect += " Your previous Defend enhances Mind Trap, preparing to reflect 10% of the opponent's next attack damage."
+
     # Update energy and previous move
     user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
     context.user_data[f'{player_key}_previous_move'] = action
