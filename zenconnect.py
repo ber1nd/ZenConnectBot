@@ -1157,7 +1157,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         result_message = f"{'Bot' if bot_mode else 'You'} focus, gathering energy for your next move."
 
     user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
-    return result_message, user_hp, opponent_hp, user_energy, synergy_message, stats_message
+    return result_message, user_hp, opponent_hp, user_energy, synergy_message
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
