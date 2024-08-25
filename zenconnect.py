@@ -1172,9 +1172,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         current_synergy = context.user_data.get(f'{opponent_key}_next_turn_synergy', {})
         context.user_data[f'{opponent_key}_next_turn_synergy'] = {}  # Clear for next turn
 
-        result_message, user_hp, opponent_hp, user_energy, energy_cost, energy_gain = await perform_action(
+        result_message, user_hp, opponent_hp, user_energy, stats_message = await perform_action(
             action, user_hp, opponent_hp, user_energy, current_synergy, 
-            player_key, opponent_key, bot_mode, opponent_name, context
+            player_key, bot_mode, opponent_name, opponent_key, context
         )
 
         # Check if the battle ends
@@ -1184,8 +1184,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             db.commit()
             winner_name = "Bot" if winner_id == 7283636452 else update.effective_user.first_name if bot_mode else "You"
             last_move_details = f"Last move was {action} dealing {result_message.split()[-2]} damage."  # Extracting damage dealt from the message
-            await send_message(update, f"{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!\n{last_move_details}\nEnergy Cost: {energy_cost}, Energy Gained: {energy_gain}")
-            await context.bot.send_message(chat_id=battle['group_id'], text=f"{winner_name} has won the battle!\n{last_move_details}\nEnergy Cost: {energy_cost}, Energy Gained: {energy_gain}")
+            await send_message(update, f"{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!\n{last_move_details}\n{stats_message}")
+            await context.bot.send_message(chat_id=battle['group_id'], text=f"{winner_name} has won the battle!\n{last_move_details}\n{stats_message}")
             return
 
         # Update the battle status
@@ -1213,7 +1213,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         try:
             await context.bot.send_message(
                 chat_id=battle['group_id'], 
-                text=f"{escape_markdown(result_message)}\n\n{battle_view}\n\nEnergy Cost: {energy_cost}, Energy Gained: {energy_gain}",
+                text=f"{escape_markdown(result_message)}\n\n{battle_view}\n\nStats: {escape_markdown(stats_message)}",
                 parse_mode='MarkdownV2'
             )
         except BadRequest as e:
