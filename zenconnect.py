@@ -1084,7 +1084,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         mind_trap_applied = True
         opponent_hp_reduction = 0.5  # Reduces opponent's next attack or heal effectiveness by 50%
         opponent_energy_loss = 15 if action in ['strike', 'zenstrike'] else 0
-        synergy_effect += f"Mind Trap reduces the effectiveness of {opponent_name}'s next move and drains {opponent_energy_loss} energy. "
+        synergy_effect += f"Mind Trap weakens {opponent_name}'s next move, reducing its effectiveness by 50% and draining {opponent_energy_loss} energy. "
 
     if action == "strike":
         energy_cost = 12
