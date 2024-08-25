@@ -1183,13 +1183,18 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         user_energy = round(max(0, user_energy - energy_loss), 1)
         context.user_data[f'{player_key}_energy_loss'] = 0
 
+    # Pre-format values for the dynamic message
+    damage_text = f"{damage:.1f}" if action in ['strike', 'zenstrike'] else 'N/A'
+    heal_text = f"{heal:.1f}" if action == 'defend' else 'N/A'
+    energy_gain_text = f"{energy_gain:.1f}" if action in ['defend', 'focus'] else 'N/A'
+
     # Generate dynamic message
     dynamic_message = await generate_response(f"""
     {'' if bot_mode else 'You'} just performed {action}.
-    Damage dealt: {damage:.1f if action in ['strike', 'zenstrike'] else 'N/A'}
-    Healing done: {heal:.1f if action == 'defend' else 'N/A'}
+    Damage dealt: {damage_text}
+    Healing done: {heal_text}
     Energy cost: {energy_cost:.1f} 
-    Energy gained: {energy_gain:.1f if action in ['defend', 'focus'] else 'N/A'}
+    Energy gained: {energy_gain_text}
     Synergy effect: {synergy_effect}
     Opponent: {opponent_name}
     """, elaborate=True)
