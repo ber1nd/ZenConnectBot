@@ -1155,7 +1155,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     # Combine dynamic message with results
     result_message = f"{dynamic_message}\n\n{synergy_effect}"
     
-    return result_message, user_hp, opponent_hp, user_energy
+    return result_message, user_hp, opponent_hp, user_energy, damage, heal
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
