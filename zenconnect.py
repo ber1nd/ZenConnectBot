@@ -659,14 +659,14 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
 ┏━━━━━━━━━━━━━━━ ZEN WARRIOR ARENA ━━━━━━━━━━━━━━━┓
 ┃                                                  ┃
 ┃  ⚪ {challenger_name:<20}                         ┃
-┃  ✦ HP   [{c_hp_bar}] {challenger_hp:3d}/100                ┃
-┃  ✦ Chi  [{c_energy_bar}] {challenger_energy:3d}/100                ┃
+┃  ✦ HP   [{c_hp_bar}] {challenger_hp:5.1f}/100              ┃
+┃  ✦ Chi  [{c_energy_bar}] {challenger_energy:5.1f}/100              ┃
 ┃                                                  ┃
 ┃                    ⚔  VS  ⚔                     ┃
 ┃                                                  ┃
 ┃  ⚪ {opponent_name:<20}                         ┃
-┃  ✦ HP   [{o_hp_bar}] {opponent_hp:3d}/100                ┃
-┃  ✦ Chi  [{o_energy_bar}] {opponent_energy:3d}/100                ┃
+┃  ✦ HP   [{o_hp_bar}] {opponent_hp:5.1f}/100              ┃
+┃  ✦ Chi  [{o_energy_bar}] {opponent_energy:5.1f}/100              ┃
 ┃                                                  ┃
 ┗━━━━━━━━━━━ Choose Your Path, Warrior ━━━━━━━━━━━┛
 """
@@ -1291,11 +1291,11 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         # Create and send the battle view
         battle_view = create_battle_view(
             "Bot" if bot_mode else update.effective_user.first_name,
-            user_hp,
-            user_energy,
+            float(user_hp),
+            float(user_energy),
             opponent_name,
-            opponent_hp,
-            opponent_energy
+            float(opponent_hp),
+            float(opponent_energy)
         )
 
         # New section: Creating detailed move summary
