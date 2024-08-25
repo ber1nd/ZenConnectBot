@@ -1174,7 +1174,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         result_message, user_hp, opponent_hp, user_energy, energy_cost, energy_gain = await perform_action(
             action, user_hp, opponent_hp, user_energy, current_synergy, 
-            player_key, bot_mode, opponent_name, context
+            player_key, opponent_key, bot_mode, opponent_name, context
         )
 
         # Check if the battle ends
@@ -1236,8 +1236,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
     finally:
         if db.is_connected():
             cursor.close()
-           
-
 
 # Call this function at the start of a new battle
 async def start_new_battle(update, context):
