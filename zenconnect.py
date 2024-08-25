@@ -1117,28 +1117,28 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     return result_message, user_hp, opponent_hp, user_energy, synergy_message, damage, heal, critical_hit, mind_trap_active
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
-    user_id = 7283636452 if bot_mode else update.effective_user.id
+    try:
+        user_id = 7283636452 if bot_mode else update.effective_user.id
 
-    if not bot_mode:
-        if update.callback_query:
-            query = update.callback_query
-            data = query.data.split('_')
-            action = data[1]
-            user_id_from_callback = int(data[-1])
-            if user_id_from_callback != user_id:
-                await query.answer("It's not your turn!")
+        if not bot_mode:
+            if update.callback_query:
+                query = update.callback_query
+                data = query.data.split('_')
+                action = data[1]
+                user_id_from_callback = int(data[-1])
+                if user_id_from_callback != user_id:
+                    await query.answer("It's not your turn!")
+                    return
+            else:
+                await update.message.reply_text("Invalid move. Please use the provided buttons.")
                 return
-        else:
-            await update.message.reply_text("Invalid move. Please use the provided buttons.")
+
+        if action not in ["strike", "defend", "focus", "zenstrike", "mindtrap"]:
+            logger.error(f"Invalid action received: {action}")
+            if not bot_mode:
+                await update.callback_query.answer("Invalid move!")
             return
 
-    if action not in ["strike", "defend", "focus", "zenstrike", "mindtrap"]:
-        logger.error(f"Invalid action received: {action}")
-        if not bot_mode:
-            await update.callback_query.answer("Invalid move!")
-        return
-
-    try:
         cursor = db.cursor(dictionary=True)
         cursor.execute("""
             SELECT * FROM pvp_battles 
