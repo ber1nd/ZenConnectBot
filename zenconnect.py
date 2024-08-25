@@ -1120,12 +1120,11 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         if current_synergy.get('focus'):
             damage = round(damage * 1.1)
             critical_hit_chance = 0.30
-            synergy_effect += "Focus boosts your Strike, adding extra power and critical chance."
-
+            synergy_effect = "Focus boosts your Strike, adding extra power and critical chance."
         elif previous_move == 'defend':
             damage = round(damage * 1.1)
             critical_hit_chance = 0.20  # Additional 10% crit chance
-            synergy_effect += "Your defensive stance empowers your Strike."
+            synergy_effect = "Your defensive stance empowers your Strike."
             if random.random() < 0.5:  # 50% chance to regain energy
                 energy_gain = 5
                 synergy_effect += " You regain 5 energy."
@@ -1151,12 +1150,11 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         if current_synergy.get('focus'):
             damage = round(damage * 1.2)  # 20% additional damage
             critical_hit_chance = 0.50  # 30% additional crit chance
-            synergy_effect += "Focus empowers your Zen Strike, greatly amplifying its impact and critical chance."
-
+            synergy_effect = "Focus empowers your Zen Strike, greatly amplifying its impact and critical chance."
         elif previous_move == 'strike':
             damage = round(damage * 1.1)
             critical_hit_chance = 0.35
-            synergy_effect += "Your previous Strike enhances Zen Strike's power."
+            synergy_effect = "Your previous Strike enhances Zen Strike's power."
 
         critical_hit = random.random() < critical_hit_chance
         if critical_hit:
@@ -1194,7 +1192,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
 
         if current_synergy.get('focus'):
             heal = round(heal * 1.15)
-            synergy_effect += "Focus increases your healing power."
+            synergy_effect = "Focus increases your healing power."
 
         if current_synergy.get('zenstrike'):
             heal += 10
@@ -1238,7 +1236,6 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         energy_loss = context.user_data.get(f'{player_key}_energy_loss', 0)
         additional_energy_drain = context.user_data.get(f'{player_key}_additional_energy_drain', 0)
         user_energy = max(0, user_energy - energy_loss - additional_energy_drain)
-        context.user_data[f'{player_key}_energy_loss'] = 0
         context.user_data[f'{player_key}_additional_energy_drain'] = 0
 
     # Round all numeric values
@@ -1255,7 +1252,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     {'' if bot_mode else 'You'} just performed {action}.
     Damage dealt: {damage if action in ['strike', 'zenstrike'] else 'N/A'}
     Healing done: {heal if action == 'defend' else 'N/A'}
-    Energy cost: {energy_cost}     
+    Energy cost: {energy_cost} 
     Energy gained: {energy_gain if action in ['defend', 'focus'] else 'N/A'}
     Synergy effect: {synergy_effect}
     Opponent: {opponent_name}
