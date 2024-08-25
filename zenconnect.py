@@ -1156,6 +1156,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     result_message = f"{dynamic_message}\n\n{synergy_effect}"
     
     return result_message, user_hp, opponent_hp, user_energy, damage, heal, energy_cost, energy_gain, synergy_effect
+    
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
     
@@ -1208,10 +1209,26 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         opponent_id = battle[f'{opponent_key}_id']
         opponent_name = "Bot" if opponent_id == 7283636452 else update.effective_user.first_name if bot_mode else "Opponent"
 
+        # Define energy costs for each move
+        move_energy_costs = {
+            "strike": 12,
+            "zenstrike": 40,
+            "mindtrap": 20,
+            "focus": 0,  # Focus doesn't cost energy, it gains energy
+            "defend": 0, # Defend doesn't cost energy, it gains energy
+        }
+
+        # Check if the user has enough energy for the selected move
+        if user_energy < move_energy_costs[action]:
+            if not bot_mode:
+                await send_message(update, f"Not enough energy to use {action.capitalize()}! You have {user_energy} energy, but {move_energy_costs[action]} is required.")
+            return
+
         # Apply synergy effect from the previous turn
         current_synergy = context.user_data.get(f'{player_key}_next_turn_synergy', {})
         context.user_data[f'{player_key}_next_turn_synergy'] = {}  # Clear for next turn
 
+        # Perform the action
         result_message, user_hp, opponent_hp, user_energy, damage, heal, energy_cost, energy_gain, synergy_effect = await perform_action(
             action, user_hp, opponent_hp, user_energy, current_synergy, 
             context, player_key, bot_mode, opponent_name
@@ -1280,9 +1297,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
     finally:
         if db.is_connected():
             cursor.close()
-           
-
-
 
 # Call this function at the start of a new battle
 async def start_new_battle(update, context):
