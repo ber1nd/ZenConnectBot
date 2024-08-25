@@ -1152,7 +1152,6 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
 
     return result_message, user_hp, opponent_hp, user_energy, current_synergy, stats_message
 
-
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
     
