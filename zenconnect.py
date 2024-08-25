@@ -1070,6 +1070,58 @@ async def main():
 
 if __name__ == '__main__':
     setup_database()  # Ensure the database is set up before starting the bot
+
+BATTLE_LOG_TEMPLATE = """
+Move: {move}
+Effect: {effect}
+
+Numeric Stats:
+- Damage Dealt: {damage}
+- Health Regenerated: {health_regen}
+- Energy Cost: {energy_cost}
+- Energy Gained: {energy_gain}
+- Critical Hit: {critical_hit}
+
+Player Stats:
+- Current HP: {player_hp}/100
+- Current Energy: {player_energy}/100
+
+Opponent Stats:
+- Current HP: {opponent_hp}/100
+- Current Energy: {opponent_energy}/100
+
+Synergies Applied: {synergies}
+
+Status Effects:
+- Focus Active: {focus_active}
+- Mind Trap Set: {mind_trap_set}
+- Mind Trap Applied: {mind_trap_applied}
+
+Previous Move: {previous_move}
+"""
+
+def generate_battle_log(move, effect, damage, health_regen, energy_cost, energy_gain, critical_hit,
+                        player_hp, player_energy, opponent_hp, opponent_energy, synergies,
+                        focus_active, mind_trap_set, mind_trap_applied, previous_move):
+    return BATTLE_LOG_TEMPLATE.format(
+        move=move,
+        effect=effect,
+        damage=damage,
+        health_regen=health_regen,
+        energy_cost=energy_cost,
+        energy_gain=energy_gain,
+        critical_hit=critical_hit,
+        player_hp=player_hp,
+        player_energy=player_energy,
+        opponent_hp=opponent_hp,
+        opponent_energy=opponent_energy,
+        synergies=synergies,
+        focus_active=focus_active,
+        mind_trap_set=mind_trap_set,
+        mind_trap_applied=mind_trap_applied,
+        previous_move=previous_move
+    )
+
 async def perform_action(action, user_hp, opponent_hp, user_energy, opponent_energy, context, player_key, opponent_key):
     result_message = ""
     energy_cost = 0
@@ -1078,41 +1130,54 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, opponent_ene
     heal = 0
     critical_hit = False
     synergy_message = ""
+    effect = ""
 
     # Get the previous moves
-    user_previous_move = context.user_data.get(f'{player_key}_previous_move')
-    opponent_previous_move = context.user_data.get(f'{opponent_key}_previous_move')
+    user_previous_move = context.user_data.get(f'{player_key}_previous_move', 'None')
 
     # Check if Mind Trap is active on the user
     mind_trap_active = context.user_data.get(f'{player_key}_mind_trap', False)
 
+    # Check if Focus is active
+    focus_active = user_previous_move == "focus"
+
     if action == "strike":
         energy_cost = 12
         if user_energy < energy_cost:
-            return "Not enough energy to use Strike.", user_hp, opponent_hp, user_energy, opponent_energy, synergy_message
+            return "Not enough energy to use Strike.", user_hp, opponent_hp, user_energy, opponent_energy, synergy_message, generate_battle_log(
+                move="Strike", effect="Failed - Not enough energy", damage=0, health_regen=0,
+                energy_cost=energy_cost, energy_gain=0, critical_hit=False,
+                player_hp=user_hp, player_energy=user_energy,
+                opponent_hp=opponent_hp, opponent_energy=opponent_energy,
+                synergies="None", focus_active=focus_active, mind_trap_set=False,
+                mind_trap_applied=mind_trap_active, previous_move=user_previous_move
+            )
         
         damage = random.randint(12, 18)
         critical_hit_chance = 0.10
+        effect = f"Deals {damage} damage"
 
         # Apply synergies
-        if user_previous_move == "focus":
+        if focus_active:
             damage = round(damage * 1.1)
             critical_hit_chance += 0.20
-            synergy_message += "Focus boosts your strike, adding extra power and critical chance. "
+            synergy_message += "Focus boosts strike (damage +10%, crit chance +20%). "
         elif user_previous_move == "defend":
             damage = round(damage * 1.1)
-            synergy_message += "Your defensive stance allows for a more powerful strike. "
+            synergy_message += "Defensive stance boosts strike (damage +10%). "
 
         critical_hit = random.random() < critical_hit_chance
         if critical_hit:
             damage *= 2
+            effect += f" (Critical hit! Damage doubled to {damage})"
             synergy_message += "Critical hit! "
 
         # Apply Mind Trap effect if active
         if mind_trap_active:
             damage = round(damage * 0.5)
             energy_cost += 10
-            synergy_message += "Mind Trap reduces your damage and increases energy cost. "
+            effect += f" (Reduced to {damage} by Mind Trap)"
+            synergy_message += "Mind Trap reduces damage by 50% and increases energy cost by 10. "
             context.user_data[f'{player_key}_mind_trap'] = False
 
         opponent_hp = max(0, opponent_hp - damage)
@@ -1120,55 +1185,73 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, opponent_ene
     elif action == "defend":
         heal = random.randint(5, 10)
         energy_gain = 10
+        effect = f"Heals for {heal} HP and gains {energy_gain} energy"
 
         # Apply synergies
         if user_previous_move == "zen_strike":
             heal += 10
-            synergy_message += "Your Zen Strike enhances your defensive healing. "
-        elif user_previous_move == "focus":
+            effect += f" (Increased healing to {heal} due to Zen Strike synergy)"
+            synergy_message += "Zen Strike enhances defensive healing (+10 HP). "
+        elif focus_active:
             heal = round(heal * 1.15)
             energy_gain += 5
-            synergy_message += "Focus improves your defensive stance, increasing healing and energy gain. "
+            effect += f" (Increased healing to {heal} and energy gain to {energy_gain} due to Focus synergy)"
+            synergy_message += "Focus improves defense (healing +15%, energy gain +5). "
 
         user_hp = min(100, user_hp + heal)
 
     elif action == "focus":
         energy_gain = random.randint(20, 30)
+        effect = f"Gains {energy_gain} energy and prepares for the next move"
 
         # Apply synergies
         if user_previous_move == "zen_strike":
             energy_gain *= 2
-            synergy_message += "Your Zen Strike allows for exceptional energy recovery. "
+            effect += f" (Energy gain doubled to {energy_gain} due to Zen Strike synergy)"
+            synergy_message += "Zen Strike doubles Focus energy gain. "
         elif user_previous_move == "defend":
             energy_gain = round(energy_gain * 1.15)
-            synergy_message += "Your defensive stance enhances your focus, increasing energy gain. "
+            effect += f" (Energy gain increased to {energy_gain} due to Defend synergy)"
+            synergy_message += "Defensive stance enhances Focus (energy gain +15%). "
 
     elif action == "zen_strike":
         energy_cost = 40
         if user_energy < energy_cost:
-            return "Not enough energy to use Zen Strike.", user_hp, opponent_hp, user_energy, opponent_energy, synergy_message
+            return "Not enough energy to use Zen Strike.", user_hp, opponent_hp, user_energy, opponent_energy, synergy_message, generate_battle_log(
+                move="Zen Strike", effect="Failed - Not enough energy", damage=0, health_regen=0,
+                energy_cost=energy_cost, energy_gain=0, critical_hit=False,
+                player_hp=user_hp, player_energy=user_energy,
+                opponent_hp=opponent_hp, opponent_energy=opponent_energy,
+                synergies="None", focus_active=focus_active, mind_trap_set=False,
+                mind_trap_applied=mind_trap_active, previous_move=user_previous_move
+            )
         
         damage = random.randint(30, 40)
+        effect = f"Deals {damage} damage"
 
         # Apply synergies
-        if user_previous_move == "focus":
+        if focus_active:
             damage = round(damage * 1.2)
             critical_hit_chance = 0.30
             critical_hit = random.random() < critical_hit_chance
             if critical_hit:
                 damage *= 2
-                synergy_message += "Focus enhances your Zen Strike, resulting in a critical hit! "
+                effect += f" (Critical hit! Damage increased to {damage} due to Focus synergy)"
+                synergy_message += "Focus enhances Zen Strike (damage +20%, crit chance 30%). Critical hit! "
             else:
-                synergy_message += "Focus enhances your Zen Strike, dealing more damage. "
+                effect += f" (Damage increased to {damage} due to Focus synergy)"
+                synergy_message += "Focus enhances Zen Strike (damage +20%, crit chance 30%). "
         elif user_previous_move == "strike":
             damage = round(damage * 1.1)
-            synergy_message += "Your previous Strike enhances your Zen Strike. "
+            effect += f" (Damage increased to {damage} due to Strike synergy)"
+            synergy_message += "Previous Strike enhances Zen Strike (damage +10%). "
 
         # Apply Mind Trap effect if active
         if mind_trap_active:
             damage = round(damage * 0.5)
             energy_cost += 15
-            synergy_message += "Mind Trap reduces your Zen Strike's damage and increases energy cost. "
+            effect += f" (Reduced to {damage} by Mind Trap)"
+            synergy_message += "Mind Trap reduces Zen Strike damage by 50% and increases energy cost by 15. "
             context.user_data[f'{player_key}_mind_trap'] = False
 
         opponent_hp = max(0, opponent_hp - damage)
@@ -1176,16 +1259,25 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, opponent_ene
     elif action == "mind_trap":
         energy_cost = 20
         if user_energy < energy_cost:
-            return "Not enough energy to use Mind Trap.", user_hp, opponent_hp, user_energy, opponent_energy, synergy_message
+            return "Not enough energy to use Mind Trap.", user_hp, opponent_hp, user_energy, opponent_energy, synergy_message, generate_battle_log(
+                move="Mind Trap", effect="Failed - Not enough energy", damage=0, health_regen=0,
+                energy_cost=energy_cost, energy_gain=0, critical_hit=False,
+                player_hp=user_hp, player_energy=user_energy,
+                opponent_hp=opponent_hp, opponent_energy=opponent_energy,
+                synergies="None", focus_active=focus_active, mind_trap_set=False,
+                mind_trap_applied=mind_trap_active, previous_move=user_previous_move
+            )
         
         # Set Mind Trap on opponent
         context.user_data[f'{opponent_key}_mind_trap'] = True
-        synergy_message += "You set a Mind Trap for your opponent's next move. "
+        effect = "Sets a Mind Trap for the opponent's next move"
+        synergy_message += "Mind Trap set for opponent's next move. "
 
         # Apply synergies
-        if user_previous_move == "focus":
+        if focus_active:
             opponent_energy = max(0, opponent_energy - 15)
-            synergy_message += "Focus enhances your Mind Trap, immediately draining some of your opponent's energy. "
+            effect += f" and drains 15 energy from the opponent"
+            synergy_message += "Focus enhances Mind Trap (drains 15 opponent energy). "
 
     # Update energy
     user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
@@ -1194,7 +1286,27 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, opponent_ene
     context.user_data[f'{player_key}_previous_move'] = action
 
     result_message = f"You use {action.capitalize()}. " + synergy_message
-    return result_message, user_hp, opponent_hp, user_energy, opponent_energy, synergy_message
+
+    battle_log = generate_battle_log(
+        move=action.capitalize(),
+        effect=effect,
+        damage=damage,
+        health_regen=heal,
+        energy_cost=energy_cost,
+        energy_gain=energy_gain,
+        critical_hit=critical_hit,
+        player_hp=user_hp,
+        player_energy=user_energy,
+        opponent_hp=opponent_hp,
+        opponent_energy=opponent_energy,
+        synergies=synergy_message,
+        focus_active=focus_active,
+        mind_trap_set=action == "mind_trap",
+        mind_trap_applied=mind_trap_active,
+        previous_move=user_previous_move
+    )
+
+    return result_message, user_hp, opponent_hp, user_energy, opponent_energy, synergy_message, battle_log
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     try:
@@ -1242,7 +1354,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         opponent_id = battle[f'{opponent_key}_id']
         opponent_name = "Bot" if opponent_id == 7283636452 else update.effective_user.first_name if bot_mode else "Opponent"
 
-        result_message, user_hp, opponent_hp, user_energy, opponent_energy, synergy_message = await perform_action(
+        result_message, user_hp, opponent_hp, user_energy, opponent_energy, synergy_message, battle_log = await perform_action(
             action, user_hp, opponent_hp, user_energy, opponent_energy, context, player_key, opponent_key
         )
 
@@ -1252,8 +1364,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
             db.commit()
             winner_name = "Bot" if winner_id == 7283636452 else update.effective_user.first_name if bot_mode else "You"
-            await send_message(update, f"{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!\n{result_message}\n{synergy_message}")
-            await context.bot.send_message(chat_id=battle['group_id'], text=f"{winner_name} has won the battle!\n{result_message}\n{synergy_message}")
+            await send_message(update, f"{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!\n{result_message}\n{synergy_message}\n\nBattle Log:\n{battle_log}")
+            await context.bot.send_message(chat_id=battle['group_id'], text=f"{winner_name} has won the battle!\n{result_message}\n{synergy_message}\n\nBattle Log:\n{battle_log}")
             return
 
         # Update the battle status
@@ -1278,11 +1390,24 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             opponent_energy
         )
 
-        await context.bot.send_message(
-            chat_id=battle['group_id'], 
-            text=f"{escape_markdown(result_message)}\n\n{battle_view}\n\nSynergy: {escape_markdown(synergy_message)}",
-            parse_mode='MarkdownV2'
-        )
+        # Prepare the message with battle log
+        full_message = f"{escape_markdown(result_message)}\n\n{battle_view}\n\nSynergy: {escape_markdown(synergy_message)}\n\nBattle Log:\n{escape_markdown(battle_log)}"
+
+        # Split the message if it's too long
+        if len(full_message) > 4096:
+            messages = [full_message[i:i+4096] for i in range(0, len(full_message), 4096)]
+            for message in messages:
+                await context.bot.send_message(
+                    chat_id=battle['group_id'], 
+                    text=message,
+                    parse_mode='MarkdownV2'
+                )
+        else:
+            await context.bot.send_message(
+                chat_id=battle['group_id'], 
+                text=full_message,
+                parse_mode='MarkdownV2'
+            )
 
         # Notify the next player
         if opponent_id != 7283636452:
