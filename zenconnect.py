@@ -1090,7 +1090,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             critical_hit_chance = 0.10
 
         critical_hit = random.random() < critical_hit_chance
-        if critical_hit:
+        if (critical_hit):
             damage *= 2
             critical_hit_message = "Critical hit! You double the damage."
         else:
@@ -1209,9 +1209,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         current_synergy = context.user_data.get(f'{player_key}_next_turn_synergy', {})
         context.user_data[f'{player_key}_next_turn_synergy'] = {}  # Clear for next turn
 
-        result_message, user_hp, opponent_hp, user_energy, synergy_message = await perform_action(
+        result_message, user_hp, opponent_hp, user_energy = await perform_action(
             action, user_hp, opponent_hp, user_energy, current_synergy, 
-            context, player_key, opponent_key, bot_mode, opponent_name
+            player_key, bot_mode, opponent_name, context
         )
 
         # Check if the battle ends
@@ -1262,7 +1262,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         # Notify the next player
         if opponent_id != 7283636452:
-            await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
+                        await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
         else:
             await bot_pvp_move(update, context)
 
