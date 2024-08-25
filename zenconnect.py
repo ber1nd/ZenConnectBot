@@ -1188,7 +1188,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         heal = random.randint(15, 25)
 
         if current_synergy.get('focus'):
-            heal = round(heal * 1.15)  # 15% increase in healing
+            heal = round(heal * 1.15)
             synergy_effect = "Focus increases your healing power."
 
         if current_synergy.get('zenstrike'):
