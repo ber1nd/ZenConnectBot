@@ -1070,7 +1070,7 @@ async def main():
 
 if __name__ == '__main__':
     setup_database()  # Ensure the database is set up before starting the bot
-async def perform_action(action, user_hp, opponent_hp, user_energy, current_synergy, context, player_key, bot_mode, opponent_name):
+async def perform_action(action, user_hp, opponent_hp, user_energy, opponent_energy, current_synergy, context, player_key, bot_mode, opponent_name):
     energy_cost = 0
     energy_gain = 0
     damage = 0
@@ -1102,7 +1102,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
 
         if mind_trap_applied:
             damage = round(damage * opponent_hp_reduction)
-            user_energy -= opponent_energy_loss
+            opponent_energy -= opponent_energy_loss
             synergy_effect += "Mind Trap weakens the strike. "
 
         opponent_hp = max(0, opponent_hp - damage)
@@ -1124,7 +1124,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
 
         if mind_trap_applied:
             damage = round(damage * opponent_hp_reduction)
-            user_energy -= opponent_energy_loss
+            opponent_energy -= opponent_energy_loss
             synergy_effect += "Mind Trap weakens the strike. "
 
         opponent_hp = max(0, opponent_hp - damage)
@@ -1172,7 +1172,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     # Combine dynamic message with numeric stats
     result_message = f"{dynamic_message}\n\n{numeric_stats}"
 
-    return result_message, user_hp, opponent_hp, user_energy
+    return result_message, user_hp, opponent_hp, user_energy, opponent_energy, critical_hit
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
