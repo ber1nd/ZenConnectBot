@@ -1176,7 +1176,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, opponent_ene
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
-    
+
     if not bot_mode:
         if update.callback_query:
             query = update.callback_query
@@ -1230,9 +1230,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         current_synergy = context.user_data.get(f'{player_key}_next_turn_synergy', {})
         context.user_data[f'{player_key}_next_turn_synergy'] = {}  # Clear for next turn
 
-        result_message, user_hp, opponent_hp, user_energy, damage, heal = await perform_action(
-            action, user_hp, opponent_hp, user_energy, current_synergy, 
-            context, player_key, bot_mode, opponent_name
+        result_message, user_hp, opponent_hp, user_energy, opponent_energy, critical_hit = await perform_action(
+            action, user_hp, opponent_hp, user_energy, opponent_energy,
+            current_synergy, context, player_key, bot_mode, opponent_name
         )
 
         # Check if the battle ends
@@ -1241,7 +1241,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
             db.commit()
             winner_name = "Bot" if winner_id == 7283636452 else update.effective_user.first_name if bot_mode else "You"
-            last_move_details = f"Last move was {action}, dealing {damage} damage."  # Show damage dealt in the last move
+            last_move_details = f"Last move was {action} dealing {result_message.split()[-2]} damage."  # Extracting damage dealt from the message
             await send_message(update, f"{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!\n{last_move_details}")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{winner_name} has won the battle!\n{last_move_details}")
             return
@@ -1268,7 +1268,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             opponent_energy
         )
 
-        # Send the result of the action along with the updated battle view
         try:
             await context.bot.send_message(
                 chat_id=battle['group_id'], 
@@ -1295,7 +1294,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
     finally:
         if db.is_connected():
             cursor.close()
-
+           
 
 
 # Call this function at the start of a new battle
