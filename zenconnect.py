@@ -1256,30 +1256,14 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         opponent_id = battle[f'{opponent_key}_id']
         opponent_name = "Bot" if opponent_id == 7283636452 else update.effective_user.first_name if bot_mode else "Opponent"
 
-        # Define energy costs for each move
-        move_energy_costs = {
-            "strike": 12,
-            "zenstrike": 40,
-            "mindtrap": 20,
-            "focus": 0,  # Focus doesn't cost energy, it gains energy
-            "defend": 0, # Defend doesn't cost energy, it gains energy
-        }
-
-        # Check if the user has enough energy for the selected move
-        if user_energy < move_energy_costs[action]:
-            if not bot_mode:
-                await send_message(update, f"Not enough energy to use {action.capitalize()}! You have {user_energy} energy, but {move_energy_costs[action]} is required.")
-            return
-
-        # Apply synergy effect from the previous turn
-        current_synergy = context.user_data.get(f'{player_key}_next_turn_synergy', {})
-        context.user_data[f'{player_key}_next_turn_synergy'] = {}  # Clear for next turn
-
         # Perform the action
         result_message, user_hp, opponent_hp, user_energy, damage, heal, energy_cost, energy_gain, synergy_effect = await perform_action(
-            action, user_hp, opponent_hp, user_energy, current_synergy, 
+            action, user_hp, opponent_hp, user_energy, context.user_data.get(f'{player_key}_next_turn_synergy', {}),
             context, player_key, bot_mode, opponent_name
         )
+
+        # Clear the next turn synergy
+        context.user_data[f'{player_key}_next_turn_synergy'] = {}
 
         # Check if the battle ends
         if opponent_hp <= 0 or user_hp <= 0:
@@ -1287,7 +1271,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
             db.commit()
             winner_name = "Bot" if winner_id == 7283636452 else update.effective_user.first_name if bot_mode else "You"
-            last_move_details = f"Last move was {action}, dealing {damage} damage."  # Show damage dealt in the last move
+            last_move_details = f"Last move was {action}, dealing {damage:.1f} damage."  # Show damage dealt in the last move
             await send_message(update, f"{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!\n{last_move_details}")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{winner_name} has won the battle!\n{last_move_details}")
             return
@@ -1315,7 +1299,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         )
 
         # New section: Creating detailed move summary
-        numeric_stats = f"Move: {action.capitalize()}, Effect: {synergy_effect or 'None'}, Numeric Stats: Damage: {damage}, Heal: {heal}, Energy Cost: {energy_cost}, Energy Gained: {energy_gain}, Synergy: {synergy_effect or 'None'}"
+        numeric_stats = f"Move: {action.capitalize()}, Effect: {synergy_effect or 'None'}, Numeric Stats: Damage: {damage:.1f}, Heal: {heal:.1f}, Energy Cost: {energy_cost:.1f}, Energy Gained: {energy_gain:.1f}, Synergy: {synergy_effect or 'None'}"
 
         # Send the result of the action along with the updated battle view
         try:
