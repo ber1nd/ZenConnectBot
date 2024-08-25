@@ -1155,8 +1155,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     # Combine dynamic message with results
     result_message = f"{dynamic_message}\n\n{synergy_effect}"
     
-    return result_message, user_hp, opponent_hp, user_energy, damage, heal
-
+    return result_message, user_hp, opponent_hp, user_energy, damage, heal, energy_cost, energy_gain, synergy_effect
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
     
@@ -1213,7 +1212,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         current_synergy = context.user_data.get(f'{player_key}_next_turn_synergy', {})
         context.user_data[f'{player_key}_next_turn_synergy'] = {}  # Clear for next turn
 
-        result_message, user_hp, opponent_hp, user_energy, damage, heal = await perform_action(
+        result_message, user_hp, opponent_hp, user_energy, damage, heal, energy_cost, energy_gain, synergy_effect = await perform_action(
             action, user_hp, opponent_hp, user_energy, current_synergy, 
             context, player_key, bot_mode, opponent_name
         )
@@ -1251,11 +1250,14 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             opponent_energy
         )
 
+        # New section: Creating detailed move summary
+        numeric_stats = f"Move: {action.capitalize()}, Effect: {synergy_effect or 'None'}, Numeric Stats: Damage: {damage}, Heal: {heal}, Energy Cost: {energy_cost}, Energy Gained: {energy_gain}, Synergy: {synergy_effect or 'None'}"
+
         # Send the result of the action along with the updated battle view
         try:
             await context.bot.send_message(
                 chat_id=battle['group_id'], 
-                text=f"{escape_markdown(result_message)}\n\n{battle_view}",
+                text=f"{escape_markdown(result_message)}\n\n{battle_view}\n\n{escape_markdown(numeric_stats)}",
                 parse_mode='MarkdownV2'
             )
         except BadRequest as e:
@@ -1278,6 +1280,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
     finally:
         if db.is_connected():
             cursor.close()
+           
 
 
 
