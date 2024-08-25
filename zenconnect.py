@@ -1120,7 +1120,11 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             synergy_effect = "Focus boosts your Strike, adding extra power and critical chance."
         elif previous_move == 'defend':
             damage = round(damage * 1.1)
+            critical_hit_chance = 0.20  # Additional 10% crit chance
             synergy_effect = "Your defensive stance empowers your Strike."
+            if random.random() < 0.5:  # 50% chance to regain energy
+                energy_gain = 5
+                synergy_effect += " You regain 5 energy."
 
         critical_hit = random.random() < critical_hit_chance
         if critical_hit:
@@ -1132,14 +1136,17 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         damage = round(damage * mind_trap_multiplier)
         opponent_hp = max(0, opponent_hp - damage)
 
+        # Strike → Mind Trap synergy setup
+        context.user_data[f'{player_key}_strike_mindtrap_synergy'] = True
+
     elif action == "zenstrike":
         energy_cost = energy_costs["zenstrike"]
         damage = random.randint(20, 30)
         critical_hit_chance = 0.20
 
         if current_synergy.get('focus'):
-            damage = round(damage * 1.2)
-            critical_hit_chance = 0.50
+            damage = round(damage * 1.4)  # 20% additional damage
+            critical_hit_chance = 0.50  # 30% additional crit chance
             synergy_effect = "Focus empowers your Zen Strike, greatly amplifying its impact and critical chance."
         elif previous_move == 'strike':
             damage = round(damage * 1.1)
@@ -1154,6 +1161,9 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         damage = round(damage * mind_trap_multiplier)
         opponent_hp = max(0, opponent_hp - damage)
 
+        # Zen Strike → Defend synergy setup
+        context.user_data[f'{player_key}_zenstrike_defend_synergy'] = True
+
     elif action == "mindtrap":
         energy_cost = energy_costs["mindtrap"]
         context.user_data[f'{opponent_key}_mind_trap_active'] = True
@@ -1164,7 +1174,12 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             synergy_effect += " Your previous Strike enhances Mind Trap, causing energy loss on opponent's next offensive move."
         elif current_synergy.get('focus'):
             context.user_data[f'{opponent_key}_energy_regen_reduction'] = 2
-            synergy_effect += " Focus enhances Mind Trap, reducing opponent's energy regeneration for the next two turns."
+            opponent_energy = max(0, opponent_energy - 15)  # Immediately drain 15 energy
+            synergy_effect += f" Focus enhances Mind Trap, reducing opponent's energy regeneration for the next two turns and immediately draining 15 energy."
+        
+        if context.user_data.get(f'{player_key}_zenstrike_mindtrap_synergy'):
+            context.user_data[f'{opponent_key}_additional_energy_drain'] = 15
+            synergy_effect += " Your previous Zen Strike enhances Mind Trap, causing additional energy drain if the opponent uses a powerful move."
 
     elif action == "defend":
         energy_gain = 10
@@ -1185,6 +1200,9 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         heal = round(heal * mind_trap_multiplier)
         user_hp = min(100, user_hp + heal)
 
+        # Defend → Mind Trap synergy setup
+        context.user_data[f'{player_key}_defend_mindtrap_synergy'] = True
+
     elif action == "focus":
         base_energy_gain = random.randint(20, 30)
         energy_gain = round(base_energy_gain * mind_trap_multiplier)
@@ -1195,6 +1213,16 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             energy_gain *= 2
             context.user_data[f'{player_key}_next_move_penalty'] = 0.9  # 10% reduction in next move's effectiveness
             synergy_effect += f" Zen Strike boosts Focus, doubling energy gain to {energy_gain} but slightly reducing next move's power."
+        elif previous_move == 'strike':
+            energy_gain += 10
+            context.user_data[f'{player_key}_focus_strike_synergy'] = True
+            synergy_effect += " Your previous Strike enhances Focus, providing additional energy recovery and boosting your next Strike."
+        elif previous_move == 'defend':
+            context.user_data[f'{player_key}_focus_boost'] = 1.1  # 10% boost to next move
+            synergy_effect += " Your previous Defend enhances Focus, boosting your next move's effectiveness."
+        elif previous_move == 'mindtrap':
+            context.user_data[f'{player_key}_focus_energy_boost'] = 1.5  # 50% boost to energy gain
+            synergy_effect += " Your previous Mind Trap enhances Focus, significantly boosting your energy gain."
 
     # Update energy and previous move
     user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
@@ -1203,8 +1231,10 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     # Apply energy loss from opponent's Mind Trap if it's an offensive move
     if action in ['strike', 'zenstrike']:
         energy_loss = context.user_data.get(f'{player_key}_energy_loss', 0)
-        user_energy = max(0, user_energy - energy_loss)
+        additional_energy_drain = context.user_data.get(f'{player_key}_additional_energy_drain', 0)
+        user_energy = max(0, user_energy - energy_loss - additional_energy_drain)
         context.user_data[f'{player_key}_energy_loss'] = 0
+        context.user_data[f'{player_key}_additional_energy_drain'] = 0
 
     # Round all numeric values
     user_hp = round(user_hp)
