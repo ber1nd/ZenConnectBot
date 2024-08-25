@@ -1070,15 +1070,16 @@ async def main():
 
 if __name__ == '__main__':
     setup_database()  # Ensure the database is set up before starting the bot
-async def perform_action(action, user_hp, opponent_hp, user_energy, current_synergy, context, player_key, opponent_key, bot_mode, opponent_name):
+async def perform_action(action, user_hp, opponent_hp, user_energy, current_synergy, context, player_key, bot_mode, opponent_name):
     result_message = ""
     energy_cost = 0
     energy_gain = 0
+    synergy_message = ""  # Initialize the synergy message to an empty string
 
     if action == "strike":
         energy_cost = 12
         if user_energy < energy_cost:
-            return "Not enough energy to use Strike.", user_hp, opponent_hp, user_energy, ""
+            return "Not enough energy to use Strike.", user_hp, opponent_hp, user_energy
         damage = random.randint(12, 18)
 
         if current_synergy.get('focus'):
@@ -1086,7 +1087,6 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             synergy_message = "Focus boosts your strike, adding extra power."
             critical_hit_chance = 0.20
         else:
-            synergy_message = ""
             critical_hit_chance = 0.10
 
         critical_hit = random.random() < critical_hit_chance
@@ -1102,7 +1102,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     elif action == "zenstrike":
         energy_cost = 40
         if user_energy < energy_cost:
-            return "Not enough energy to use Zen Strike.", user_hp, opponent_hp, user_energy, ""
+            return "Not enough energy to use Zen Strike.", user_hp, opponent_hp, user_energy
         damage = random.randint(20, 30)
         
         if current_synergy.get('focus'):
@@ -1111,7 +1111,6 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             synergy_message = "Focus empowers your Zen Strike, amplifying its impact."
         else:
             critical_hit_chance = 0.20
-            synergy_message = ""
 
         critical_hit = random.random() < critical_hit_chance
         if critical_hit:
@@ -1126,14 +1125,13 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     elif action == "mindtrap":
         energy_cost = 20
         if user_energy < energy_cost:
-            return "Not enough energy to use Mind Trap.", user_hp, opponent_hp, user_energy, ""
-        context.user_data[f'{opponent_key}_next_turn_synergy'] = {'mindtrap': True}
+            return "Not enough energy to use Mind Trap.", user_hp, opponent_hp, user_energy
+        context.user_data[f'{player_key}_next_turn_synergy'] = {'mindtrap': True}
         result_message = f"{'Bot' if bot_mode else 'You'} set a Mind Trap, weakening {opponent_name}'s next move."
 
     elif action == "defend":
         energy_gain = 10
         heal = random.randint(15, 25)
-        synergy_message = ""  # Initialize the synergy message to an empty string
 
         if current_synergy.get('zenstrike'):
             heal += 10
@@ -1153,7 +1151,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         result_message = f"{'Bot' if bot_mode else 'You'} focus, recovering {energy_gain} energy and preparing for the next move."
 
     user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
-    return result_message, user_hp, opponent_hp, user_energy, synergy_message
+    return result_message, user_hp, opponent_hp, user_energy
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
