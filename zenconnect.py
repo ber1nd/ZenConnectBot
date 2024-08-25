@@ -1070,6 +1070,16 @@ async def main():
 
 if __name__ == '__main__':
     setup_database()  # Ensure the database is set up before starting the bot
+
+import re
+
+def escape_markdown_v2(text):
+    """
+    Helper function to escape special characters for MarkdownV2 format.
+    """
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    return re.sub(f"([{''.join(map(re.escape, special_chars))}])", r'\\\1', str(text))
+
 async def perform_action(action, user_hp, opponent_hp, user_energy, current_synergy, context, player_key, bot_mode, opponent_name):
     energy_cost = 0
     energy_gain = 0
@@ -1081,22 +1091,35 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     opponent_key = 'opponent' if player_key == 'challenger' else 'challenger'
     previous_move = context.user_data.get(f'{player_key}_previous_move')
     
+    # Define energy costs
+    energy_costs = {
+        "strike": 12,
+        "zenstrike": 40,
+        "mindtrap": 20,
+        "defend": 0,
+        "focus": 0
+    }
+
+    # Check if there's enough energy for the move
+    if user_energy < energy_costs[action]:
+        return None, user_hp, opponent_hp, user_energy, 0, 0, 0, 0, "Not enough energy for this move."
+
     # Apply Mind Trap effect if it's active
     mind_trap_active = context.user_data.get(f'{player_key}_mind_trap_active', False)
     mind_trap_multiplier = 0.5 if mind_trap_active else 1.0
     context.user_data[f'{player_key}_mind_trap_active'] = False  # Reset after applying
 
     if action == "strike":
-        energy_cost = 12
+        energy_cost = energy_costs["strike"]
         damage = random.randint(12, 18)
         critical_hit_chance = 0.10
 
         if current_synergy.get('focus'):
-            damage = round(damage * 1.1, 1)
+            damage = round(damage * 1.1)
             critical_hit_chance = 0.30
             synergy_effect = "Focus boosts your Strike, adding extra power and critical chance."
         elif previous_move == 'defend':
-            damage = round(damage * 1.1, 1)
+            damage = round(damage * 1.1)
             synergy_effect = "Your defensive stance empowers your Strike."
 
         critical_hit = random.random() < critical_hit_chance
@@ -1106,20 +1129,20 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             if current_synergy.get('focus'):
                 energy_gain += 10
 
-        damage = round(damage * mind_trap_multiplier, 1)
+        damage = round(damage * mind_trap_multiplier)
         opponent_hp = max(0, opponent_hp - damage)
 
     elif action == "zenstrike":
-        energy_cost = 40
+        energy_cost = energy_costs["zenstrike"]
         damage = random.randint(20, 30)
         critical_hit_chance = 0.20
 
         if current_synergy.get('focus'):
-            damage = round(damage * 1.2, 1)
+            damage = round(damage * 1.2)
             critical_hit_chance = 0.50
             synergy_effect = "Focus empowers your Zen Strike, greatly amplifying its impact and critical chance."
         elif previous_move == 'strike':
-            damage = round(damage * 1.1, 1)
+            damage = round(damage * 1.1)
             critical_hit_chance = 0.35
             synergy_effect = "Your previous Strike enhances Zen Strike's power."
 
@@ -1128,11 +1151,11 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             damage *= 2
             synergy_effect += " Critical hit! Your Zen Strike devastates the opponent."
 
-        damage = round(damage * mind_trap_multiplier, 1)
+        damage = round(damage * mind_trap_multiplier)
         opponent_hp = max(0, opponent_hp - damage)
 
     elif action == "mindtrap":
-        energy_cost = 20
+        energy_cost = energy_costs["mindtrap"]
         context.user_data[f'{opponent_key}_mind_trap_active'] = True
         synergy_effect = f"Mind Trap is set, weakening {opponent_name}'s next move."
 
@@ -1152,49 +1175,53 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             context.user_data[f'{player_key}_next_move_reduction'] = 0.8  # 20% damage reduction on next opponent's attack
             synergy_effect = "Zen Strike energy enhances your healing and provides additional defense."
         elif current_synergy.get('focus'):
-            heal = round(heal * 1.15, 1)
+            heal = round(heal * 1.15)
             context.user_data[f'{player_key}_next_move_boost'] = 1.1  # 10% boost to next move
             synergy_effect = "Focus increases your healing power and prepares you for a stronger follow-up."
         elif previous_move == 'mindtrap':
             context.user_data[f'{player_key}_reflect_damage'] = True
             synergy_effect = "Mind Trap amplifies your defense, preparing to reflect damage on opponent's next attack."
 
-        heal = round(heal * mind_trap_multiplier, 1)
+        heal = round(heal * mind_trap_multiplier)
         user_hp = min(100, user_hp + heal)
 
     elif action == "focus":
         base_energy_gain = random.randint(20, 30)
-        energy_gain = round(base_energy_gain * mind_trap_multiplier, 1)
+        energy_gain = round(base_energy_gain * mind_trap_multiplier)
         context.user_data[f'{player_key}_next_turn_synergy'] = {'focus': True}
-        synergy_effect = f"Focus prepares you for the next move, recovering {energy_gain:.1f} energy."
+        synergy_effect = f"Focus prepares you for the next move, recovering {energy_gain} energy."
 
         if current_synergy.get('zenstrike'):
             energy_gain *= 2
             context.user_data[f'{player_key}_next_move_penalty'] = 0.9  # 10% reduction in next move's effectiveness
-            synergy_effect += f" Zen Strike boosts Focus, doubling energy gain to {energy_gain:.1f} but slightly reducing next move's power."
+            synergy_effect += f" Zen Strike boosts Focus, doubling energy gain to {energy_gain} but slightly reducing next move's power."
 
     # Update energy and previous move
-    user_energy = round(max(0, min(100, user_energy - energy_cost + energy_gain)), 1)
+    user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
     context.user_data[f'{player_key}_previous_move'] = action
 
     # Apply energy loss from opponent's Mind Trap if it's an offensive move
     if action in ['strike', 'zenstrike']:
         energy_loss = context.user_data.get(f'{player_key}_energy_loss', 0)
-        user_energy = round(max(0, user_energy - energy_loss), 1)
+        user_energy = max(0, user_energy - energy_loss)
         context.user_data[f'{player_key}_energy_loss'] = 0
 
-    # Pre-format values for the dynamic message
-    damage_text = f"{damage:.1f}" if action in ['strike', 'zenstrike'] else 'N/A'
-    heal_text = f"{heal:.1f}" if action == 'defend' else 'N/A'
-    energy_gain_text = f"{energy_gain:.1f}" if action in ['defend', 'focus'] else 'N/A'
+    # Round all numeric values
+    user_hp = round(user_hp)
+    opponent_hp = round(opponent_hp)
+    user_energy = round(user_energy)
+    damage = round(damage)
+    heal = round(heal)
+    energy_cost = round(energy_cost)
+    energy_gain = round(energy_gain)
 
     # Generate dynamic message
     dynamic_message = await generate_response(f"""
     {'' if bot_mode else 'You'} just performed {action}.
-    Damage dealt: {damage_text}
-    Healing done: {heal_text}
-    Energy cost: {energy_cost:.1f} 
-    Energy gained: {energy_gain_text}
+    Damage dealt: {damage if action in ['strike', 'zenstrike'] else 'N/A'}
+    Healing done: {heal if action == 'defend' else 'N/A'}
+    Energy cost: {energy_cost} 
+    Energy gained: {energy_gain if action in ['defend', 'focus'] else 'N/A'}
     Synergy effect: {synergy_effect}
     Opponent: {opponent_name}
     """, elaborate=True)
@@ -1204,15 +1231,6 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     
     return result_message, user_hp, opponent_hp, user_energy, damage, heal, energy_cost, energy_gain, synergy_effect
 
-import re
-
-def escape_markdown_v2(text):
-    """
-    Helper function to escape special characters for MarkdownV2 format.
-    """
-    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
-    return re.sub(f"([{''.join(map(re.escape, special_chars))}])", r'\\\1', str(text))
-   
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
     
@@ -1266,10 +1284,17 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         opponent_name = "Bot" if opponent_id == 7283636452 else update.effective_user.first_name if bot_mode else "Opponent"
 
         # Perform the action
-        result_message, user_hp, opponent_hp, user_energy, damage, heal, energy_cost, energy_gain, synergy_effect = await perform_action(
+        result = await perform_action(
             action, user_hp, opponent_hp, user_energy, context.user_data.get(f'{player_key}_next_turn_synergy', {}),
             context, player_key, bot_mode, opponent_name
         )
+
+        if result is None:
+            if not bot_mode:
+                await update.callback_query.answer("Not enough energy for this move!")
+            return
+
+        result_message, user_hp, opponent_hp, user_energy, damage, heal, energy_cost, energy_gain, synergy_effect = result
 
         # Clear the next turn synergy
         context.user_data[f'{player_key}_next_turn_synergy'] = {}
@@ -1280,7 +1305,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
             db.commit()
             winner_name = "Bot" if winner_id == 7283636452 else update.effective_user.first_name if bot_mode else "You"
-            last_move_details = f"Last move was {action}, dealing {damage:.1f} damage."  # Show damage dealt in the last move
+            last_move_details = f"Last move was {action}, dealing {damage} damage."
             await send_message(update, f"{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!\n{last_move_details}")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{winner_name} has won the battle!\n{last_move_details}")
             return
@@ -1300,26 +1325,21 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         # Create and send the battle view
         battle_view = create_battle_view(
             "Bot" if bot_mode else update.effective_user.first_name,
-            float(user_hp),
-            float(user_energy),
+            user_hp,
+            user_energy,
             opponent_name,
-            float(opponent_hp),
-            float(opponent_energy)
+            opponent_hp,
+            opponent_energy
         )
 
         # New section: Creating detailed move summary
-        numeric_stats = f"Move: {action.capitalize()}, Effect: {synergy_effect or 'None'}, Numeric Stats: Damage: {damage:.1f}, Heal: {heal:.1f}, Energy Cost: {energy_cost:.1f}, Energy Gained: {energy_gain:.1f}, Synergy: {synergy_effect or 'None'}"
-
-        # Escape special characters for MarkdownV2
-        escaped_result_message = escape_markdown_v2(result_message)
-        escaped_battle_view = escape_markdown_v2(battle_view)
-        escaped_numeric_stats = escape_markdown_v2(numeric_stats)
+        numeric_stats = f"Move: {action.capitalize()}, Effect: {synergy_effect or 'None'}, Numeric Stats: Damage: {damage}, Heal: {heal}, Energy Cost: {energy_cost}, Energy Gained: {energy_gain}, Synergy: {synergy_effect or 'None'}"
 
         # Send the result of the action along with the updated battle view
         try:
             await context.bot.send_message(
                 chat_id=battle['group_id'], 
-                text=f"{escaped_result_message}\n\n{escaped_battle_view}\n\n{escaped_numeric_stats}",
+                text=f"{escape_markdown_v2(result_message)}\n\n{escape_markdown_v2(battle_view)}\n\n{escape_markdown_v2(numeric_stats)}",
                 parse_mode='MarkdownV2'
             )
         except BadRequest as e:
@@ -1328,7 +1348,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                 chat_id=battle['group_id'],
                 text="An error occurred while updating the battle. Please check /pvpstatus for the current state."
             )
-
 
         # Notify the next player
         if opponent_id != 7283636452:
@@ -1343,6 +1362,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
     finally:
         if db.is_connected():
             cursor.close()
+
+   
 
 # Call this function at the start of a new battle
 async def start_new_battle(update, context):
