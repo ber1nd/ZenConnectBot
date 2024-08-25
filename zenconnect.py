@@ -1070,7 +1070,7 @@ async def main():
 
 if __name__ == '__main__':
     setup_database()  # Ensure the database is set up before starting the bot
-async def perform_action(action, user_hp, opponent_hp, user_energy, current_synergy, context, player_key, bot_mode, opponent_name):
+async def perform_action(action, user_hp, opponent_hp, user_energy, current_synergy, player_key, bot_mode, opponent_name, context):
     result_message = ""
     energy_cost = 0
     energy_gain = 0
