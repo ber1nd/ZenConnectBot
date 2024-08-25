@@ -1070,7 +1070,7 @@ async def main():
 
 if __name__ == '__main__':
     setup_database()  # Ensure the database is set up before starting the bot
-async def perform_action(action, user_hp, opponent_hp, user_energy, current_synergy, player_key, bot_mode, opponent_name, context):
+async def perform_action(action, user_hp, opponent_hp, user_energy, current_synergy, player_key, opponent_key, bot_mode, opponent_name, context):
     result_message = ""
     energy_cost = 0
     energy_gain = 0
@@ -1083,7 +1083,8 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             return "Not enough energy to use Strike.", user_hp, opponent_hp, user_energy, synergy_message
         damage = random.randint(12, 18)
 
-        if current_synergy.get('focus'):
+        # Check for synergies
+        if current_synergy.get(f'{player_key}_focus'):
             damage = round(damage * 1.1)
             synergy_message = "Focus boosts your strike, adding extra power."
             critical_hit_chance = 0.20
@@ -1097,6 +1098,11 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         else:
             critical_hit_message = ""
 
+        # Apply Mind Trap if it was set by the opponent
+        if current_synergy.get(f'{opponent_key}_mindtrap'):
+            damage = round(damage * 0.5)
+            synergy_message += " Mind Trap weakens your strike."
+
         opponent_hp = max(0, opponent_hp - damage)
         stats_message = f"Damage dealt: {damage}, Energy cost: {energy_cost}, Critical hit: {critical_hit_message}"
         result_message = f"{'Bot' if bot_mode else 'You'} strike {opponent_name}. {synergy_message} {critical_hit_message}"
@@ -1107,7 +1113,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             return "Not enough energy to use Zen Strike.", user_hp, opponent_hp, user_energy, synergy_message
         damage = random.randint(20, 30)
         
-        if current_synergy.get('focus'):
+        if current_synergy.get(f'{player_key}_focus'):
             damage = round(damage * 1.2)
             critical_hit_chance = 0.30
             synergy_message = "Focus empowers your Zen Strike, amplifying its impact."
@@ -1121,6 +1127,11 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         else:
             critical_hit_message = ""
 
+        # Apply Mind Trap if it was set by the opponent
+        if current_synergy.get(f'{opponent_key}_mindtrap'):
+            damage = round(damage * 0.5)
+            synergy_message += " Mind Trap weakens your Zen Strike."
+
         opponent_hp = max(0, opponent_hp - damage)
         stats_message = f"Damage dealt: {damage}, Energy cost: {energy_cost}, Critical hit: {critical_hit_message}"
         result_message = f"{'Bot' if bot_mode else 'You'} unleash a Zen Strike on {opponent_name}. {synergy_message} {critical_hit_message}"
@@ -1129,7 +1140,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         energy_cost = 20
         if user_energy < energy_cost:
             return "Not enough energy to use Mind Trap.", user_hp, opponent_hp, user_energy, synergy_message
-        context.user_data[f'{player_key}_next_turn_synergy'] = {'mindtrap': True}
+        context.user_data[f'{opponent_key}_next_turn_synergy'] = {'mindtrap': True}
         stats_message = f"Energy cost: {energy_cost}, Mind Trap set."
         result_message = f"{'Bot' if bot_mode else 'You'} set a Mind Trap, preparing to weaken {opponent_name}'s next move."
 
@@ -1137,13 +1148,13 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         energy_gain = 10
         heal = random.randint(15, 25)
 
-        if current_synergy.get('zenstrike'):
+        if current_synergy.get(f'{player_key}_zenstrike'):
             heal += 10
             synergy_message = "Zen Strike energy enhances your healing."
-        elif current_synergy.get('focus'):
+        elif current_synergy.get(f'{player_key}_focus'):
             heal = round(heal * 1.15)
             synergy_message = "Focus increases your healing power."
-        elif current_synergy.get('mindtrap'):
+        elif current_synergy.get(f'{opponent_key}_mindtrap'):
             synergy_message = "Mind Trap amplifies your defense, reflecting some of the damage back."
 
         user_hp = min(100, user_hp + heal)
@@ -1157,7 +1168,8 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
         result_message = f"{'Bot' if bot_mode else 'You'} focus, gathering energy for your next move."
 
     user_energy = max(0, min(100, user_energy - energy_cost + energy_gain))
-    return result_message, user_hp, opponent_hp, user_energy, stats_message
+    return result_message, user_hp, opponent_hp, user_energy, synergy_message
+
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
@@ -1212,16 +1224,13 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         opponent_name = "Bot" if opponent_id == 7283636452 else update.effective_user.first_name if bot_mode else "Opponent"
 
         # Apply synergy effect from the previous turn
-        current_synergy = context.user_data.get(f'{player_key}_next_turn_synergy', {})
-        context.user_data[f'{player_key}_next_turn_synergy'] = {}  # Clear for next turn
+        current_synergy = context.user_data.get(f'{opponent_key}_next_turn_synergy', {})
+        context.user_data[f'{opponent_key}_next_turn_synergy'] = {}  # Clear for next turn
 
         result_message, user_hp, opponent_hp, user_energy, stats_message = await perform_action(
             action, user_hp, opponent_hp, user_energy, current_synergy, 
-            player_key, bot_mode, opponent_name, context
+            player_key, opponent_key, bot_mode, opponent_name, context
         )
-
-        # Call GPT API to generate narrative if needed (omitted actual API call for brevity)
-        # narrative = await generate_narrative(result_message, context)
 
         # Check if the battle ends
         if opponent_hp <= 0 or user_hp <= 0:
@@ -1237,9 +1246,9 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         # Update the battle status
         cursor.execute(f"""
             UPDATE pvp_battles 
-                        SET {player_key}_hp = %s, {opponent_key}_hp = %s, current_turn = %s 
+            SET {player_key}_hp = %s, {opponent_key}_hp = %s, current_turn = %s 
             WHERE id = %s
-        """, (user_hp, opponent_hp, opponent_id, battle['id']))
+        """, (user_hp, opponent_hp, opponent_id,            battle['id']))
         db.commit()
 
         # Update energy levels in context
