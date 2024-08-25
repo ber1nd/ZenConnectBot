@@ -1236,7 +1236,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
     finally:
         if db.is_connected():
             cursor.close()
-
 # Call this function at the start of a new battle
 async def start_new_battle(update, context):
     reset_synergies(context)
