@@ -656,19 +656,17 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
     o_energy_bar = create_bar(opponent_energy, 100)
 
     battle_view = f"""
-┏━━━━━━━━━━━━━━━ ZEN WARRIOR ARENA ━━━━━━━━━━━━━━━┓
-┃                                                  ┃
-┃  ⚪ {challenger_name:<20}                         ┃
-┃  ✦ HP   [{c_hp_bar}] {challenger_hp:5.1f}/100              ┃
-┃  ✦ Chi  [{c_energy_bar}] {challenger_energy:5.1f}/100              ┃
-┃                                                  ┃
-┃                    ⚔  VS  ⚔                     ┃
-┃                                                  ┃
-┃  ⚪ {opponent_name:<20}                         ┃
-┃  ✦ HP   [{o_hp_bar}] {opponent_hp:5.1f}/100              ┃
-┃  ✦ Chi  [{o_energy_bar}] {opponent_energy:5.1f}/100              ┃
-┃                                                  ┃
-┗━━━━━━━━━━━ Choose Your Path, Warrior ━━━━━━━━━━━┛
+⚪ {challenger_name}
+━━━━━━━━━━━━━━━━━
+💚 HP  [{c_hp_bar}] {challenger_hp}
+💠 Chi [{c_energy_bar}] {challenger_energy}
+━━━━━━━━━━━━━━━━━
+           ☯
+⚪ {opponent_name}
+━━━━━━━━━━━━━━━━━
+💚 HP  [{o_hp_bar}] {opponent_hp}
+💠 Chi [{o_energy_bar}] {opponent_energy}
+━━━━━━━━━━━━━━━━━
 """
     return battle_view
 
