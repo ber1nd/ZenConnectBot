@@ -1784,38 +1784,6 @@ async def getbotid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_id = bot_user.id
     await update.message.reply_text(f"My user ID is: {bot_id}")
 
-def setup_handlers(application):
-    application.add_handler(CommandHandler("subscribe", subscribe_command))
-    application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
-    application.add_handler(CommandHandler("subscriptionstatus", subscription_status_command))
-    application.add_handler(CommandHandler("checkpoints", check_points))
-    application.add_handler(CommandHandler("startpvp", start_pvp))
-    application.add_handler(CommandHandler("acceptpvp", accept_pvp))
-    application.add_handler(CommandHandler("surrender", surrender))
-    application.add_handler(CommandHandler("deletedata", delete_data))
-    application.add_handler(CommandHandler("getbotid", getbotid))
-
-    application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & (
-            filters.ChatType.PRIVATE |
-            (filters.ChatType.GROUPS & (
-                filters.Regex(r'(?i)\bzen\b') |
-                filters.Regex(r'@\w+')
-            ))
-        ),
-        handle_message
-    ))
-
-    # Callback query handlers
-    application.add_handler(CallbackQueryHandler(subscribe_callback, pattern="^subscribe$"))
-    application.add_handler(CallbackQueryHandler(execute_pvp_move_wrapper, pattern="^pvp_"))
-
-    # Pre-checkout and successful payment handlers
-    application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
-    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
-
-    application.add_error_handler(error_handler)
-
 async def main():
     # Use environment variable to determine webhook or polling
     use_webhook = os.getenv('USE_WEBHOOK', 'false').lower() == 'true'
