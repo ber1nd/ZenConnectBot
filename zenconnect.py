@@ -1640,6 +1640,7 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"Received message: {update.message.text}")
     user_id = update.effective_user.id
     user_message = update.message.text
     chat_type = update.message.chat.type
@@ -1735,7 +1736,7 @@ def check_rate_limit(user_id):
     return len(user_messages) < RATE_LIMIT
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error(f"Exception while handling an update: {context.error}")
+    logger.error(f"Exception while handling an update: {context.error}", exc_info=True)
     if update and isinstance(update, Update) and update.effective_message:
         await update.effective_message.reply_text("An error occurred while processing your request. Please try again later.")
 
