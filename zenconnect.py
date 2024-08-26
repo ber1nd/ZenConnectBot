@@ -1112,6 +1112,15 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     # Check if Focus is active from the previous turn
     focus_active = context.user_data.get(f'{player_key}_focus_active', False)
 
+    # New function to handle reflect damage
+    def apply_reflect_damage(damage, player_key):
+        reflect_percentage = context.user_data.get(f'{player_key}_reflect_damage', 0)
+        if reflect_percentage > 0:
+            reflected_damage = round(damage * reflect_percentage)
+            context.user_data[f'{player_key}_reflect_damage'] = 0  # Reset after use
+            return reflected_damage
+        return 0
+
     if action == "strike":
         energy_cost = energy_costs["strike"]
         damage = random.randint(12, 18)
@@ -1141,7 +1150,11 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
                 energy_gain += 10
 
         damage = round(damage * mind_trap_multiplier)
+        reflected_damage = apply_reflect_damage(damage, opponent_key)
         opponent_hp = max(0, opponent_hp - damage)
+        user_hp = max(0, user_hp - reflected_damage)
+        if reflected_damage > 0:
+            synergy_effect += f" The opponent's reflection deals {reflected_damage} damage back to you."
 
     elif action == "zenstrike":
         energy_cost = energy_costs["zenstrike"]
@@ -1163,7 +1176,11 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             synergy_effect += " Critical hit! Your Zen Strike devastates the opponent."
 
         damage = round(damage * mind_trap_multiplier)
+        reflected_damage = apply_reflect_damage(damage, opponent_key)
         opponent_hp = max(0, opponent_hp - damage)
+        user_hp = max(0, user_hp - reflected_damage)
+        if reflected_damage > 0:
+            synergy_effect += f" The opponent's reflection deals {reflected_damage} damage back to you."
 
     elif action == "defend":
         energy_gain = 10
@@ -1178,7 +1195,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             context.user_data[f'{player_key}_next_move_reduction'] = 0.8  # 20% damage reduction on next opponent's attack
             synergy_effect = "Your previous Zen Strike enhances your Defend, providing additional healing and reducing the next attack against you."
         elif previous_move == 'mindtrap':
-            context.user_data[f'{player_key}_reflect_damage'] = 0.1  # Reflect 10% of next attack
+            context.user_data[f'{player_key}_reflect_damage'] = 0.1  # 10% reflect damage
             synergy_effect = "Your previous Mind Trap enhances Defend, preparing to reflect 10% of the opponent's next attack damage."
 
         heal = round(heal * mind_trap_multiplier)
@@ -1213,7 +1230,7 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
             context.user_data[f'{opponent_key}_energy_loss'] += 5  # Additional energy loss
             synergy_effect += " Your previous Strike enhances Mind Trap, causing additional energy loss to your opponent."
         elif previous_move == 'defend':
-            context.user_data[f'{player_key}_reflect_damage'] = 0.1
+            context.user_data[f'{player_key}_reflect_damage'] = 0.1  # 10% reflect damage
             synergy_effect += " Your previous Defend enhances Mind Trap, preparing to reflect 10% of the opponent's next attack damage."
 
     # Update energy and previous move
