@@ -439,6 +439,7 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("zenquest_command was called")  # Log the start
     user_id = update.effective_user.id
     db = get_db_connection()
     
