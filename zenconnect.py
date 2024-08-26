@@ -438,6 +438,81 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
+async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    db = get_db_connection()
+    
+    if db:
+        try:
+            cursor = db.cursor(dictionary=True)
+            cursor.execute("SELECT zen_points FROM users WHERE user_id = %s", (user_id,))
+            result = cursor.fetchone()
+
+            if not result:
+                await update.message.reply_text("You must start your Zen journey first by interacting with the bot.")
+                return
+            
+            zen_points = result['zen_points']
+            quest_intro = await generate_quest_intro(user_id)
+            await update.message.reply_text(quest_intro)
+            
+            quest_in_progress = True
+            while quest_in_progress:
+                quest_step = await generate_quest_step(user_id)
+                if quest_step['combat']:
+                    await update.message.reply_text(quest_step['description'])
+                    await initiate_combat(update, context)
+                else:
+                    await update.message.reply_text(quest_step['description'])
+                    if 'end' in quest_step:
+                        quest_in_progress = False
+            
+            if quest_step['result'] == 'win':
+                zen_points += quest_step['reward']
+                cursor.execute("UPDATE users SET zen_points = %s WHERE user_id = %s", (zen_points, user_id))
+                db.commit()
+                await update.message.reply_text(f"Congratulations! You have completed the quest and earned {quest_step['reward']} Zen Points.")
+            else:
+                await update.message.reply_text("You have failed the quest. Try again by using /zenquest.")
+            
+        except Exception as e:
+            logger.error(f"Error in zenquest_command: {e}")
+            await update.message.reply_text("An error occurred during the quest. Please try again later.")
+        
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        await update.message.reply_text("I'm having trouble accessing my memory right now. Please try again later.")
+
+async def generate_quest_intro(user_id):
+    prompt = """
+    You are a Zen monk on a journey of enlightenment. As you meditate under a sacred tree, you feel the presence of a challenge. 
+    Describe the beginning of a unique adventure that will test the monk's wisdom, courage, and skill.
+    """
+    intro = await generate_response(prompt, elaborate=True)
+    return intro
+
+async def generate_quest_step(user_id):
+    prompt = """
+    The monk continues on his journey. Generate the next challenge he faces. This could be a riddle, a choice, a puzzle, or a combat scenario.
+    If it's combat, mention 'combat' in the response so that it can be handled separately.
+    """
+    step = await generate_response(prompt, elaborate=True)
+    return {
+        "description": step, 
+        "combat": 'combat' in step, 
+        "result": "win" if "victory" in step else "lose", 
+        "reward": random.randint(10, 50)
+    }
+
+async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
+    await start_pvp(update, context)
+
+
+
 # PvP Functionality
 
 async def send_game_rules(context: ContextTypes.DEFAULT_TYPE, user_id1: int, user_id2: int):
@@ -980,6 +1055,7 @@ def setup_handlers(application):
     application.add_handler(CommandHandler("surrender", surrender))
     application.add_handler(CommandHandler("deletedata", delete_data))
     application.add_handler(CommandHandler("getbotid", getbotid))
+    application.add_handler(CommandHandler("zenquest", zenquest_command))
 
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & (
