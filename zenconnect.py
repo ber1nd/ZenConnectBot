@@ -441,52 +441,61 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("zenquest_command was called")  # Log the start
     user_id = update.effective_user.id
+    logger.info(f"User ID: {user_id}")  # Log user ID
+
     db = get_db_connection()
-    
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
-            cursor.execute("SELECT zen_points FROM users WHERE user_id = %s", (user_id,))
-            result = cursor.fetchone()
-
-            if not result:
-                await update.message.reply_text("You must start your Zen journey first by interacting with the bot.")
-                return
-            
-            zen_points = result['zen_points']
-            quest_intro = await generate_quest_intro(user_id)
-            await update.message.reply_text(quest_intro)
-            
-            quest_in_progress = True
-            while quest_in_progress:
-                quest_step = await generate_quest_step(user_id)
-                if quest_step['combat']:
-                    await update.message.reply_text(quest_step['description'])
-                    await initiate_combat(update, context)
-                else:
-                    await update.message.reply_text(quest_step['description'])
-                    if 'end' in quest_step:
-                        quest_in_progress = False
-            
-            if quest_step['result'] == 'win':
-                zen_points += quest_step['reward']
-                cursor.execute("UPDATE users SET zen_points = %s WHERE user_id = %s", (zen_points, user_id))
-                db.commit()
-                await update.message.reply_text(f"Congratulations! You have completed the quest and earned {quest_step['reward']} Zen Points.")
-            else:
-                await update.message.reply_text("You have failed the quest. Try again by using /zenquest.")
-            
-        except Exception as e:
-            logger.error(f"Error in zenquest_command: {e}")
-            await update.message.reply_text("An error occurred during the quest. Please try again later.")
-        
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
+    if not db:
+        logger.error("Database connection failed")
         await update.message.reply_text("I'm having trouble accessing my memory right now. Please try again later.")
+        return
+    
+    try:
+        cursor = db.cursor(dictionary=True)
+        cursor.execute("SELECT zen_points FROM users WHERE user_id = %s", (user_id,))
+        result = cursor.fetchone()
 
+        if not result:
+            logger.info("User not found in the database")
+            await update.message.reply_text("You must start your Zen journey first by interacting with the bot.")
+            return
+
+        logger.info(f"Zen Points: {result['zen_points']}")
+
+        zen_points = result['zen_points']
+        quest_intro = await generate_quest_intro(user_id)
+        logger.info(f"Quest Intro: {quest_intro}")
+        await update.message.reply_text(quest_intro)
+        
+        quest_in_progress = True
+        while quest_in_progress:
+            quest_step = await generate_quest_step(user_id)
+            logger.info(f"Quest Step: {quest_step['description']}")
+            
+            if quest_step['combat']:
+                await update.message.reply_text(quest_step['description'])
+                await initiate_combat(update, context)
+            else:
+                await update.message.reply_text(quest_step['description'])
+                if 'end' in quest_step:
+                    quest_in_progress = False
+        
+        if quest_step['result'] == 'win':
+            zen_points += quest_step['reward']
+            cursor.execute("UPDATE users SET zen_points = %s WHERE user_id = %s", (zen_points, user_id))
+            db.commit()
+            await update.message.reply_text(f"Congratulations! You have completed the quest and earned {quest_step['reward']} Zen Points.")
+        else:
+            await update.message.reply_text("You have failed the quest. Try again by using /zenquest.")
+    
+    except Exception as e:
+        logger.error(f"Error in zenquest_command: {e}")
+        await update.message.reply_text("An error occurred during the quest. Please try again later.")
+    
+    finally:
+        if db.is_connected():
+            cursor.close()
+            db.close()
+            
 async def generate_quest_intro(user_id):
     prompt = """
     You are a Zen monk on a journey of enlightenment. As you meditate under a sacred tree, you feel the presence of a challenge. 
