@@ -475,11 +475,14 @@ class ZenQuest:
         self.player_hp = 100
         self.max_quest_steps = 5
         self.current_step = 0
+        self.wrong_choices = 0
+        self.max_wrong_choices = 3
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.quest_active = True
         self.player_hp = 100
         self.current_step = 0
+        self.wrong_choices = 0
         self.current_scene = await self.generate_scene("start")
         await self.send_scene(update, context)
 
@@ -500,8 +503,13 @@ class ZenQuest:
         self.current_scene = await self.generate_scene(user_input)
 
         if self.current_scene.get("combat", False):
-            # Initiate combat using the existing PvP system
             await initiate_combat(update, context)
+        elif self.current_scene.get("wrong_choice", False):
+            self.wrong_choices += 1
+            if self.wrong_choices >= self.max_wrong_choices:
+                await self.end_quest(update, context, victory=False, reason="You have made too many wrong choices.")
+            else:
+                await self.send_scene(update, context)
         else:
             self.current_step += 1
             if self.current_step >= self.max_quest_steps:
@@ -525,13 +533,15 @@ class ZenQuest:
         2. A challenge or decision for the player
         3. Possible actions the player can take
         4. Any relevant philosophical or spiritual themes
+        5. Indicate if this action leads to combat or is a wrong choice
         Keep the response concise but engaging.
         """
         scene_description = await generate_response(prompt, elaborate=True)
 
         return {
             "description": scene_description,
-            "combat": "combat" in scene_description.lower()
+            "combat": "combat" in scene_description.lower(),
+            "wrong_choice": "wrong choice" in scene_description.lower()
         }
 
     def is_unrealistic_action(self, action):
@@ -585,19 +595,10 @@ def setup_zenquest_handlers(application):
 async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     db = get_db_connection()
-    
+
     if db:
         try:
             cursor = db.cursor(dictionary=True)
-
-            # Ensure the challenger exists in the users table
-            cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
-            challenger = cursor.fetchone()
-            cursor.fetchall()  # Consume any remaining results
-
-            if not challenger:
-                await update.message.reply_text("You are not registered in the system. Please interact with the bot first.")
-                return
 
             # Create a new PvP battle against the bot
             opponent_id = 7283636452  # Bot's ID
@@ -613,16 +614,13 @@ async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_game_rules(context, user_id, opponent_id)
             await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
 
-            # Start the combat automatically without the need for a 'start' command
+            # Start the combat automatically
             await start_new_battle(update, context)
             await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
 
         except mysql.connector.Error as e:
             logger.error(f"MySQL error in initiate_combat: {e}")
             await update.message.reply_text("An error occurred while initiating the combat. Please try again later.")
-        except Exception as e:
-            logger.error(f"Unexpected error in initiate_combat: {e}", exc_info=True)
-            await update.message.reply_text("An unexpected error occurred. Please try again later.")
         finally:
             if db.is_connected():
                 cursor.close()
@@ -990,40 +988,39 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db:
         try:
             cursor = db.cursor(dictionary=True)
-            
-            # Fetch the active battle where the user is a challenger or opponent
+
             cursor.execute("""
                 SELECT id, challenger_id, opponent_id FROM pvp_battles 
                 WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
             """, (user_id, user_id))
             battle_data = cursor.fetchone()
 
-            # Ensure all results are consumed
-            cursor.fetchall()
-
             if not battle_data:
                 await update.message.reply_text("No active battles found to surrender.")
                 return
 
-            # Determine the winner (opponent wins if the user surrenders)
             winner_id = battle_data['opponent_id'] if user_id == battle_data['challenger_id'] else battle_data['challenger_id']
-            
-            # Update the battle status to 'completed' and set the winner
+
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle_data['id']))
             db.commit()
-            
+
             await update.message.reply_text("You have surrendered the battle. Your opponent is victorious.")
-        
+
+            # End the quest if it's active
+            if zen_quest.quest_active:
+                await zen_quest.end_quest(update, context, victory=False, reason="You have surrendered in combat.")
+
         except mysql.connector.Error as e:
             logger.error(f"Database error in surrender: {e}")
             await update.message.reply_text("An error occurred while surrendering. Please try again later.")
-        
+
         finally:
             if db.is_connected():
                 cursor.close()
                 db.close()
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Received message: {update.message.text}")
@@ -1472,9 +1469,10 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     
     return result_message, user_hp, opponent_hp, user_energy, damage, heal, energy_cost, energy_gain, synergy_effect
 
+
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
-    
+
     if not bot_mode:
         if update.callback_query:
             query = update.callback_query
@@ -1540,15 +1538,23 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         # Clear the next turn synergy
         context.user_data[f'{player_key}_next_turn_synergy'] = {}
 
+        # Define winner_name and last_move_details here
+        winner_name = None
+        last_move_details = f"Last move was {action}, dealing {damage} damage."
+
         # Check if the battle ends
         if opponent_hp <= 0 or user_hp <= 0:
             winner_id = user_id if opponent_hp <= 0 else opponent_id
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
             db.commit()
             winner_name = "Bot" if winner_id == 7283636452 else update.effective_user.first_name if bot_mode else "You"
-            last_move_details = f"Last move was {action}, dealing {damage} damage."
             await send_message(update, f"{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!\n{last_move_details}")
             await context.bot.send_message(chat_id=battle['group_id'], text=f"{winner_name} has won the battle!\n{last_move_details}")
+
+            # End the quest if the player loses
+            if zen_quest.quest_active and winner_id != user_id:
+                await zen_quest.end_quest(update, context, victory=False, reason="You have been defeated in combat.")
+
             return
 
         # Update the battle status
@@ -1573,7 +1579,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             opponent_energy
         )
 
-        # New section: Creating detailed move summary
+        # Creating detailed move summary
         numeric_stats = f"Move: {action.capitalize()}, Effect: {synergy_effect or 'None'}, Numeric Stats: Damage: {damage}, Heal: {heal}, Energy Cost: {energy_cost}, Energy Gained: {energy_gain}, Synergy: {synergy_effect or 'None'}"
 
         # Send the result of the action along with the updated battle view
@@ -1603,7 +1609,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
     finally:
         if db.is_connected():
             cursor.close()
-
    
 
 # Call this function at the start of a new battle
@@ -1753,11 +1758,14 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"Received message: {update.message.text}")
-    user_id = update.effective_user.id
-    user_message = update.message.text
-    chat_type = update.message.chat.type
-    group_id = update.message.chat.id if chat_type == 'group' else None
+    if zen_quest.quest_active:
+        await zen_quest.handle_input(update, context)
+    else:
+        logger.info(f"Received message: {update.message.text}")
+        user_id = update.effective_user.id
+        user_message = update.message.text
+        chat_type = update.message.chat.type
+        group_id = update.message.chat.id if chat_type == 'group' else None
 
     # Check if the message is in a group and contains 'Zen' or mentions the bot
     bot_username = context.bot.username.lower()
