@@ -485,41 +485,34 @@ def get_player_action(user_message: str, context: dict) -> str:
 async def zenquest_process_action(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str):
     # Retrieve or initialize quest state
     quest_state = context.user_data.get('quest_state', {})
-
+    
     if not quest_state:
         quest_state = {
             'current_step': 1,
             'completed_steps': []
         }
         context.user_data['quest_state'] = quest_state
-
+    
     current_step = quest_state['current_step']
-    completed_steps = quest_state['completed_steps']
-
+    
     # Process current step based on user input
     if current_step == 1:
-        if user_message.strip() == "1":
-            await send_split_message(update, context, "You chose the first path. It leads you deeper into the forest where you encounter a mysterious figure...")
+        if user_message == "1":
+            await send_split_message(update, context, "You chose the first path. It leads you deeper into the forest where you encounter...")
             quest_state['current_step'] = 2
-            completed_steps.append(current_step)
-        elif user_message.strip() == "2":
-            await send_split_message(update, context, "You chose the second path. It takes you to a tranquil clearing where a riddle is inscribed on an ancient stone...")
+        elif user_message == "2":
+            await send_split_message(update, context, "You chose the second path. It takes you to a clearing where you find...")
             quest_state['current_step'] = 2
-            completed_steps.append(current_step)
         else:
-            await send_split_message(update, context, "Please choose a valid option: 1 or 2.")
+            await send_split_message(update, context, "Please choose a valid option.")
     elif current_step == 2:
-        # Example logic for step 2, extend with actual quest logic
-        if user_message.strip().lower() in ["solve riddle", "observe"]:
-            await send_split_message(update, context, "You solve the riddle and the path ahead becomes clear. You proceed further into the unknown...")
-            quest_state['current_step'] = 3
-            completed_steps.append(current_step)
-        else:
-            await send_split_message(update, context, "The path remains unclear. Choose to either 'solve riddle' or 'observe' the surroundings.")
+        # Example continuation of the quest
+        await send_split_message(update, context, "You have progressed further into the quest, encountering new challenges...")
+        quest_state['current_step'] = 3
+        # Add more steps as needed
     else:
-        # Implement further steps or handle the quest completion
-        await send_split_message(update, context, "The quest is progressing. Stay mindful of the journey ahead.")
-
+        await send_split_message(update, context, "The quest has been completed or there was an issue with the quest progression.")
+    
     # Save the updated state
     context.user_data['quest_state'] = quest_state
     
@@ -634,10 +627,12 @@ async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
-async def send_split_message(update, context, text):
-    max_length = 4096  # Telegram's message length limit
-    for i in range(0, len(text), max_length):
-        await update.message.reply_text(text[i:i + max_length])
+async def send_split_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message: str):
+    max_message_length = 4000  # Telegram's message limit is 4096 characters, but we'll leave a margin
+    message_parts = [message[i:i + max_message_length] for i in range(0, len(message), max_message_length)]
+
+    for part in message_parts:
+        await update.message.reply_text(part)
 
 # PvP Functionality
 
@@ -1107,15 +1102,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         response = await generate_response(prompt, elaborate)
 
-        # Break down response if it's too long for a single message
-        max_length = 4096  # Telegram's message length limit
-        for i in range(0, len(response), max_length):
-            await update.message.reply_text(response[i:i + max_length])
-
-        # Store the conversation in user memory
         new_memory = f"Student: {user_message}\nZen Monk: {response}"
         cursor.execute("INSERT INTO user_memory (user_id, group_id, memory) VALUES (%s, %s, %s)", (user_id, group_id, new_memory))
         db.commit()
+
+        await update.message.reply_text(response)
 
     except Error as e:
         logger.error(f"Database error in handle_message: {e}")
