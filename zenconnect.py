@@ -551,7 +551,6 @@ async def end_quest_failure(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     await update.message.reply_text(message)
     await update.message.reply_text("Your quest has ended in failure.")
 
-
 async def reward_victory(update: Update, context: ContextTypes.DEFAULT_TYPE, reward: int):
     user_id = update.effective_user.id
     db = get_db_connection()
@@ -574,6 +573,7 @@ async def reward_victory(update: Update, context: ContextTypes.DEFAULT_TYPE, rew
     else:
         await update.message.reply_text("Your quest has ended in victory, but I'm having trouble updating your Zen Points.")
 
+    context.user_data['zenquest_in_progress'] = False  # Reset quest state
 
 def is_correct_riddle_answer(user_answer: str, correct_answer: str) -> bool:
     # Simplified comparison, could be extended with more complex logic or synonyms
@@ -1021,7 +1021,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.message.chat.type
     group_id = update.message.chat.id if chat_type == 'group' else None
 
-    # Check if the message is in a group and contains 'Zen' or mentions the bot
+    # If a ZenQuest is active, delegate to the quest handler
+    if context.user_data.get('zenquest_in_progress'):
+        await zenquest_process_action(update, context, user_message)
+        return
+
+    # Existing logic for handling non-quest messages
     bot_username = context.bot.username.lower()
     if chat_type == 'group' and not (
         'zen' in user_message.lower() or 
@@ -1029,7 +1034,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ):
         return  # Exit the function if it's a group message not meant for the bot
 
-    # Apply rate limiting
+    # Rate limiting logic
     if not check_rate_limit(user_id):
         await update.message.reply_text("Please wait a moment before sending another message. Zen teaches us the value of patience.")
         return
