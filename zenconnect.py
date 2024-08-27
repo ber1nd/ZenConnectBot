@@ -480,7 +480,7 @@ class ZenQuest:
         self.quest_active = True
         self.player_hp = 100
         self.current_step = 0
-        self.current_scene = self.generate_scene("start")
+        self.current_scene = await self.generate_scene("start")
         await self.send_scene(update, context)
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -497,7 +497,7 @@ class ZenQuest:
             await update.message.reply_text("That action is not possible in this realm. Please choose a more realistic approach.")
             return
 
-        self.current_scene = self.generate_scene(user_input)
+        self.current_scene = await self.generate_scene(user_input)
 
         if self.current_scene.get("combat", False):
             # Initiate combat using the existing PvP system
@@ -517,7 +517,7 @@ class ZenQuest:
         for i in range(0, len(message), max_length):
             await update.message.reply_text(message[i:i+max_length])
 
-    def generate_scene(self, input_action):
+    async def generate_scene(self, input_action):
         prompt = f"""
         Generate a Zen-themed quest scene based on the following input action: {input_action}
         The scene should include:
@@ -527,8 +527,8 @@ class ZenQuest:
         4. Any relevant philosophical or spiritual themes
         Keep the response concise but engaging.
         """
-        scene_description = generate_response(prompt, elaborate=True)
-        
+        scene_description = await generate_response(prompt, elaborate=True)
+
         return {
             "description": scene_description,
             "combat": "combat" in scene_description.lower()
@@ -560,6 +560,7 @@ async def handle_quest_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         # If no quest is active, pass the message to the regular message handler
         await handle_message(update, context)
+
 
 @with_database_connection
 async def add_zen_points(update: Update, context: ContextTypes.DEFAULT_TYPE, points: int, db):
@@ -1187,13 +1188,7 @@ def setup_handlers(application):
     application.add_handler(CommandHandler("getbotid", getbotid))
 
     application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & (
-            filters.ChatType.PRIVATE |
-            (filters.ChatType.GROUPS & (
-                filters.Regex(r'(?i)\bzen\b') |
-                filters.Regex(r'@\w+')
-            ))
-        ),
+        filters.TEXT & ~filters.COMMAND,
         handle_quest_input
     ))
 
