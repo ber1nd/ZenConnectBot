@@ -438,21 +438,6 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
-async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    context.user_data['zenquest_in_progress'] = True
-    context.user_data['quest_step'] = 0
-    context.user_data['expecting_riddle_answer'] = False
-    context.user_data['in_combat'] = False
-
-    quest_intro = await generate_quest_intro(user_id)
-    await update.message.reply_text(quest_intro)
-    
-    quest_step = await generate_quest_step(user_id, "start")
-    await update.message.reply_text(quest_step['description'])
-
-    # Waiting for the player's first action
-    context.user_data['awaiting_action'] = True
 
 def get_player_action(user_message: str, context: dict) -> str:
     user_message = user_message.lower().strip()
@@ -482,102 +467,119 @@ def get_player_action(user_message: str, context: dict) -> str:
     # Default to unknown, to be handled dynamically by AI
     return "unknown"
 
-async def zenquest_process_action(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str):
-    # Retrieve or initialize quest state
-    quest_state = context.user_data.get('quest_state', {})
-    
-    if not quest_state:
-        quest_state = {
-            'current_step': 1,
-            'completed_steps': []
-        }
-        context.user_data['quest_state'] = quest_state
-    
-    current_step = quest_state['current_step']
-    
-    # Process current step based on user input
-    if current_step == 1:
-        if user_message == "1":
-            await send_split_message(update, context, "You chose the first path. It leads you deeper into the forest where you encounter...")
-            quest_state['current_step'] = 2
-        elif user_message == "2":
-            await send_split_message(update, context, "You chose the second path. It takes you to a clearing where you find...")
-            quest_state['current_step'] = 2
+
+class ZenQuest:
+    def __init__(self):
+        self.current_scene = None
+        self.quest_active = False
+        self.player_hp = 100
+        self.max_quest_steps = 5
+        self.current_step = 0
+
+    async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self.quest_active = True
+        self.player_hp = 100
+        self.current_step = 0
+        self.current_scene = self.generate_scene("start")
+        await self.send_scene(update, context)
+
+    async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.quest_active:
+            return
+
+        user_input = update.message.text.lower()
+
+        if user_input == "/surrender":
+            await self.end_quest(update, context, victory=False, reason="You have surrendered your quest.")
+            return
+
+        if self.is_unrealistic_action(user_input):
+            await update.message.reply_text("That action is not possible in this realm. Please choose a more realistic approach.")
+            return
+
+        self.current_scene = self.generate_scene(user_input)
+
+        if self.current_scene.get("combat", False):
+            # Initiate combat using the existing PvP system
+            await initiate_combat(update, context)
         else:
-            await send_split_message(update, context, "Please choose a valid option.")
-    elif current_step == 2:
-        # Example continuation of the quest
-        await send_split_message(update, context, "You have progressed further into the quest, encountering new challenges...")
-        quest_state['current_step'] = 3
-        # Add more steps as needed
+            self.current_step += 1
+            if self.current_step >= self.max_quest_steps:
+                await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+            else:
+                await self.send_scene(update, context)
+
+    async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        message = self.current_scene["description"]
+
+        # Split message if it's too long
+        max_length = 4000
+        for i in range(0, len(message), max_length):
+            await update.message.reply_text(message[i:i+max_length])
+
+    def generate_scene(self, input_action):
+        prompt = f"""
+        Generate a Zen-themed quest scene based on the following input action: {input_action}
+        The scene should include:
+        1. A vivid description of the environment
+        2. A challenge or decision for the player
+        3. Possible actions the player can take
+        4. Any relevant philosophical or spiritual themes
+        Keep the response concise but engaging.
+        """
+        scene_description = generate_response(prompt, elaborate=True)
+        
+        return {
+            "description": scene_description,
+            "combat": "combat" in scene_description.lower()
+        }
+
+    def is_unrealistic_action(self, action):
+        unrealistic_actions = ["fly", "teleport", "magic", "superpowers"]
+        return any(unrealistic_action in action for unrealistic_action in unrealistic_actions)
+
+    async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
+        self.quest_active = False
+        if victory:
+            zen_points = random.randint(10, 50)
+            await update.message.reply_text(f"{reason} You have earned {zen_points} Zen points!")
+            await add_zen_points(update, context, zen_points)
+        else:
+            await update.message.reply_text(f"{reason} Your quest has ended.")
+
+# Initialize ZenQuest
+zen_quest = ZenQuest()
+
+async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await zen_quest.start_quest(update, context)
+
+
+async def handle_quest_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if zen_quest.quest_active:
+        await zen_quest.handle_input(update, context)
     else:
-        await send_split_message(update, context, "The quest has been completed or there was an issue with the quest progression.")
-    
-    # Save the updated state
-    context.user_data['quest_state'] = quest_state
-    
-async def generate_quest_intro(user_id):
-    prompt = """
-    Imagine the player as the main protagonist in a Zen-themed adventure. Describe the beginning of a unique quest where the player must face challenges that test their wisdom, courage, and skill. Use the player's name or refer to them as "you" to make it immersive.
-    """
-    intro = await generate_response(prompt, elaborate=True)
-    return intro
+        # If no quest is active, pass the message to the regular message handler
+        await handle_message(update, context)
 
-async def generate_quest_step(user_id, action):
-    prompt = f"""
-    The protagonist continues their journey after choosing to {action}. Describe the next challenge. It could be a riddle, a choice, a puzzle, or a combat scenario. The story should keep the player as the main character and be immersive.
-    """
-    step = await generate_response(prompt, elaborate=True)
-    return {
-        "description": step, 
-        "combat": 'combat' in step, 
-        "result": "win" if "victory" in step else "lose", 
-        "reward": random.randint(10, 50)
-    }
-
-async def end_quest_failure(update: Update, context: ContextTypes.DEFAULT_TYPE, message: str):
-    context.user_data['zenquest_in_progress'] = False
-    context.user_data['in_combat'] = False
-    await update.message.reply_text(message)
-    await update.message.reply_text("Your quest has ended in failure.")
-
-async def reward_victory(update: Update, context: ContextTypes.DEFAULT_TYPE, reward: int):
+@with_database_connection
+async def add_zen_points(update: Update, context: ContextTypes.DEFAULT_TYPE, points: int, db):
     user_id = update.effective_user.id
-    db = get_db_connection()
+    try:
+        cursor = db.cursor()
+        cursor.execute("UPDATE users SET zen_points = zen_points + %s WHERE user_id = %s", (points, user_id))
+        db.commit()
+        await update_user_level(user_id, points, db)
+    except Error as e:
+        logger.error(f"Error adding Zen points: {e}")
+        await update.message.reply_text("An error occurred while updating your Zen points. Please try again later.")
 
-    if db:
-        try:
-            cursor = db.cursor()
-            cursor.execute("SELECT zen_points FROM users WHERE user_id = %s", (user_id,))
-            result = cursor.fetchone()
-            zen_points = result[0] + reward if result else reward
-            
-            cursor.execute("UPDATE users SET zen_points = %s WHERE user_id = %s", (zen_points, user_id))
-            db.commit()
-            await update.message.reply_text(f"Congratulations! You have completed the quest and earned {reward} Zen Points.")
-        except Error as e:
-            logger.error(f"Error updating Zen points: {e}")
-        finally:
-            cursor.close()
-            db.close()
-    else:
-        await update.message.reply_text("Your quest has ended in victory, but I'm having trouble updating your Zen Points.")
+def setup_zenquest_handlers(application):
+    application.add_handler(CommandHandler("zenquest", zenquest_command))
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.Chat(chat_id=lambda id: zen_quest.quest_active),
+        handle_quest_input
+    ))
 
-    context.user_data['zenquest_in_progress'] = False  # Reset quest state
-
-async def generate_riddle():
-    prompt = """
-    Create a challenging riddle that aligns with Zen philosophy or nature. The riddle should be open-ended and thought-provoking.
-    """
-    riddle = await generate_response(prompt, elaborate=True)
-    return riddle
-
-async def is_correct_riddle_answer(user_answer, correct_answer):
-    prompt = f"""
-    Consider the riddle: "{correct_answer}". Did the player answer correctly with: "{user_answer}"? Provide a response as 'yes' or 'no' only.
-    """
-    ai_response = await generate_response(prompt)
-    return "yes" in ai_response.lower()
 
 async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1023,17 +1025,16 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"Received message: {update.message.text}")
     user_id = update.effective_user.id
     user_message = update.message.text
-
-    # Define chat_type and group_id
     chat_type = update.message.chat.type
-    group_id = update.message.chat.id if chat_type in ['group', 'supergroup'] else None
+    group_id = update.message.chat.id if chat_type == 'group' else None
 
-    # Check if a ZenQuest is active and handle quest-related input
-    if context.user_data.get('zenquest_in_progress'):
-        await zenquest_process_action(update, context, user_message)
-        return  # Prevent any further normal bot responses
+    # Check if a ZenQuest is active
+    if zen_quest.quest_active:
+        await zen_quest.handle_input(update, context)
+        return
 
     # Proceed with normal bot response if no quest is in progress
     bot_username = context.bot.username.lower()
@@ -1184,7 +1185,6 @@ def setup_handlers(application):
     application.add_handler(CommandHandler("surrender", surrender))
     application.add_handler(CommandHandler("deletedata", delete_data))
     application.add_handler(CommandHandler("getbotid", getbotid))
-    
 
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & (
@@ -1194,7 +1194,7 @@ def setup_handlers(application):
                 filters.Regex(r'@\w+')
             ))
         ),
-        handle_message
+        handle_quest_input
     ))
 
     # Callback query handlers
