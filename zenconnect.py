@@ -439,34 +439,6 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 
-def get_player_action(user_message: str, context: dict) -> str:
-    user_message = user_message.lower().strip()
-
-    # Broad pattern matching and context-based interpretation
-    if re.search(r'\b(start|attack|strike|fight|engage)\b', user_message):
-        return "combat"
-    elif re.search(r'\b(solve|riddle|puzzle|think|contemplate)\b', user_message):
-        return "riddle"
-    elif re.search(r'\b(meditate|focus|calm|reflect)\b', user_message):
-        return "meditate"
-    elif re.search(r'\b(run|escape|flee|retreat)\b', user_message):
-        return "run"
-    elif re.search(r'\b(explore|search|look around|inspect|examine)\b', user_message):
-        return "explore"
-    elif re.search(r'\b(talk|speak|ask|inquire)\b', user_message):
-        return "talk"
-    elif "surrender" in user_message:
-        return "surrender"
-
-    # Use context to help determine the action if no direct match is found
-    if context.get('expecting_riddle_answer'):
-        return "riddle"
-    elif context.get('in_combat'):
-        return "combat"
-
-    # Default to unknown, to be handled dynamically by AI
-    return "unknown"
-
 class ZenQuest:
     def __init__(self):
         self.current_scene = None
@@ -475,13 +447,13 @@ class ZenQuest:
         self.max_quest_steps = 5
         self.current_step = 0
         self.story = []
+        self.suggested_actions = []
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.quest_active = True
         self.player_hp = 100
         self.current_step = 0
         self.story = await self.generate_story()
-        self.current_scene = self.story[self.current_step]
         await self.send_scene(update, context)
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -498,36 +470,74 @@ class ZenQuest:
             await update.message.reply_text("That action is not possible in this realm. Please choose a more realistic approach.")
             return
 
-        self.current_step += 1
-        if self.current_step >= len(self.story):
-            await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+        # Process the user's choice and generate the next scene
+        next_scene = await self.generate_next_scene(user_input)
+        self.current_scene = next_scene
+        
+        if "combat" in self.current_scene.lower():
+            await initiate_combat(update, context)
         else:
-            self.current_scene = self.story[self.current_step]
-            if "combat" in self.current_scene.lower():
-                await initiate_combat(update, context)
-            else:
-                await self.send_scene(update, context)
+            await self.send_scene(update, context)
+
+        self.current_step += 1
+        if self.current_step >= self.max_quest_steps:
+            await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
 
     async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        message = self.current_scene
+        if not self.current_scene:
+            await update.message.reply_text("An error occurred. The quest cannot continue.")
+            return
 
-        # Split message if it's too long
-        max_length = 4000
-        for i in range(0, len(message), max_length):
-            await update.message.reply_text(message[i:i+max_length])
+        # Split the message into manageable chunks
+        chunks = self.split_message(self.current_scene)
+        
+        for chunk in chunks:
+            await update.message.reply_text(chunk)
 
-    async def generate_story(self):
-        prompt = """
-        Generate a 5-step Zen-themed quest story. Each step should include:
+        # Send suggested actions separately, if any
+        if self.suggested_actions:
+            suggestions_text = "Some possible actions you could take (but feel free to choose your own path):\n" + "\n".join(f"• {action}" for action in self.suggested_actions)
+            await update.message.reply_text(suggestions_text)
+
+    def split_message(self, message, max_length=4000):
+        # Split the message into sentences
+        sentences = message.split('. ')
+        chunks = []
+        current_chunk = ""
+
+        for sentence in sentences:
+            if len(current_chunk) + len(sentence) + 2 <= max_length:
+                current_chunk += sentence + ". "
+            else:
+                chunks.append(current_chunk.strip())
+                current_chunk = sentence + ". "
+
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+
+        return chunks
+
+    async def generate_next_scene(self, user_input):
+        prompt = f"""
+        Based on the user's action: "{user_input}"
+        Generate the next scene of the Zen-themed quest. Include:
         1. A vivid description of the environment
-        2. A challenge or decision for the player
-        3. Possible actions the player can take
+        2. A new challenge or decision for the player
+        3. Some possible actions the player might consider, but don't limit these to a specific number
         4. Any relevant philosophical or spiritual themes
-        Indicate if any step leads to combat.
-        Keep each step concise but engaging.
+        Keep the response engaging and allow for open-ended player choices.
         """
-        story_description = await generate_response(prompt, elaborate=True)
-        return story_description.split('\n\n')
+        response = await generate_response(prompt, elaborate=True)
+        
+        # Extract suggested actions from the response
+        self.suggested_actions = self.extract_suggestions(response)
+        
+        return response
+
+    def extract_suggestions(self, response):
+        # Extract any bulleted or numbered suggestions
+        suggestions = re.findall(r'[•\-\d+]\s*(.*?)(?=\n|$)', response)
+        return suggestions  # Return all found suggestions without limiting
 
     def is_unrealistic_action(self, action):
         unrealistic_actions = ["fly", "teleport", "magic", "superpowers"]
@@ -542,6 +552,18 @@ class ZenQuest:
         else:
             await update.message.reply_text(f"{reason} Your quest has ended.")
 
+    async def generate_story(self):
+        prompt = """
+        Generate a 5-step Zen-themed quest story. Each step should include:
+        1. A vivid description of the environment
+        2. A challenge or decision for the player
+        3. Some possible actions the player might consider, without limiting them
+        4. Any relevant philosophical or spiritual themes
+        Indicate if any step leads to combat.
+        Keep each step concise but engaging, and allow for player creativity.
+        """
+        story_description = await generate_response(prompt, elaborate=True)
+        return story_description.split('\n\n')
 # Initialize ZenQuest
 zen_quest = ZenQuest()
 
