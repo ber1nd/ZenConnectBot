@@ -451,12 +451,8 @@ async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     quest_step = await generate_quest_step(user_id, "start")
     await update.message.reply_text(quest_step['description'])
 
-    if quest_step['combat']:
-        await update.message.reply_text("A combat scenario has emerged. Type 'start' to begin combat.")
-        context.user_data['awaiting_combat'] = True
-        context.user_data['in_combat'] = True
-    else:
-        context.user_data['awaiting_action'] = True  # Indicate that the bot is waiting for player action
+    # Waiting for the player's first action
+    context.user_data['awaiting_action'] = True
 
 def get_player_action(user_message: str, context: dict) -> str:
     user_message = user_message.lower().strip()
@@ -496,28 +492,24 @@ async def zenquest_process_action(update: Update, context: ContextTypes.DEFAULT_
         await end_quest_failure(update, context, "You have surrendered the quest.")
         return
 
-    quest_step = await generate_quest_step(user_id, user_message)
-    
-    if action == "combat" and quest_step['combat']:
-        await update.message.reply_text(quest_step['description'])
-        await update.message.reply_text("A combat scenario has emerged. Type 'start' to begin combat.")
-        context.user_data['awaiting_combat'] = True
-        context.user_data['in_combat'] = True
-        return
-    
-    if action == "riddle":
-        await update.message.reply_text("You choose to solve the riddle.")
-        context.user_data['expecting_riddle_answer'] = True
-    
-    if action == "meditate":
-        await update.message.reply_text("You take a moment to meditate, regaining your focus and energy.")
+    if context.user_data.get('expecting_riddle_answer'):
+        # Process the riddle answer here
+        if is_correct_riddle_answer(user_message):
+            await update.message.reply_text("You have solved the riddle. Proceeding with the quest...")
+            context.user_data['expecting_riddle_answer'] = False
+        else:
+            await end_quest_failure(update, context, "You failed to solve the riddle. The quest ends.")
+            return
 
-    # Handle other actions like explore, talk, etc.
+    if action == "combat":
+        context.user_data['in_combat'] = True
+        await initiate_combat(update, context)
+        return
+
+    quest_step = await generate_quest_step(user_id, user_message)
 
     if 'end' in quest_step:
         context.user_data['zenquest_in_progress'] = False
-        context.user_data['in_combat'] = False
-        context.user_data['expecting_riddle_answer'] = False
         if quest_step['result'] == 'win':
             await reward_victory(update, context, quest_step['reward'])
         else:
@@ -525,7 +517,13 @@ async def zenquest_process_action(update: Update, context: ContextTypes.DEFAULT_
         return
     
     context.user_data['quest_step'] = current_step + 1
-    context.user_data['expecting_riddle_answer'] = False
+    await update.message.reply_text(quest_step['description'])
+
+    if quest_step['combat']:
+        context.user_data['in_combat'] = True
+        await initiate_combat(update, context)
+    else:
+        context.user_data['awaiting_action'] = True
 
 async def generate_quest_intro(user_id):
     prompt = """
@@ -553,6 +551,7 @@ async def end_quest_failure(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     await update.message.reply_text(message)
     await update.message.reply_text("Your quest has ended in failure.")
 
+
 async def reward_victory(update: Update, context: ContextTypes.DEFAULT_TYPE, reward: int):
     user_id = update.effective_user.id
     db = get_db_connection()
@@ -576,8 +575,57 @@ async def reward_victory(update: Update, context: ContextTypes.DEFAULT_TYPE, rew
         await update.message.reply_text("Your quest has ended in victory, but I'm having trouble updating your Zen Points.")
 
 
+def is_correct_riddle_answer(user_answer: str, correct_answer: str) -> bool:
+    # Simplified comparison, could be extended with more complex logic or synonyms
+    return user_answer.strip().lower() == correct_answer.strip().lower()
 
+async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    db = get_db_connection()
+    
+    if db:
+        try:
+            cursor = db.cursor(dictionary=True)
 
+            # Ensure the challenger exists in the users table
+            cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+            challenger = cursor.fetchone()
+            cursor.fetchall()  # Consume any remaining results
+
+            if not challenger:
+                await update.message.reply_text("You are not registered in the system. Please interact with the bot first.")
+                return
+
+            # Create a new PvP battle against the bot
+            opponent_id = 7283636452  # Bot's ID
+            context.user_data['challenger_energy'] = 50
+            context.user_data['opponent_energy'] = 50
+
+            cursor.execute("""
+                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
+                VALUES (%s, %s, %s, %s, 'pending')
+            """, (user_id, opponent_id, update.effective_chat.id, user_id))
+            db.commit()
+
+            await send_game_rules(context, user_id, opponent_id)
+            await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
+
+            # Start the combat automatically without the need for a 'start' command
+            await start_new_battle(update, context)
+            await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
+
+        except mysql.connector.Error as e:
+            logger.error(f"MySQL error in initiate_combat: {e}")
+            await update.message.reply_text("An error occurred while initiating the combat. Please try again later.")
+        except Exception as e:
+            logger.error(f"Unexpected error in initiate_combat: {e}", exc_info=True)
+            await update.message.reply_text("An unexpected error occurred. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 # PvP Functionality
 
