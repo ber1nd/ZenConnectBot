@@ -442,7 +442,7 @@ async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("zenquest_command was called")
     user_id = update.effective_user.id
     db = get_db_connection()
-    
+
     if db:
         try:
             cursor = db.cursor(dictionary=True)
@@ -456,40 +456,34 @@ async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             zen_points = result['zen_points']
             quest_intro = await generate_quest_intro(user_id)
             await update.message.reply_text(quest_intro)
-            
+
             quest_in_progress = True
             while quest_in_progress:
                 quest_step = await generate_quest_step(user_id)
-                logger.info(f"Quest Step: {quest_step['description']}")
+
+                # Present the quest step to the user with options
+                keyboard = [
+                    [InlineKeyboardButton(option, callback_data=f"quest_{option.lower().replace(' ', '_')}")]
+                    for option in quest_step['options']
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(quest_step['description'], reply_markup=reply_markup)
                 
-                if quest_step['combat']:
-                    await update.message.reply_text(quest_step['description'])
-                    # Directly initiate PvP without waiting for a command
-                    await initiate_combat(update, context)
-                    return  # Exit and wait for the next command
-                else:
-                    await update.message.reply_text(quest_step['description'])
-                    if 'end' in quest_step:
-                        quest_in_progress = False
-            
-            if quest_step['result'] == 'win':
-                zen_points += quest_step['reward']
-                cursor.execute("UPDATE users SET zen_points = %s WHERE user_id = %s", (zen_points, user_id))
-                db.commit()
-                await update.message.reply_text(f"Congratulations! You have completed the quest and earned {quest_step['reward']} Zen Points.")
-            else:
-                await update.message.reply_text("You have failed the quest. Try again by using /zenquest.")
-        
+                context.user_data['awaiting_response'] = True
+                context.user_data['current_quest_step'] = quest_step
+                return  # Wait for user to choose an action
+
         except Exception as e:
             logger.error(f"Error in zenquest_command: {e}")
             await update.message.reply_text("An error occurred during the quest. Please try again later.")
-        
+
         finally:
             if db.is_connected():
                 cursor.close()
                 db.close()
     else:
         await update.message.reply_text("I'm having trouble accessing my memory right now. Please try again later.")
+
 
 async def generate_quest_intro(user_id):
     prompt = """
@@ -501,16 +495,75 @@ async def generate_quest_intro(user_id):
 
 async def generate_quest_step(user_id):
     prompt = """
-    The monk continues on his journey. Generate the next challenge he faces. This could be a riddle, a choice, a puzzle, or a combat scenario.
-    If it's combat, mention 'combat' in the response so that it can be handled separately.
+    The monk continues on his journey. Generate the next challenge he faces. 
+    This could be a riddle, a choice, a puzzle, or a combat scenario.
+    Provide multiple options for the player to choose from.
     """
     step = await generate_response(prompt, elaborate=True)
+    options = ["Fight", "Solve a riddle", "Run away", "Meditate"]  # Example options, can vary dynamically
     return {
         "description": step, 
+        "options": options, 
         "combat": 'combat' in step, 
         "result": "win" if "victory" in step else "lose", 
         "reward": random.randint(10, 50)
     }
+
+async def generate_riddle():
+    prompt = """
+    You are a wise Zen master. Present a challenging riddle to the player. The riddle should be thought-provoking and related to Zen philosophy or nature.
+    """
+    riddle = await generate_response(prompt, elaborate=True)
+    return riddle
+
+async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    # Retrieve user's current health and energy
+    current_hp = context.user_data.get('challenger_hp', 100)
+    current_energy = context.user_data.get('challenger_energy', 50)
+
+    # Meditate to restore some health and energy
+    restored_hp = min(100, current_hp + 20)
+    restored_energy = min(100, current_energy + 20)
+    
+    context.user_data['challenger_hp'] = restored_hp
+    context.user_data['challenger_energy'] = restored_energy
+
+    await update.message.reply_text(
+        f"You meditate, restoring your health and energy.\n"
+        f"💚 Health: {restored_hp}/100\n"
+        f"💠 Energy: {restored_energy}/100"
+    )
+    
+
+
+async def handle_quest_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    choice = query.data.split('_')[1]
+    
+    if context.user_data.get('awaiting_response'):
+        quest_step = context.user_data.get('current_quest_step')
+        
+        if choice == "fight":
+            await update.callback_query.message.reply_text("You have chosen to fight!")
+            await initiate_combat(update, context)
+        elif choice == "solve_a_riddle":
+            await update.callback_query.message.reply_text("You have chosen to solve a riddle!")
+            riddle = await generate_riddle()
+            context.user_data['awaiting_riddle_answer'] = True
+            await update.callback_query.message.reply_text(riddle)
+        elif choice == "run_away":
+            await update.callback_query.message.reply_text("You have chosen to run away. The journey ends here.")
+            context.user_data['awaiting_response'] = False
+        elif choice == "meditate":
+            await update.callback_query.message.reply_text("You have chosen to meditate.")
+            await meditate(update, context)
+        else:
+            await update.callback_query.message.reply_text("Unknown choice. Please try again.")
+
+        context.user_data['awaiting_response'] = False
+    else:
+        await update.callback_query.message.reply_text("You're not in the middle of a quest.")
 
 async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
