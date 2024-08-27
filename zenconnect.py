@@ -483,26 +483,14 @@ def get_player_action(user_message: str, context: dict) -> str:
     return "unknown"
 
 async def zenquest_process_action(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str):
-    user_id = update.effective_user.id
-    current_step = context.user_data.get('quest_step', 0)
-
+    # Identify the player's intent and manage quest flow
     action = get_player_action(user_message, context.user_data)
 
     if action == "surrender":
         await end_quest_failure(update, context, "You have surrendered the quest.")
         return
 
-    if context.user_data.get('expecting_riddle_answer'):
-        correct_answer = context.user_data.get('current_riddle_answer')
-        if await is_correct_riddle_answer(user_message, correct_answer):
-            await update.message.reply_text("Correct! You may proceed on your journey.")
-            context.user_data['expecting_riddle_answer'] = False
-        else:
-            await update.message.reply_text("Incorrect answer. You face a new challenge!")
-            await initiate_combat(update, context)
-            return
-    
-    quest_step = await generate_quest_step(user_id, user_message)
+    quest_step = await generate_quest_step(context.user_data['user_id'], user_message)
     
     if action == "combat" and quest_step['combat']:
         await update.message.reply_text(quest_step['description'])
@@ -510,27 +498,31 @@ async def zenquest_process_action(update: Update, context: ContextTypes.DEFAULT_
         return
     
     if action == "riddle":
-        await update.message.reply_text("You choose to solve the riddle.")
-        riddle = await generate_riddle()
         context.user_data['expecting_riddle_answer'] = True
-        context.user_data['current_riddle_answer'] = riddle
-        await update.message.reply_text(riddle)
-        return
     
-    # Handle other actions like explore, talk, etc.
+    # Handle player actions dynamically
+    # For riddle, exploration, meditation, etc.
 
+    # If quest ends, based on the quest step
     if 'end' in quest_step:
         context.user_data['zenquest_in_progress'] = False
-        context.user_data['in_combat'] = False
-        context.user_data['expecting_riddle_answer'] = False
         if quest_step['result'] == 'win':
             await reward_victory(update, context, quest_step['reward'])
         else:
             await end_quest_failure(update, context, "You have failed the quest.")
         return
     
-    context.user_data['quest_step'] = current_step + 1
+    context.user_data['quest_step'] = context.user_data.get('quest_step', 0) + 1
     context.user_data['expecting_riddle_answer'] = False
+
+    # Send quest narrative in manageable parts to avoid truncation
+    quest_narrative = quest_step['description']
+    max_length = 4000
+    if len(quest_narrative) > max_length:
+        for i in range(0, len(quest_narrative), max_length):
+            await update.message.reply_text(quest_narrative[i:i + max_length])
+    else:
+        await update.message.reply_text(quest_narrative)
 
 async def generate_quest_intro(user_id):
     prompt = """
@@ -1042,7 +1034,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if a ZenQuest is active and handle quest-related input
     if context.user_data.get('zenquest_in_progress'):
         await zenquest_process_action(update, context, user_message)
-        return
+        return  # Prevent any further normal bot responses
 
     # Proceed with normal bot response if no quest is in progress
     bot_username = context.bot.username.lower()
