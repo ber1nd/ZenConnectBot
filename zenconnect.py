@@ -493,23 +493,36 @@ async def zenquest_process_action(update: Update, context: ContextTypes.DEFAULT_
         return
 
     if context.user_data.get('expecting_riddle_answer'):
-        # Process the riddle answer here
         if is_correct_riddle_answer(user_message):
-            await update.message.reply_text("You have solved the riddle. Proceeding with the quest...")
+            await update.message.reply_text("Correct! You may proceed on your journey.")
             context.user_data['expecting_riddle_answer'] = False
         else:
-            await end_quest_failure(update, context, "You failed to solve the riddle. The quest ends.")
+            await update.message.reply_text("Incorrect answer. You face a new challenge!")
+            # Optional: Initiate combat or other consequence
+            await initiate_combat(update, context)
             return
-
-    if action == "combat":
-        context.user_data['in_combat'] = True
+    
+    quest_step = await generate_quest_step(user_id, user_message)
+    
+    if action == "combat" and quest_step['combat']:
+        await update.message.reply_text(quest_step['description'])
         await initiate_combat(update, context)
         return
-
-    quest_step = await generate_quest_step(user_id, user_message)
+    
+    if action == "riddle":
+        await update.message.reply_text("You choose to solve the riddle.")
+        context.user_data['expecting_riddle_answer'] = True
+        return
+    
+    if action == "meditate":
+        await update.message.reply_text("You take a moment to meditate, regaining your focus and energy.")
+    
+    # Handle other actions like explore, talk, etc.
 
     if 'end' in quest_step:
         context.user_data['zenquest_in_progress'] = False
+        context.user_data['in_combat'] = False
+        context.user_data['expecting_riddle_answer'] = False
         if quest_step['result'] == 'win':
             await reward_victory(update, context, quest_step['reward'])
         else:
@@ -517,13 +530,7 @@ async def zenquest_process_action(update: Update, context: ContextTypes.DEFAULT_
         return
     
     context.user_data['quest_step'] = current_step + 1
-    await update.message.reply_text(quest_step['description'])
-
-    if quest_step['combat']:
-        context.user_data['in_combat'] = True
-        await initiate_combat(update, context)
-    else:
-        context.user_data['awaiting_action'] = True
+    context.user_data['expecting_riddle_answer'] = False
 
 async def generate_quest_intro(user_id):
     prompt = """
@@ -575,9 +582,10 @@ async def reward_victory(update: Update, context: ContextTypes.DEFAULT_TYPE, rew
 
     context.user_data['zenquest_in_progress'] = False  # Reset quest state
 
-def is_correct_riddle_answer(user_answer: str, correct_answer: str) -> bool:
-    # Simplified comparison, could be extended with more complex logic or synonyms
-    return user_answer.strip().lower() == correct_answer.strip().lower()
+def is_correct_riddle_answer(user_message: str) -> bool:
+    correct_answers = ["wind", "piano", "shadow", "time", "key", "echo"]  # Add more as needed
+    user_message = user_message.lower().strip()
+    return user_message in correct_answers
 
 async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1021,19 +1029,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.message.chat.type
     group_id = update.message.chat.id if chat_type == 'group' else None
 
-    # If a ZenQuest is active, delegate to the quest handler
+    # Check if a ZenQuest is active and handle the quest-related action
     if context.user_data.get('zenquest_in_progress'):
         await zenquest_process_action(update, context, user_message)
         return
 
-    # Existing logic for handling non-quest messages
+    # Proceed with normal bot response if no quest is in progress
     bot_username = context.bot.username.lower()
     if chat_type == 'group' and not (
         'zen' in user_message.lower() or 
         f'@{bot_username}' in user_message.lower()
     ):
         return  # Exit the function if it's a group message not meant for the bot
-
     # Rate limiting logic
     if not check_rate_limit(user_id):
         await update.message.reply_text("Please wait a moment before sending another message. Zen teaches us the value of patience.")
