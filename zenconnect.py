@@ -464,15 +464,13 @@ async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 if quest_step['combat']:
                     await update.message.reply_text(quest_step['description'])
-                    # Wait for user response to start combat
-                    await update.message.reply_text("Type 'start' to begin combat.")
-                    context.user_data['awaiting_combat'] = True  # Flag to wait for user input
+                    # Directly initiate PvP without waiting for a command
+                    await initiate_combat(update, context)
                     return  # Exit and wait for the next command
                 else:
                     await update.message.reply_text(quest_step['description'])
                     if 'end' in quest_step:
                         quest_in_progress = False
-                        context.user_data['awaiting_combat'] = False  # Reset the flag
             
             if quest_step['result'] == 'win':
                 zen_points += quest_step['reward']
@@ -515,8 +513,52 @@ async def generate_quest_step(user_id):
     }
 
 async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
-    await start_pvp(update, context)
+    user_id = update.effective_user.id
+    db = get_db_connection()
+    
+    if db:
+        try:
+            cursor = db.cursor(dictionary=True)
+
+            # Ensure the challenger exists in the users table
+            cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+            challenger = cursor.fetchone()
+            cursor.fetchall()  # Consume any remaining results
+
+            if not challenger:
+                await update.message.reply_text("You are not registered in the system. Please interact with the bot first.")
+                return
+
+            # Create a new PvP battle against the bot
+            opponent_id = 7283636452  # Bot's ID
+            context.user_data['challenger_energy'] = 50
+            context.user_data['opponent_energy'] = 50
+
+            cursor.execute("""
+                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
+                VALUES (%s, %s, %s, %s, 'pending')
+            """, (user_id, opponent_id, update.effective_chat.id, user_id))
+            db.commit()
+
+            await send_game_rules(context, user_id, opponent_id)
+            await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
+
+            # Call start_new_battle for bot-initiated battle
+            await start_new_battle(update, context)
+            await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
+
+        except mysql.connector.Error as e:
+            logger.error(f"MySQL error in initiate_combat: {e}")
+            await update.message.reply_text("An error occurred while initiating the combat. Please try again later.")
+        except Exception as e:
+            logger.error(f"Unexpected error in initiate_combat: {e}", exc_info=True)
+            await update.message.reply_text("An unexpected error occurred. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 
 
