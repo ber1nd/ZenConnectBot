@@ -459,9 +459,6 @@ async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['awaiting_action'] = True  # Indicate that the bot is waiting for player action
 
 def get_player_action(user_message: str, context: dict) -> str:
-    """
-    Determines the type of action the player intends to take based on their input.
-    """
     user_message = user_message.lower().strip()
 
     # Broad pattern matching and context-based interpretation
@@ -479,7 +476,7 @@ def get_player_action(user_message: str, context: dict) -> str:
         return "talk"
     elif "surrender" in user_message:
         return "surrender"
-    
+
     # Use context to help determine the action if no direct match is found
     if context.get('expecting_riddle_answer'):
         return "riddle"
@@ -514,7 +511,7 @@ async def zenquest_process_action(update: Update, context: ContextTypes.DEFAULT_
     
     if action == "meditate":
         await update.message.reply_text("You take a moment to meditate, regaining your focus and energy.")
-    
+
     # Handle other actions like explore, talk, etc.
 
     if 'end' in quest_step:
@@ -578,109 +575,7 @@ async def reward_victory(update: Update, context: ContextTypes.DEFAULT_TYPE, rew
     else:
         await update.message.reply_text("Your quest has ended in victory, but I'm having trouble updating your Zen Points.")
 
-async def generate_riddle():
-    prompt = """
-    You are a wise Zen master. Present a challenging riddle to the player. The riddle should be thought-provoking and related to Zen philosophy or nature.
-    """
-    riddle = await generate_response(prompt, elaborate=True)
-    return riddle
 
-async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    # Retrieve user's current health and energy
-    current_hp = context.user_data.get('challenger_hp', 100)
-    current_energy = context.user_data.get('challenger_energy', 50)
-
-    # Meditate to restore some health and energy
-    restored_hp = min(100, current_hp + 20)
-    restored_energy = min(100, current_energy + 20)
-    
-    context.user_data['challenger_hp'] = restored_hp
-    context.user_data['challenger_energy'] = restored_energy
-
-    await update.message.reply_text(
-        f"You meditate, restoring your health and energy.\n"
-        f"💚 Health: {restored_hp}/100\n"
-        f"💠 Energy: {restored_energy}/100"
-    )
-
-
-
-async def handle_quest_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    choice = query.data.split('_')[1]
-    
-    if context.user_data.get('awaiting_response'):
-        quest_step = context.user_data.get('current_quest_step')
-        
-        if choice == "fight":
-            await update.callback_query.message.reply_text("You have chosen to fight!")
-            await initiate_combat(update, context)
-        elif choice == "solve_a_riddle":
-            await update.callback_query.message.reply_text("You have chosen to solve a riddle!")
-            riddle = await generate_riddle()
-            context.user_data['awaiting_riddle_answer'] = True
-            await update.callback_query.message.reply_text(riddle)
-        elif choice == "run_away":
-            await update.callback_query.message.reply_text("You have chosen to run away. The journey ends here.")
-            context.user_data['awaiting_response'] = False
-        elif choice == "meditate":
-            await update.callback_query.message.reply_text("You have chosen to meditate.")
-            await meditate(update, context)
-        else:
-            await update.callback_query.message.reply_text("Unknown choice. Please try again.")
-
-        context.user_data['awaiting_response'] = False
-    else:
-        await update.callback_query.message.reply_text("You're not in the middle of a quest.")
-
-async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    db = get_db_connection()
-    
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
-
-            # Ensure the challenger exists in the users table
-            cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
-            challenger = cursor.fetchone()
-            cursor.fetchall()  # Consume any remaining results
-
-            if not challenger:
-                await update.message.reply_text("You are not registered in the system. Please interact with the bot first.")
-                return
-
-            # Create a new PvP battle against the bot
-            opponent_id = 7283636452  # Bot's ID
-            context.user_data['challenger_energy'] = 50
-            context.user_data['opponent_energy'] = 50
-
-            cursor.execute("""
-                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
-                VALUES (%s, %s, %s, %s, 'pending')
-            """, (user_id, opponent_id, update.effective_chat.id, user_id))
-            db.commit()
-
-            await send_game_rules(context, user_id, opponent_id)
-            await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
-
-            # Call start_new_battle for bot-initiated battle
-            await start_new_battle(update, context)
-            await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
-
-        except mysql.connector.Error as e:
-            logger.error(f"MySQL error in initiate_combat: {e}")
-            await update.message.reply_text("An error occurred while initiating the combat. Please try again later.")
-        except Exception as e:
-            logger.error(f"Unexpected error in initiate_combat: {e}", exc_info=True)
-            await update.message.reply_text("An unexpected error occurred. Please try again later.")
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 
 
