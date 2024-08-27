@@ -483,47 +483,46 @@ def get_player_action(user_message: str, context: dict) -> str:
     return "unknown"
 
 async def zenquest_process_action(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str):
-    # Identify the player's intent and manage quest flow
-    action = get_player_action(user_message, context.user_data)
+    # Retrieve or initialize quest state
+    quest_state = context.user_data.get('quest_state', {})
 
-    if action == "surrender":
-        await end_quest_failure(update, context, "You have surrendered the quest.")
-        return
+    if not quest_state:
+        quest_state = {
+            'current_step': 1,
+            'completed_steps': []
+        }
+        context.user_data['quest_state'] = quest_state
 
-    quest_step = await generate_quest_step(context.user_data['user_id'], user_message)
-    
-    if action == "combat" and quest_step['combat']:
-        await update.message.reply_text(quest_step['description'])
-        await initiate_combat(update, context)
-        return
-    
-    if action == "riddle":
-        context.user_data['expecting_riddle_answer'] = True
-    
-    # Handle player actions dynamically
-    # For riddle, exploration, meditation, etc.
+    current_step = quest_state['current_step']
+    completed_steps = quest_state['completed_steps']
 
-    # If quest ends, based on the quest step
-    if 'end' in quest_step:
-        context.user_data['zenquest_in_progress'] = False
-        if quest_step['result'] == 'win':
-            await reward_victory(update, context, quest_step['reward'])
+    # Process current step based on user input
+    if current_step == 1:
+        if user_message.strip() == "1":
+            await send_split_message(update, context, "You chose the first path. It leads you deeper into the forest where you encounter a mysterious figure...")
+            quest_state['current_step'] = 2
+            completed_steps.append(current_step)
+        elif user_message.strip() == "2":
+            await send_split_message(update, context, "You chose the second path. It takes you to a tranquil clearing where a riddle is inscribed on an ancient stone...")
+            quest_state['current_step'] = 2
+            completed_steps.append(current_step)
         else:
-            await end_quest_failure(update, context, "You have failed the quest.")
-        return
-    
-    context.user_data['quest_step'] = context.user_data.get('quest_step', 0) + 1
-    context.user_data['expecting_riddle_answer'] = False
-
-    # Send quest narrative in manageable parts to avoid truncation
-    quest_narrative = quest_step['description']
-    max_length = 4000
-    if len(quest_narrative) > max_length:
-        for i in range(0, len(quest_narrative), max_length):
-            await update.message.reply_text(quest_narrative[i:i + max_length])
+            await send_split_message(update, context, "Please choose a valid option: 1 or 2.")
+    elif current_step == 2:
+        # Example logic for step 2, extend with actual quest logic
+        if user_message.strip().lower() in ["solve riddle", "observe"]:
+            await send_split_message(update, context, "You solve the riddle and the path ahead becomes clear. You proceed further into the unknown...")
+            quest_state['current_step'] = 3
+            completed_steps.append(current_step)
+        else:
+            await send_split_message(update, context, "The path remains unclear. Choose to either 'solve riddle' or 'observe' the surroundings.")
     else:
-        await update.message.reply_text(quest_narrative)
+        # Implement further steps or handle the quest completion
+        await send_split_message(update, context, "The quest is progressing. Stay mindful of the journey ahead.")
 
+    # Save the updated state
+    context.user_data['quest_state'] = quest_state
+    
 async def generate_quest_intro(user_id):
     prompt = """
     Imagine the player as the main protagonist in a Zen-themed adventure. Describe the beginning of a unique quest where the player must face challenges that test their wisdom, courage, and skill. Use the player's name or refer to them as "you" to make it immersive.
@@ -634,6 +633,11 @@ async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.close()
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+
+async def send_split_message(update, context, text):
+    max_length = 4096  # Telegram's message length limit
+    for i in range(0, len(text), max_length):
+        await update.message.reply_text(text[i:i + max_length])
 
 # PvP Functionality
 
@@ -1103,11 +1107,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         response = await generate_response(prompt, elaborate)
 
+        # Break down response if it's too long for a single message
+        max_length = 4096  # Telegram's message length limit
+        for i in range(0, len(response), max_length):
+            await update.message.reply_text(response[i:i + max_length])
+
+        # Store the conversation in user memory
         new_memory = f"Student: {user_message}\nZen Monk: {response}"
         cursor.execute("INSERT INTO user_memory (user_id, group_id, memory) VALUES (%s, %s, %s)", (user_id, group_id, new_memory))
         db.commit()
-
-        await update.message.reply_text(response)
 
     except Error as e:
         logger.error(f"Database error in handle_message: {e}")
