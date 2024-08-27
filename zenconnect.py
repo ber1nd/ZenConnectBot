@@ -467,7 +467,6 @@ def get_player_action(user_message: str, context: dict) -> str:
     # Default to unknown, to be handled dynamically by AI
     return "unknown"
 
-
 class ZenQuest:
     def __init__(self):
         self.current_scene = None
@@ -475,15 +474,14 @@ class ZenQuest:
         self.player_hp = 100
         self.max_quest_steps = 5
         self.current_step = 0
-        self.wrong_choices = 0
-        self.max_wrong_choices = 3
+        self.story = []
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.quest_active = True
         self.player_hp = 100
         self.current_step = 0
-        self.wrong_choices = 0
-        self.current_scene = await self.generate_scene("start")
+        self.story = await self.generate_story()
+        self.current_scene = self.story[self.current_step]
         await self.send_scene(update, context)
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -500,49 +498,36 @@ class ZenQuest:
             await update.message.reply_text("That action is not possible in this realm. Please choose a more realistic approach.")
             return
 
-        self.current_scene = await self.generate_scene(user_input)
-
-        if self.current_scene.get("combat", False):
-            await initiate_combat(update, context)
-        elif self.current_scene.get("wrong_choice", False):
-            self.wrong_choices += 1
-            if self.wrong_choices >= self.max_wrong_choices:
-                await self.end_quest(update, context, victory=False, reason="You have made too many wrong choices.")
-            else:
-                await self.send_scene(update, context)
+        self.current_step += 1
+        if self.current_step >= len(self.story):
+            await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
         else:
-            self.current_step += 1
-            if self.current_step >= self.max_quest_steps:
-                await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+            self.current_scene = self.story[self.current_step]
+            if "combat" in self.current_scene.lower():
+                await initiate_combat(update, context)
             else:
                 await self.send_scene(update, context)
 
     async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        message = self.current_scene["description"]
+        message = self.current_scene
 
         # Split message if it's too long
         max_length = 4000
         for i in range(0, len(message), max_length):
             await update.message.reply_text(message[i:i+max_length])
 
-    async def generate_scene(self, input_action):
-        prompt = f"""
-        Generate a Zen-themed quest scene based on the following input action: {input_action}
-        The scene should include:
+    async def generate_story(self):
+        prompt = """
+        Generate a 5-step Zen-themed quest story. Each step should include:
         1. A vivid description of the environment
         2. A challenge or decision for the player
         3. Possible actions the player can take
         4. Any relevant philosophical or spiritual themes
-        5. Indicate if this action leads to combat or is a wrong choice
-        Keep the response concise but engaging.
+        Indicate if any step leads to combat.
+        Keep each step concise but engaging.
         """
-        scene_description = await generate_response(prompt, elaborate=True)
-
-        return {
-            "description": scene_description,
-            "combat": "combat" in scene_description.lower(),
-            "wrong_choice": "wrong choice" in scene_description.lower()
-        }
+        story_description = await generate_response(prompt, elaborate=True)
+        return story_description.split('\n\n')
 
     def is_unrealistic_action(self, action):
         unrealistic_actions = ["fly", "teleport", "magic", "superpowers"]
@@ -1021,9 +1006,7 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"Received message: {update.message.text}")
     user_id = update.effective_user.id
     user_message = update.message.text
     chat_type = update.message.chat.type
@@ -1042,7 +1025,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ):
         return  # Exit the function if it's a group message not meant for the bot
 
-    # Rate limiting logic
+    # Apply rate limiting
     if not check_rate_limit(user_id):
         await update.message.reply_text("Please wait a moment before sending another message. Zen teaches us the value of patience.")
         return
@@ -1084,13 +1067,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s AND group_id = %s ORDER BY timestamp DESC LIMIT 5", (user_id, group_id))
         else:
             cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s AND group_id IS NULL ORDER BY timestamp DESC LIMIT 5", (user_id,))
-        
+
         results = cursor.fetchall()
 
         memory = "\n".join([result[0] for result in results[::-1]]) if results else ""
-        
+
         elaborate = any(word in user_message.lower() for word in ['why', 'how', 'explain', 'elaborate', 'tell me more'])
-        
+
         prompt = f"""You are a wise Zen monk having a conversation with a student. 
         Here's the recent conversation history:
 
@@ -1105,7 +1088,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor.execute("INSERT INTO user_memory (user_id, group_id, memory) VALUES (%s, %s, %s)", (user_id, group_id, new_memory))
         db.commit()
 
-        await update.message.reply_text(response)
+        # Split and send the response if it's too long
+        max_length = 4000
+        for i in range(0, len(response), max_length):
+            await update.message.reply_text(response[i:i+max_length])
 
     except Error as e:
         logger.error(f"Database error in handle_message: {e}")
@@ -1115,6 +1101,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if db.is_connected():
             cursor.close()
             db.close()
+
 
 def check_rate_limit(user_id):
     now = datetime.now()
@@ -1174,6 +1161,10 @@ async def getbotid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def setup_handlers(application):
     application.add_handler(CommandHandler("zenquest", zenquest_command))
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        handle_message
+    ))
     application.add_handler(CommandHandler("subscribe", subscribe_command))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     application.add_handler(CommandHandler("subscriptionstatus", subscription_status_command))
@@ -1757,97 +1748,6 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if zen_quest.quest_active:
-        await zen_quest.handle_input(update, context)
-    else:
-        logger.info(f"Received message: {update.message.text}")
-        user_id = update.effective_user.id
-        user_message = update.message.text
-        chat_type = update.message.chat.type
-        group_id = update.message.chat.id if chat_type == 'group' else None
-
-    # Check if the message is in a group and contains 'Zen' or mentions the bot
-    bot_username = context.bot.username.lower()
-    if chat_type == 'group' and not (
-        'zen' in user_message.lower() or 
-        f'@{bot_username}' in user_message.lower()
-    ):
-        return  # Exit the function if it's a group message not meant for the bot
-
-    # Apply rate limiting
-    if not check_rate_limit(user_id):
-        await update.message.reply_text("Please wait a moment before sending another message. Zen teaches us the value of patience.")
-        return
-
-    rate_limit_dict[user_id].append(datetime.now())
-
-    db = get_db_connection()
-    if not db:
-        await update.message.reply_text("I'm having trouble accessing my memory right now. Please try again later.")
-        return
-
-    try:
-        cursor = db.cursor()
-        
-        # Ensure chat_type is either 'private' or 'group'
-        chat_type_db = 'private' if chat_type == 'private' else 'group'
-        
-        # Update or insert user information
-        cursor.execute("""
-            INSERT INTO users (user_id, username, first_name, last_name, chat_type)
-            VALUES (%s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-            username = VALUES(username),
-            first_name = VALUES(first_name),
-            last_name = VALUES(last_name),
-            chat_type = VALUES(chat_type)
-        """, (user_id, update.effective_user.username, update.effective_user.first_name, 
-              update.effective_user.last_name, chat_type_db))
-
-        # If it's a group chat, update group membership
-        if group_id:
-            cursor.execute("""
-                INSERT IGNORE INTO group_memberships (user_id, group_id)
-                VALUES (%s, %s)
-            """, (user_id, group_id))
-
-        # Fetch user memory
-        if group_id:
-            cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s AND group_id = %s ORDER BY timestamp DESC LIMIT 5", (user_id, group_id))
-        else:
-            cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s AND group_id IS NULL ORDER BY timestamp DESC LIMIT 5", (user_id,))
-        
-        results = cursor.fetchall()
-
-        memory = "\n".join([result[0] for result in results[::-1]]) if results else ""
-        
-        elaborate = any(word in user_message.lower() for word in ['why', 'how', 'explain', 'elaborate', 'tell me more'])
-        
-        prompt = f"""You are a wise Zen monk having a conversation with a student. 
-        Here's the recent conversation history:
-
-        {memory}
-
-        Student: {user_message}
-        Zen Monk: """
-
-        response = await generate_response(prompt, elaborate)
-
-        new_memory = f"Student: {user_message}\nZen Monk: {response}"
-        cursor.execute("INSERT INTO user_memory (user_id, group_id, memory) VALUES (%s, %s, %s)", (user_id, group_id, new_memory))
-        db.commit()
-
-        await update.message.reply_text(response)
-
-    except Error as e:
-        logger.error(f"Database error in handle_message: {e}")
-        await update.message.reply_text("I'm having trouble processing your message. Please try again later.")
-
-    finally:
-        if db.is_connected():
-            cursor.close()
-            db.close()
 
 def check_rate_limit(user_id):
     now = datetime.now()
