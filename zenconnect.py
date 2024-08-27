@@ -439,75 +439,144 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("zenquest_command was called")
+    user_id = update.effective_user.id
+    context.user_data['zenquest_in_progress'] = True
+    context.user_data['quest_step'] = 0
+    context.user_data['expecting_riddle_answer'] = False
+    context.user_data['in_combat'] = False
+
+    quest_intro = await generate_quest_intro(user_id)
+    await update.message.reply_text(quest_intro)
+    
+    quest_step = await generate_quest_step(user_id, "start")
+    await update.message.reply_text(quest_step['description'])
+
+    if quest_step['combat']:
+        await update.message.reply_text("A combat scenario has emerged. Type 'start' to begin combat.")
+        context.user_data['awaiting_combat'] = True
+        context.user_data['in_combat'] = True
+    else:
+        context.user_data['awaiting_action'] = True  # Indicate that the bot is waiting for player action
+
+def get_player_action(user_message: str, context: dict) -> str:
+    """
+    Determines the type of action the player intends to take based on their input.
+    """
+    user_message = user_message.lower().strip()
+
+    # Broad pattern matching and context-based interpretation
+    if re.search(r'\b(attack|strike|fight|engage)\b', user_message):
+        return "combat"
+    elif re.search(r'\b(solve|riddle|puzzle|think|contemplate)\b', user_message):
+        return "riddle"
+    elif re.search(r'\b(meditate|focus|calm|reflect)\b', user_message):
+        return "meditate"
+    elif re.search(r'\b(run|escape|flee|retreat)\b', user_message):
+        return "run"
+    elif re.search(r'\b(explore|search|look around|inspect|examine)\b', user_message):
+        return "explore"
+    elif re.search(r'\b(talk|speak|ask|inquire)\b', user_message):
+        return "talk"
+    elif "surrender" in user_message:
+        return "surrender"
+    
+    # Use context to help determine the action if no direct match is found
+    if context.get('expecting_riddle_answer'):
+        return "riddle"
+    elif context.get('in_combat'):
+        return "combat"
+
+    # Default to unknown, to be handled dynamically by AI
+    return "unknown"
+
+async def zenquest_process_action(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str):
+    user_id = update.effective_user.id
+    current_step = context.user_data.get('quest_step', 0)
+
+    action = get_player_action(user_message, context.user_data)
+
+    if action == "surrender":
+        await end_quest_failure(update, context, "You have surrendered the quest.")
+        return
+
+    quest_step = await generate_quest_step(user_id, user_message)
+    
+    if action == "combat" and quest_step['combat']:
+        await update.message.reply_text(quest_step['description'])
+        await update.message.reply_text("A combat scenario has emerged. Type 'start' to begin combat.")
+        context.user_data['awaiting_combat'] = True
+        context.user_data['in_combat'] = True
+        return
+    
+    if action == "riddle":
+        await update.message.reply_text("You choose to solve the riddle.")
+        context.user_data['expecting_riddle_answer'] = True
+    
+    if action == "meditate":
+        await update.message.reply_text("You take a moment to meditate, regaining your focus and energy.")
+    
+    # Handle other actions like explore, talk, etc.
+
+    if 'end' in quest_step:
+        context.user_data['zenquest_in_progress'] = False
+        context.user_data['in_combat'] = False
+        context.user_data['expecting_riddle_answer'] = False
+        if quest_step['result'] == 'win':
+            await reward_victory(update, context, quest_step['reward'])
+        else:
+            await end_quest_failure(update, context, "You have failed the quest.")
+        return
+    
+    context.user_data['quest_step'] = current_step + 1
+    context.user_data['expecting_riddle_answer'] = False
+
+async def generate_quest_intro(user_id):
+    prompt = """
+    You are a Zen monk on a journey of enlightenment. Describe the beginning of a unique adventure that will test the monk's wisdom, courage, and skill.
+    """
+    intro = await generate_response(prompt, elaborate=True)
+    return intro
+
+async def generate_quest_step(user_id, action):
+    prompt = f"""
+    The monk continues on his journey after choosing to {action}. Generate the next challenge. It could be a riddle, a choice, a puzzle, or a combat scenario. 
+    If it's combat, mention 'combat' in the response so that it can be handled separately.
+    """
+    step = await generate_response(prompt, elaborate=True)
+    return {
+        "description": step, 
+        "combat": 'combat' in step, 
+        "result": "win" if "victory" in step else "lose", 
+        "reward": random.randint(10, 50)
+    }
+
+async def end_quest_failure(update: Update, context: ContextTypes.DEFAULT_TYPE, message: str):
+    context.user_data['zenquest_in_progress'] = False
+    context.user_data['in_combat'] = False
+    await update.message.reply_text(message)
+    await update.message.reply_text("Your quest has ended in failure.")
+
+async def reward_victory(update: Update, context: ContextTypes.DEFAULT_TYPE, reward: int):
     user_id = update.effective_user.id
     db = get_db_connection()
 
     if db:
         try:
-            cursor = db.cursor(dictionary=True)
+            cursor = db.cursor()
             cursor.execute("SELECT zen_points FROM users WHERE user_id = %s", (user_id,))
             result = cursor.fetchone()
-
-            if not result:
-                await update.message.reply_text("You must start your Zen journey first by interacting with the bot.")
-                return
-
-            zen_points = result['zen_points']
-            quest_intro = await generate_quest_intro(user_id)
-            await update.message.reply_text(quest_intro)
-
-            quest_in_progress = True
-            while quest_in_progress:
-                quest_step = await generate_quest_step(user_id)
-
-                # Present the quest step to the user with options
-                keyboard = [
-                    [InlineKeyboardButton(option, callback_data=f"quest_{option.lower().replace(' ', '_')}")]
-                    for option in quest_step['options']
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                await update.message.reply_text(quest_step['description'], reply_markup=reply_markup)
-                
-                context.user_data['awaiting_response'] = True
-                context.user_data['current_quest_step'] = quest_step
-                return  # Wait for user to choose an action
-
-        except Exception as e:
-            logger.error(f"Error in zenquest_command: {e}")
-            await update.message.reply_text("An error occurred during the quest. Please try again later.")
-
+            zen_points = result[0] + reward if result else reward
+            
+            cursor.execute("UPDATE users SET zen_points = %s WHERE user_id = %s", (zen_points, user_id))
+            db.commit()
+            await update.message.reply_text(f"Congratulations! You have completed the quest and earned {reward} Zen Points.")
+        except Error as e:
+            logger.error(f"Error updating Zen points: {e}")
         finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
+            cursor.close()
+            db.close()
     else:
-        await update.message.reply_text("I'm having trouble accessing my memory right now. Please try again later.")
-
-
-async def generate_quest_intro(user_id):
-    prompt = """
-    You are a Zen monk on a journey of enlightenment. As you meditate under a sacred tree, you feel the presence of a challenge. 
-    Describe the beginning of a unique adventure that will test the monk's wisdom, courage, and skill.
-    """
-    intro = await generate_response(prompt, elaborate=True)
-    return intro
-
-async def generate_quest_step(user_id):
-    prompt = """
-    The monk continues on his journey. Generate the next challenge he faces. 
-    This could be a riddle, a choice, a puzzle, or a combat scenario.
-    Provide multiple options for the player to choose from.
-    """
-    step = await generate_response(prompt, elaborate=True)
-    options = ["Fight", "Solve a riddle", "Run away", "Meditate"]  # Example options, can vary dynamically
-    return {
-        "description": step, 
-        "options": options, 
-        "combat": 'combat' in step, 
-        "result": "win" if "victory" in step else "lose", 
-        "reward": random.randint(10, 50)
-    }
+        await update.message.reply_text("Your quest has ended in victory, but I'm having trouble updating your Zen Points.")
 
 async def generate_riddle():
     prompt = """
@@ -534,7 +603,7 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💚 Health: {restored_hp}/100\n"
         f"💠 Energy: {restored_energy}/100"
     )
-    
+
 
 
 async def handle_quest_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
