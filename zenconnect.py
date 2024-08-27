@@ -462,7 +462,7 @@ def get_player_action(user_message: str, context: dict) -> str:
     user_message = user_message.lower().strip()
 
     # Broad pattern matching and context-based interpretation
-    if re.search(r'\b(attack|strike|fight|engage)\b', user_message):
+    if re.search(r'\b(start|attack|strike|fight|engage)\b', user_message):
         return "combat"
     elif re.search(r'\b(solve|riddle|puzzle|think|contemplate)\b', user_message):
         return "riddle"
