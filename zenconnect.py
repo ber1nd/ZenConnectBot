@@ -493,12 +493,12 @@ async def zenquest_process_action(update: Update, context: ContextTypes.DEFAULT_
         return
 
     if context.user_data.get('expecting_riddle_answer'):
-        if is_correct_riddle_answer(user_message):
+        correct_answer = context.user_data.get('current_riddle_answer')
+        if await is_correct_riddle_answer(user_message, correct_answer):
             await update.message.reply_text("Correct! You may proceed on your journey.")
             context.user_data['expecting_riddle_answer'] = False
         else:
             await update.message.reply_text("Incorrect answer. You face a new challenge!")
-            # Optional: Initiate combat or other consequence
             await initiate_combat(update, context)
             return
     
@@ -511,11 +511,11 @@ async def zenquest_process_action(update: Update, context: ContextTypes.DEFAULT_
     
     if action == "riddle":
         await update.message.reply_text("You choose to solve the riddle.")
+        riddle = await generate_riddle()
         context.user_data['expecting_riddle_answer'] = True
+        context.user_data['current_riddle_answer'] = riddle
+        await update.message.reply_text(riddle)
         return
-    
-    if action == "meditate":
-        await update.message.reply_text("You take a moment to meditate, regaining your focus and energy.")
     
     # Handle other actions like explore, talk, etc.
 
@@ -534,15 +534,14 @@ async def zenquest_process_action(update: Update, context: ContextTypes.DEFAULT_
 
 async def generate_quest_intro(user_id):
     prompt = """
-    You are a Zen monk on a journey of enlightenment. Describe the beginning of a unique adventure that will test the monk's wisdom, courage, and skill.
+    Imagine the player as the main protagonist in a Zen-themed adventure. Describe the beginning of a unique quest where the player must face challenges that test their wisdom, courage, and skill. Use the player's name or refer to them as "you" to make it immersive.
     """
     intro = await generate_response(prompt, elaborate=True)
     return intro
 
 async def generate_quest_step(user_id, action):
     prompt = f"""
-    The monk continues on his journey after choosing to {action}. Generate the next challenge. It could be a riddle, a choice, a puzzle, or a combat scenario. 
-    If it's combat, mention 'combat' in the response so that it can be handled separately.
+    The protagonist continues their journey after choosing to {action}. Describe the next challenge. It could be a riddle, a choice, a puzzle, or a combat scenario. The story should keep the player as the main character and be immersive.
     """
     step = await generate_response(prompt, elaborate=True)
     return {
@@ -582,10 +581,19 @@ async def reward_victory(update: Update, context: ContextTypes.DEFAULT_TYPE, rew
 
     context.user_data['zenquest_in_progress'] = False  # Reset quest state
 
-def is_correct_riddle_answer(user_message: str) -> bool:
-    correct_answers = ["wind", "piano", "shadow", "time", "key", "echo"]  # Add more as needed
-    user_message = user_message.lower().strip()
-    return user_message in correct_answers
+async def generate_riddle():
+    prompt = """
+    Create a challenging riddle that aligns with Zen philosophy or nature. The riddle should be open-ended and thought-provoking.
+    """
+    riddle = await generate_response(prompt, elaborate=True)
+    return riddle
+
+async def is_correct_riddle_answer(user_answer, correct_answer):
+    prompt = f"""
+    Consider the riddle: "{correct_answer}". Did the player answer correctly with: "{user_answer}"? Provide a response as 'yes' or 'no' only.
+    """
+    ai_response = await generate_response(prompt)
+    return "yes" in ai_response.lower()
 
 async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1026,10 +1034,12 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.message.text
-    chat_type = update.message.chat.type
-    group_id = update.message.chat.id if chat_type == 'group' else None
 
-    # Check if a ZenQuest is active and handle the quest-related action
+    # Define chat_type and group_id
+    chat_type = update.message.chat.type
+    group_id = update.message.chat.id if chat_type in ['group', 'supergroup'] else None
+
+    # Check if a ZenQuest is active and handle quest-related input
     if context.user_data.get('zenquest_in_progress'):
         await zenquest_process_action(update, context, user_message)
         return
@@ -1041,6 +1051,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f'@{bot_username}' in user_message.lower()
     ):
         return  # Exit the function if it's a group message not meant for the bot
+
     # Rate limiting logic
     if not check_rate_limit(user_id):
         await update.message.reply_text("Please wait a moment before sending another message. Zen teaches us the value of patience.")
@@ -1055,10 +1066,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         cursor = db.cursor()
-        
+
         # Ensure chat_type is either 'private' or 'group'
         chat_type_db = 'private' if chat_type == 'private' else 'group'
-        
+
         # Update or insert user information
         cursor.execute("""
             INSERT INTO users (user_id, username, first_name, last_name, chat_type)
