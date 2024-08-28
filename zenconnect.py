@@ -458,7 +458,6 @@ class ZenQuest:
         self.player_hp[user_id] = 100
         self.current_stage[user_id] = 0
         self.story[user_id] = await self.generate_story()
-        self.current_scene[user_id] = self.story[user_id][0]
         await self.send_scene(update, context)
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -479,19 +478,20 @@ class ZenQuest:
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
         user_id = update.effective_user.id
-        self.current_stage[user_id] += 1
         
-        if self.current_stage[user_id] >= self.max_stages:
+        next_scene = await self.generate_next_scene(self.story[user_id], self.current_stage[user_id], user_input)
+        self.current_scene[user_id] = next_scene
+        
+        if "COMBAT_START" in self.current_scene[user_id]:
+            self.in_combat[user_id] = True
+            await self.initiate_combat(update, context)
+        elif "QUEST_COMPLETE" in self.current_scene[user_id]:
             await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+        elif "QUEST_FAIL" in self.current_scene[user_id]:
+            await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
         else:
-            next_scene = await self.generate_next_scene(user_input)
-            self.current_scene[user_id] = next_scene
-            
-            if "combat" in self.current_scene[user_id].lower() and not self.in_combat.get(user_id, False):
-                self.in_combat[user_id] = True
-                await self.initiate_combat(update, context)
-            else:
-                await self.send_scene(update, context)
+            self.current_stage[user_id] += 1
+            await self.send_scene(update, context)
 
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -547,28 +547,44 @@ class ZenQuest:
 
     async def generate_story(self):
         prompt = """
-        Generate a 5-stage Zen-themed quest story. Each stage should include:
+        Generate a 5-stage Zen-themed quest story. The story should have:
+        1. A clear beginning introducing the quest's purpose
+        2. A middle section with increasing challenges and at least one combat situation
+        3. A climactic ending with a sense of achievement
+        
+        For each stage, include:
         1. A vivid description of the environment
-        2. A challenge or decision for the player
-        3. Some possible actions the player might consider
-        4. Any relevant philosophical or spiritual themes
-        Ensure a coherent narrative flow from start to finish, with increasing complexity and stakes.
-        The middle stages should include opportunities for both peaceful resolution and combat.
-        The final stage should present a climactic challenge.
+        2. Realistic challenges or decisions for the player
+        3. Potential consequences for the player's actions
+        4. Relevant philosophical or spiritual themes
+        
+        Ensure the story is coherent and engaging, with realistic scenarios a human could encounter.
+        Do not include titles for each scene. The story should flow naturally from one stage to the next.
+        Use 'COMBAT_START' to indicate where combat should begin, 'QUEST_COMPLETE' for a successful ending, and 'QUEST_FAIL' for unsuccessful endings.
         """
         story_description = await generate_response(prompt, elaborate=True)
         return story_description.split('\n\n')
 
-    async def generate_next_scene(self, user_input):
+    async def generate_next_scene(self, story, current_stage, user_input):
         prompt = f"""
-        Based on the user's action: "{user_input}"
+        Current stage of the quest: {current_stage + 1}
+        Previous scene: {story[current_stage]}
+        User's action: "{user_input}"
+
         Generate the next scene of the Zen-themed quest. Include:
-        1. A vivid description of the environment
-        2. A new challenge or decision for the player
-        3. Some possible actions the player might consider
+        1. A vivid description of the environment and the consequences of the user's action
+        2. A new realistic challenge or decision for the player
+        3. Potential consequences for future actions
         4. Any relevant philosophical or spiritual themes
-        Keep the response engaging and allow for open-ended player choices.
-        If appropriate, introduce a combat situation.
+
+        Keep the response engaging and allow for open-ended player choices. 
+        The scene should flow naturally without a title or scene heading.
+        If appropriate based on the story progression and user's action, introduce:
+        - A combat situation (indicate with 'COMBAT_START')
+        - A successful quest completion (indicate with 'QUEST_COMPLETE')
+        - An unsuccessful quest ending (indicate with 'QUEST_FAIL')
+
+        Ensure all situations and actions are realistic for a human character.
         """
         return await generate_response(prompt, elaborate=True)
 
@@ -588,7 +604,7 @@ class ZenQuest:
         self.current_stage.pop(user_id, None)
         self.story.pop(user_id, None)
         self.current_scene.pop(user_id, None)
-        
+
 zen_quest = ZenQuest()
 
 async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
