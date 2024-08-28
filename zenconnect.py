@@ -1055,7 +1055,6 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.message.text
@@ -1154,6 +1153,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if db.is_connected():
             cursor.close()
             db.close()
+
 
 def check_rate_limit(user_id):
     now = datetime.now()
