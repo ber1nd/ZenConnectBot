@@ -438,27 +438,27 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
-
-
 class ZenQuest:
     def __init__(self):
-        self.quest_active = False
-        self.player_hp = 100
-        self.current_stage = 0
+        self.quest_active = {}
+        self.player_hp = {}
+        self.current_stage = {}
         self.max_stages = 5
-        self.story = []
-        self.current_scene = None
-        self.in_combat = False
+        self.story = {}
+        self.current_scene = {}
+        self.in_combat = {}
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        self.quest_active = True
-        self.player_hp = 100
-        self.current_stage = 0
-        self.story = await self.generate_story()
+        user_id = update.effective_user.id
+        self.quest_active[user_id] = True
+        self.player_hp[user_id] = 100
+        self.current_stage[user_id] = 0
+        self.story[user_id] = await self.generate_story()
         await self.send_scene(update, context)
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self.quest_active:
+        user_id = update.effective_user.id
+        if not self.quest_active.get(user_id, False):
             return
 
         user_input = update.message.text.lower()
@@ -467,25 +467,30 @@ class ZenQuest:
             await self.end_quest(update, context, victory=False, reason="You have surrendered your quest.")
             return
 
+        if user_input == "/interrupt":
+            await self.interrupt_quest(update, context)
+            return
+
         if self.is_unrealistic_action(user_input):
             await update.message.reply_text("That action is not possible in this realm. Please choose a more realistic approach.")
             return
 
-        if self.in_combat:
+        if self.in_combat.get(user_id, False):
             # Let the PvP system handle combat input
             return
         else:
             await self.progress_story(update, context, user_input)
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
-        self.current_stage += 1
-        if self.current_stage >= self.max_stages:
+        user_id = update.effective_user.id
+        self.current_stage[user_id] += 1
+        if self.current_stage[user_id] >= self.max_stages:
             await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
         else:
             next_scene = await self.generate_next_scene(user_input)
-            self.current_scene = next_scene
-            if "combat" in self.current_scene.lower():
-                self.in_combat = True
+            self.current_scene[user_id] = next_scene
+            if "combat" in self.current_scene[user_id].lower():
+                self.in_combat[user_id] = True
                 await self.initiate_combat(update, context)
             else:
                 await self.send_scene(update, context)
@@ -495,11 +500,12 @@ class ZenQuest:
         await initiate_combat(update, context)
 
     async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self.current_scene:
+        user_id = update.effective_user.id
+        if not self.current_scene.get(user_id):
             await update.message.reply_text("An error occurred. The quest cannot continue.")
             return
 
-        chunks = self.split_message(self.current_scene)
+        chunks = self.split_message(self.current_scene[user_id])
         for chunk in chunks:
             await update.message.reply_text(chunk)
 
@@ -548,7 +554,8 @@ class ZenQuest:
         return any(unrealistic_action in action for unrealistic_action in unrealistic_actions)
 
     async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
-        self.quest_active = False
+        user_id = update.effective_user.id
+        self.quest_active[user_id] = False
         if victory:
             zen_points = random.randint(10, 50)
             await update.message.reply_text(f"{reason} You have earned {zen_points} Zen points!")
@@ -556,12 +563,39 @@ class ZenQuest:
         else:
             await update.message.reply_text(f"{reason} Your quest has ended.")
 
+        # Clear quest data for this user
+        self.player_hp.pop(user_id, None)
+        self.current_stage.pop(user_id, None)
+        self.story.pop(user_id, None)
+        self.current_scene.pop(user_id, None)
+        self.in_combat.pop(user_id, None)
+
+    async def interrupt_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if self.quest_active.get(user_id, False):
+            self.quest_active[user_id] = False
+            await update.message.reply_text("Your quest has been interrupted. You can start a new one with /zenquest.")
+            # Clear quest data for this user
+            self.player_hp.pop(user_id, None)
+            self.current_stage.pop(user_id, None)
+            self.story.pop(user_id, None)
+            self.current_scene.pop(user_id, None)
+            self.in_combat.pop(user_id, None)
+        else:
+            await update.message.reply_text("You don't have an active quest to interrupt.")
+
 # Initialize ZenQuest
 zen_quest = ZenQuest()
 
 async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await zen_quest.start_quest(update, context)
+    user_id = update.effective_user.id
+    if zen_quest.quest_active.get(user_id, False):
+        await update.message.reply_text("You are already on a quest. Use /interrupt to end your current quest before starting a new one.")
+    else:
+        await zen_quest.start_quest(update, context)
 
+async def interrupt_quest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await zen_quest.interrupt_quest(update, context)
 
 async def handle_quest_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if zen_quest.quest_active:
@@ -1006,8 +1040,8 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("You have surrendered the battle. Your opponent is victorious.")
 
             # End the quest if it's active
-            if zen_quest.quest_active:
-                zen_quest.in_combat = False
+            if zen_quest.quest_active.get(user_id, False):
+                zen_quest.in_combat[user_id] = False
                 await zen_quest.end_quest(update, context, victory=False, reason="You have surrendered in combat.")
 
         except mysql.connector.Error as e:
@@ -1021,15 +1055,16 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.message.text
     chat_type = update.message.chat.type
     group_id = update.message.chat.id if chat_type == 'group' else None
 
-    # Check if a ZenQuest is active
-    if zen_quest.quest_active:
-        if zen_quest.in_combat:
+    # Check if a ZenQuest is active for this specific user
+    if zen_quest.quest_active.get(user_id, False):
+        if zen_quest.in_combat.get(user_id, False):
             # Let the PvP system handle combat input
             await execute_pvp_move_wrapper(update, context)
         else:
@@ -1189,6 +1224,7 @@ def setup_handlers(application):
     application.add_handler(CommandHandler("startpvp", start_pvp))
     application.add_handler(CommandHandler("acceptpvp", accept_pvp))
     application.add_handler(CommandHandler("surrender", surrender))
+    application.add_handler(CommandHandler("interrupt", interrupt_quest_command))
     application.add_handler(CommandHandler("deletedata", delete_data))
     application.add_handler(CommandHandler("getbotid", getbotid))
 
