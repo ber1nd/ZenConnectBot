@@ -454,11 +454,17 @@ class ZenQuest:
             await update.message.reply_text("Zen quests can only be started in private chats with the bot.")
             return
 
-        self.quest_active[user_id] = True
-        self.player_hp[user_id] = 100
-        self.current_stage[user_id] = 0
-        self.story[user_id] = await self.generate_story()
-        await self.send_scene(update, context)
+        try:
+            self.quest_active[user_id] = True
+            self.player_hp[user_id] = 100
+            self.current_stage[user_id] = 0
+            self.story[user_id] = await self.generate_story()
+            self.current_scene[user_id] = self.story[user_id][0]
+            await self.send_scene(update, context)
+        except Exception as e:
+            logger.error(f"Error starting quest: {e}")
+            await update.message.reply_text("An error occurred while starting the quest. Please try again.")
+            self.quest_active[user_id] = False
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -471,6 +477,10 @@ class ZenQuest:
             await self.end_quest(update, context, victory=False, reason="You have surrendered your quest.")
             return
 
+        if user_input == "/interrupt":
+            await self.interrupt_quest(update, context)
+            return
+
         if self.in_combat.get(user_id, False):
             await execute_pvp_move_wrapper(update, context)
         else:
@@ -479,19 +489,23 @@ class ZenQuest:
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
         user_id = update.effective_user.id
         
-        next_scene = await self.generate_next_scene(self.story[user_id], self.current_stage[user_id], user_input)
-        self.current_scene[user_id] = next_scene
-        
-        if "COMBAT_START" in self.current_scene[user_id]:
-            self.in_combat[user_id] = True
-            await self.initiate_combat(update, context)
-        elif "QUEST_COMPLETE" in self.current_scene[user_id]:
-            await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
-        elif "QUEST_FAIL" in self.current_scene[user_id]:
-            await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
-        else:
-            self.current_stage[user_id] += 1
-            await self.send_scene(update, context)
+        try:
+            next_scene = await self.generate_next_scene(self.story[user_id], self.current_stage[user_id], user_input)
+            self.current_scene[user_id] = next_scene
+            
+            if "COMBAT_START" in self.current_scene[user_id]:
+                self.in_combat[user_id] = True
+                await self.initiate_combat(update, context)
+            elif "QUEST_COMPLETE" in self.current_scene[user_id]:
+                await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+            elif "QUEST_FAIL" in self.current_scene[user_id]:
+                await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
+            else:
+                self.current_stage[user_id] += 1
+                await self.send_scene(update, context)
+        except Exception as e:
+            logger.error(f"Error progressing story: {e}")
+            await update.message.reply_text("An error occurred while processing your action. Please try again.")
 
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -585,6 +599,7 @@ class ZenQuest:
         - An unsuccessful quest ending (indicate with 'QUEST_FAIL')
 
         Ensure all situations and actions are realistic for a human character.
+        If the user attempts an impossible action (like flying), describe the realistic outcome.
         """
         return await generate_response(prompt, elaborate=True)
 
@@ -604,6 +619,20 @@ class ZenQuest:
         self.current_stage.pop(user_id, None)
         self.story.pop(user_id, None)
         self.current_scene.pop(user_id, None)
+
+    async def interrupt_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if self.quest_active.get(user_id, False):
+            self.quest_active[user_id] = False
+            self.in_combat[user_id] = False
+            await update.message.reply_text("Your quest has been interrupted. You can start a new one with /zenquest.")
+            # Clear quest data for this user
+            self.player_hp.pop(user_id, None)
+            self.current_stage.pop(user_id, None)
+            self.story.pop(user_id, None)
+            self.current_scene.pop(user_id, None)
+        else:
+            await update.message.reply_text("You don't have an active quest to interrupt.")
 
 zen_quest = ZenQuest()
 
@@ -1091,7 +1120,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if it's a private chat
     if chat_type == 'private':
         logger.info("Private chat detected, processing message")
-        if zen_quest.quest_active.get(user_id, False):
+        if user_message.lower() == '/interrupt':
+            await zen_quest.interrupt_quest(update, context)
+        elif zen_quest.quest_active.get(user_id, False):
             await zen_quest.handle_input(update, context)
         else:
             await process_message(update, context)
@@ -1568,7 +1599,6 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
     
     return result_message, user_hp, opponent_hp, user_energy, damage, heal, energy_cost, energy_gain, synergy_effect
 
-
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
     user_id = 7283636452 if bot_mode else update.effective_user.id
 
@@ -1649,8 +1679,8 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             db.commit()
             winner_name = "Bot" if winner_id == 7283636452 else update.effective_user.first_name if bot_mode else "You"
             await send_message(update, f"{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!\n{last_move_details}")
-            
-            # End combat in the quest
+        
+        # End combat in the quest
             if zen_quest.quest_active.get(user_id, False):
                 zen_quest.in_combat[user_id] = False
                 if winner_id == user_id:
