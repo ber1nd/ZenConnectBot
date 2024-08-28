@@ -495,6 +495,12 @@ class ZenQuest:
             next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id])
             self.current_scene[user_id] = next_scene
 
+        # Check for failure conditions
+            failure_keywords = ["kill innocent", "abandon quest", "betray", "give up"]
+            if any(keyword in user_input.lower() for keyword in failure_keywords):
+                await self.end_quest(update, context, victory=False, reason="Your actions have strayed from the path of wisdom.")
+                return
+
             if "COMBAT_START" in next_scene:
                 self.in_combat[user_id] = True
                 await self.initiate_combat(update, context)
@@ -506,6 +512,13 @@ class ZenQuest:
                 self.current_stage[user_id] += 1
                 await self.update_quest_state(user_id)
                 await self.send_scene(update, context)
+
+        # Check for combat keywords in user input
+            combat_keywords = ["fight", "attack", "battle", "confront", "challenge"]
+            if any(keyword in user_input.lower() for keyword in combat_keywords) and not self.in_combat[user_id]:
+                await update.message.reply_text("Your actions have led to a confrontation. Prepare for combat!")
+                self.in_combat[user_id] = True
+                await self.initiate_combat(update, context)
 
         except Exception as e:
             logger.error(f"Error progressing story: {e}", exc_info=True)
