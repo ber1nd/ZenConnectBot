@@ -551,21 +551,26 @@ class ZenQuest:
         Current quest state: {quest_state}
 
         Generate the next concise scene of the Zen-themed quest. Include:
-        1. A brief description of the environment and consequences of the user's action (max 2 sentences)
-        2. Three short, distinct choices for the player (each choice should be one sentence)
-        3. A subtle hint or challenge appropriate to the current quest state
-        4. A brief Zen-like insight or question
+        1. A very brief description of the environment and consequences of the user's action (1-2 sentences)
+        2. Three short, distinct choices for the player (each choice should be one short sentence)
+        3. A brief Zen-like insight or question (optional, 1 sentence)
 
-        Keep the response engaging and concise. If appropriate, introduce:
+        Regularly introduce challenging elements:
+        - Moral dilemmas that test the player's adherence to Zen principles
+        - Riddles or puzzles that require careful thought
+        - Situations where hasty or violent actions could lead to quest failure
+
+        If appropriate, introduce:
         - A combat situation (indicate with 'COMBAT_START')
         - A successful quest completion (indicate with 'QUEST_COMPLETE')
         - An unsuccessful quest ending (indicate with 'QUEST_FAIL')
 
         Ensure all situations and actions are realistic for a human character.
-        The quest should only end if the player's choices naturally lead to a conclusion.
-        Total response should not exceed 100 words.
+        The quest should end if the player's choices lead to a natural conclusion or a significant failure.
+        Total response should not exceed 80 words.
         """
         return await generate_response(prompt, elaborate=False)
+
 
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -603,11 +608,16 @@ class ZenQuest:
             return
 
         scene = self.current_scene[user_id]
-        chunks = self.split_message(scene, max_length=2000)  # Reduced max_length
-        for chunk in chunks:
+        chunks = self.split_message(scene, max_length=4000)  # Increased max_length
+        for i, chunk in enumerate(chunks):
+            if i == len(chunks) - 1:  # If it's the last chunk
+                # Ensure the choices are in this message
+                choices = self.extract_choices(scene)
+                if choices:
+                    chunk += "\n\nYour choices:\n" + "\n".join(choices)
             await update.message.reply_text(chunk)
 
-    def split_message(self, message, max_length=2000):
+    def split_message(self, message, max_length=4000):
         chunks = []
         lines = message.split('\n')
         current_chunk = ""
@@ -620,6 +630,13 @@ class ZenQuest:
         if current_chunk:
             chunks.append(current_chunk.strip())
         return chunks
+    
+    def extract_choices(self, scene):
+        choices = []
+        for line in scene.split('\n'):
+            if line.strip().startswith(('1.', '2.', '3.')):
+                choices.append(line.strip())
+        return choices
 
     async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
         user_id = update.effective_user.id
