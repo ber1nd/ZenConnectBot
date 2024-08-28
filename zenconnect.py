@@ -1059,26 +1059,67 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.message.text
     chat_type = update.message.chat.type
-    group_id = update.message.chat.id if chat_type == 'group' else None
+    chat_id = update.message.chat_id
+    
+    logger.info(f"Message received - Chat Type: {chat_type}, User ID: {user_id}, Chat ID: {chat_id}")
+    logger.info(f"Message content: {user_message}")
+
+    # Check if it's a private chat
+    if chat_type == 'private':
+        logger.info("Private chat detected, processing message")
+        await process_message(update, context)
+        return
+
+    # From this point, we're dealing with a group chat
+    if chat_type != 'group' and chat_type != 'supergroup':
+        logger.warning(f"Unexpected chat type: {chat_type}. Ignoring message.")
+        return
+
+    bot_username = context.bot.username.lower() if context.bot.username else "unknown"
+    logger.info(f"Bot username: {bot_username}")
+
+    # Check if the bot should respond in this group chat
+    should_respond = False
+    if f'@{bot_username}' in user_message.lower():
+        should_respond = True
+        logger.info("Bot mentioned in the message")
+    elif 'zen' in user_message.lower():
+        should_respond = True
+        logger.info("'zen' keyword found in the message")
+    elif any(cmd in user_message.lower() for cmd in ['/start', '/help', '/zenquest', '/checkpoints', '/startpvp', '/surrender']):
+        should_respond = True
+        logger.info("Command detected in the message")
+
+    if not should_respond:
+        logger.info("Ignoring group message - bot not mentioned and no keywords/commands found")
+        return
+
+    logger.info("Bot will respond to this group message")
 
     # Check if a ZenQuest is active for this specific user
     if zen_quest.quest_active.get(user_id, False):
+        logger.info(f"ZenQuest active for user {user_id}")
         if zen_quest.in_combat.get(user_id, False):
-            # Let the PvP system handle combat input
+            logger.info(f"User {user_id} is in combat")
             await execute_pvp_move_wrapper(update, context)
         else:
+            logger.info(f"Handling ZenQuest input for user {user_id}")
             await zen_quest.handle_input(update, context)
         return
 
-    # Proceed with normal bot response if no quest is in progress
-    bot_username = context.bot.username.lower()
-    if chat_type == 'group':
-        # In group chats, only respond if the bot is mentioned or 'zen' is in the message
-        if not (f'@{bot_username}' in user_message.lower() or 'zen' in user_message.lower()):
-            return  # Exit the function if it's a group message not meant for the bot
+    # Process the message
+    await process_message(update, context)
+
+async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_message = update.message.text
+    chat_id = update.message.chat_id
+
+    logger.info(f"Processing message for User ID: {user_id}, Chat ID: {chat_id}")
 
     # Apply rate limiting
     if not check_rate_limit(user_id):
+        logger.info(f"Rate limit exceeded for user {user_id}")
         await update.message.reply_text("Please wait a moment before sending another message. Zen teaches us the value of patience.")
         return
 
@@ -1086,14 +1127,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     db = get_db_connection()
     if not db:
+        logger.error("Failed to establish database connection")
         await update.message.reply_text("I'm having trouble accessing my memory right now. Please try again later.")
         return
 
     try:
         cursor = db.cursor()
-
-        # Ensure chat_type is either 'private' or 'group'
-        chat_type_db = 'private' if chat_type == 'private' else 'group'
 
         # Update or insert user information
         cursor.execute("""
@@ -1105,21 +1144,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             last_name = VALUES(last_name),
             chat_type = VALUES(chat_type)
         """, (user_id, update.effective_user.username, update.effective_user.first_name, 
-              update.effective_user.last_name, chat_type_db))
+              update.effective_user.last_name, 'group' if update.message.chat.type in ['group', 'supergroup'] else 'private'))
 
         # If it's a group chat, update group membership
-        if group_id:
+        if update.message.chat.type in ['group', 'supergroup']:
             cursor.execute("""
                 INSERT IGNORE INTO group_memberships (user_id, group_id)
                 VALUES (%s, %s)
-            """, (user_id, group_id))
+            """, (user_id, chat_id))
 
         # Fetch user memory
-        if group_id:
-            cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s AND group_id = %s ORDER BY timestamp DESC LIMIT 5", (user_id, group_id))
-        else:
-            cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s AND group_id IS NULL ORDER BY timestamp DESC LIMIT 5", (user_id,))
-
+        cursor.execute("SELECT memory FROM user_memory WHERE user_id = %s ORDER BY timestamp DESC LIMIT 5", (user_id,))
         results = cursor.fetchall()
 
         memory = "\n".join([result[0] for result in results[::-1]]) if results else ""
@@ -1134,16 +1169,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         Student: {user_message}
         Zen Monk: """
 
+        logger.info("Generating response")
         response = await generate_response(prompt, elaborate)
+        logger.info("Response generated")
 
         new_memory = f"Student: {user_message}\nZen Monk: {response}"
-        cursor.execute("INSERT INTO user_memory (user_id, group_id, memory) VALUES (%s, %s, %s)", (user_id, group_id, new_memory))
+        cursor.execute("INSERT INTO user_memory (user_id, group_id, memory) VALUES (%s, %s, %s)", (user_id, chat_id if update.message.chat.type in ['group', 'supergroup'] else None, new_memory))
         db.commit()
 
         # Split and send the response if it's too long
         max_length = 4000
         for i in range(0, len(response), max_length):
             await update.message.reply_text(response[i:i+max_length])
+        logger.info("Response sent successfully")
 
     except Error as e:
         logger.error(f"Database error in handle_message: {e}")
@@ -1153,6 +1191,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if db.is_connected():
             cursor.close()
             db.close()
+        logger.info("Database connection closed")
 
 
 def check_rate_limit(user_id):
