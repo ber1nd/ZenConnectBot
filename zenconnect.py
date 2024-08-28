@@ -454,6 +454,7 @@ class ZenQuest:
         self.player_hp[user_id] = 100
         self.current_stage[user_id] = 0
         self.story[user_id] = await self.generate_story()
+        self.current_scene[user_id] = self.story[user_id][0]  # Set the first scene
         await self.send_scene(update, context)
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
