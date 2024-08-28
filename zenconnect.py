@@ -666,7 +666,7 @@ class ZenQuest:
             self.story.pop(user_id, None)
             self.current_scene.pop(user_id, None)
         else:
-            await update.message.reply_text("You don't have an active quest to interrupt.")
+            await update.message.reply_text("You don't have an active quest to interrupt")
 
 zen_quest = ZenQuest()
 
