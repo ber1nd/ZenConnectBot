@@ -537,23 +537,22 @@ class ZenQuest:
         User's action: "{user_input}"
         Current quest state: {quest_state}
 
-        Generate the next scene of the Zen-themed quest. Include:
-        1. A vivid description of the environment and the consequences of the user's action
-        2. At least three new choices for the player, each with potential risks and rewards
-        3. Challenges or dilemmas appropriate to the current quest state
-        4. Relevant philosophical or spiritual themes
+        Generate the next concise scene of the Zen-themed quest. Include:
+        1. A brief description of the environment and consequences of the user's action (max 2 sentences)
+        2. Three short, distinct choices for the player (each choice should be one sentence)
+        3. A subtle hint or challenge appropriate to the current quest state
+        4. A brief Zen-like insight or question
 
-        Keep the response engaging and allow for open-ended player choices. 
-        If appropriate based on the story progression and user's action, introduce:
+        Keep the response engaging and concise. If appropriate, introduce:
         - A combat situation (indicate with 'COMBAT_START')
         - A successful quest completion (indicate with 'QUEST_COMPLETE')
         - An unsuccessful quest ending (indicate with 'QUEST_FAIL')
 
         Ensure all situations and actions are realistic for a human character.
-        The quest should only end (QUEST_COMPLETE or QUEST_FAIL) if the player's choices naturally lead to a conclusion.
-        Do not use any scene titles or headers.
+        The quest should only end if the player's choices naturally lead to a conclusion.
+        Total response should not exceed 100 words.
         """
-        return await generate_response(prompt, elaborate=True)
+        return await generate_response(prompt, elaborate=False)
 
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -590,19 +589,21 @@ class ZenQuest:
             await update.message.reply_text("An error occurred. The quest cannot continue.")
             return
 
-        chunks = self.split_message(self.current_scene[user_id])
+        scene = self.current_scene[user_id]
+        chunks = self.split_message(scene, max_length=2000)  # Reduced max_length
         for chunk in chunks:
             await update.message.reply_text(chunk)
 
-    def split_message(self, message, max_length=4000):
+    def split_message(self, message, max_length=2000):
         chunks = []
+        lines = message.split('\n')
         current_chunk = ""
-        for sentence in message.split('. '):
-            if len(current_chunk) + len(sentence) + 2 <= max_length:
-                current_chunk += sentence + ". "
+        for line in lines:
+            if len(current_chunk) + len(line) + 1 <= max_length:
+                current_chunk += line + "\n"
             else:
                 chunks.append(current_chunk.strip())
-                current_chunk = sentence + ". "
+                current_chunk = line + "\n"
         if current_chunk:
             chunks.append(current_chunk.strip())
         return chunks
