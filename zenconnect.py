@@ -439,20 +439,21 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 
+
 class ZenQuest:
     def __init__(self):
-        self.current_scene = None
         self.quest_active = False
         self.player_hp = 100
-        self.max_quest_steps = 5
-        self.current_step = 0
+        self.current_stage = 0
+        self.max_stages = 5
         self.story = []
-        self.suggested_actions = []
+        self.current_scene = None
+        self.in_combat = False
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.quest_active = True
         self.player_hp = 100
-        self.current_step = 0
+        self.current_stage = 0
         self.story = await self.generate_story()
         await self.send_scene(update, context)
 
@@ -470,52 +471,64 @@ class ZenQuest:
             await update.message.reply_text("That action is not possible in this realm. Please choose a more realistic approach.")
             return
 
-        # Process the user's choice and generate the next scene
-        next_scene = await self.generate_next_scene(user_input)
-        self.current_scene = next_scene
-        
-        if "combat" in self.current_scene.lower():
-            await initiate_combat(update, context)
+        if self.in_combat:
+            # Let the PvP system handle combat input
+            return
         else:
-            await self.send_scene(update, context)
+            await self.progress_story(update, context, user_input)
 
-        self.current_step += 1
-        if self.current_step >= self.max_quest_steps:
+    async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
+        self.current_stage += 1
+        if self.current_stage >= self.max_stages:
             await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+        else:
+            next_scene = await self.generate_next_scene(user_input)
+            self.current_scene = next_scene
+            if "combat" in self.current_scene.lower():
+                self.in_combat = True
+                await self.initiate_combat(update, context)
+            else:
+                await self.send_scene(update, context)
+
+    async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # Call the existing initiate_combat function from the PvP system
+        await initiate_combat(update, context)
 
     async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.current_scene:
             await update.message.reply_text("An error occurred. The quest cannot continue.")
             return
 
-        # Split the message into manageable chunks
         chunks = self.split_message(self.current_scene)
-        
         for chunk in chunks:
             await update.message.reply_text(chunk)
 
-        # Send suggested actions separately, if any
-        if self.suggested_actions:
-            suggestions_text = "Some possible actions you could take (but feel free to choose your own path):\n" + "\n".join(f"• {action}" for action in self.suggested_actions)
-            await update.message.reply_text(suggestions_text)
-
     def split_message(self, message, max_length=4000):
-        # Split the message into sentences
-        sentences = message.split('. ')
         chunks = []
         current_chunk = ""
-
-        for sentence in sentences:
+        for sentence in message.split('. '):
             if len(current_chunk) + len(sentence) + 2 <= max_length:
                 current_chunk += sentence + ". "
             else:
                 chunks.append(current_chunk.strip())
                 current_chunk = sentence + ". "
-
         if current_chunk:
             chunks.append(current_chunk.strip())
-
         return chunks
+
+    async def generate_story(self):
+        prompt = """
+        Generate a 5-stage Zen-themed quest story. Each stage should include:
+        1. A vivid description of the environment
+        2. A challenge or decision for the player
+        3. Some possible actions the player might consider
+        4. Any relevant philosophical or spiritual themes
+        Ensure a coherent narrative flow from start to finish, with increasing complexity and stakes.
+        The middle stages should include opportunities for both peaceful resolution and combat.
+        The final stage should present a climactic challenge.
+        """
+        story_description = await generate_response(prompt, elaborate=True)
+        return story_description.split('\n\n')
 
     async def generate_next_scene(self, user_input):
         prompt = f"""
@@ -523,21 +536,12 @@ class ZenQuest:
         Generate the next scene of the Zen-themed quest. Include:
         1. A vivid description of the environment
         2. A new challenge or decision for the player
-        3. Some possible actions the player might consider, but don't limit these to a specific number
+        3. Some possible actions the player might consider
         4. Any relevant philosophical or spiritual themes
         Keep the response engaging and allow for open-ended player choices.
+        If appropriate, introduce a combat situation.
         """
-        response = await generate_response(prompt, elaborate=True)
-        
-        # Extract suggested actions from the response
-        self.suggested_actions = self.extract_suggestions(response)
-        
-        return response
-
-    def extract_suggestions(self, response):
-        # Extract any bulleted or numbered suggestions
-        suggestions = re.findall(r'[•\-\d+]\s*(.*?)(?=\n|$)', response)
-        return suggestions  # Return all found suggestions without limiting
+        return await generate_response(prompt, elaborate=True)
 
     def is_unrealistic_action(self, action):
         unrealistic_actions = ["fly", "teleport", "magic", "superpowers"]
@@ -552,18 +556,6 @@ class ZenQuest:
         else:
             await update.message.reply_text(f"{reason} Your quest has ended.")
 
-    async def generate_story(self):
-        prompt = """
-        Generate a 5-step Zen-themed quest story. Each step should include:
-        1. A vivid description of the environment
-        2. A challenge or decision for the player
-        3. Some possible actions the player might consider, without limiting them
-        4. Any relevant philosophical or spiritual themes
-        Indicate if any step leads to combat.
-        Keep each step concise but engaging, and allow for player creativity.
-        """
-        story_description = await generate_response(prompt, elaborate=True)
-        return story_description.split('\n\n')
 # Initialize ZenQuest
 zen_quest = ZenQuest()
 
@@ -1015,6 +1007,7 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # End the quest if it's active
             if zen_quest.quest_active:
+                zen_quest.in_combat = False
                 await zen_quest.end_quest(update, context, victory=False, reason="You have surrendered in combat.")
 
         except mysql.connector.Error as e:
@@ -1036,16 +1029,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check if a ZenQuest is active
     if zen_quest.quest_active:
-        await zen_quest.handle_input(update, context)
+        if zen_quest.in_combat:
+            # Let the PvP system handle combat input
+            await execute_pvp_move_wrapper(update, context)
+        else:
+            await zen_quest.handle_input(update, context)
         return
 
     # Proceed with normal bot response if no quest is in progress
     bot_username = context.bot.username.lower()
-    if chat_type == 'group' and not (
-        'zen' in user_message.lower() or 
-        f'@{bot_username}' in user_message.lower()
-    ):
-        return  # Exit the function if it's a group message not meant for the bot
+    if chat_type == 'group':
+        # In group chats, only respond if the bot is mentioned or 'zen' is in the message
+        if not (f'@{bot_username}' in user_message.lower() or 'zen' in user_message.lower()):
+            return  # Exit the function if it's a group message not meant for the bot
 
     # Apply rate limiting
     if not check_rate_limit(user_id):
@@ -1123,7 +1119,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if db.is_connected():
             cursor.close()
             db.close()
-
 
 def check_rate_limit(user_id):
     now = datetime.now()
