@@ -490,6 +490,20 @@ class ZenQuest:
         user_id = update.effective_user.id
         
         try:
+            logger.info(f"Progressing story for user {user_id}. Current stage: {self.current_stage.get(user_id)}")
+            logger.info(f"Story length: {len(self.story.get(user_id, []))}")
+            
+            if user_id not in self.story or not self.story[user_id]:
+                logger.error(f"Story not found for user {user_id}")
+                await update.message.reply_text("An error occurred. Your quest has been reset. Please start a new quest with /zenquest.")
+                self.quest_active[user_id] = False
+                return
+
+            if self.current_stage.get(user_id, 0) >= len(self.story[user_id]):
+                logger.error(f"Current stage {self.current_stage.get(user_id)} exceeds story length for user {user_id}")
+                await self.end_quest(update, context, victory=True, reason="You have reached the end of your journey!")
+                return
+
             next_scene = await self.generate_next_scene(self.story[user_id], self.current_stage[user_id], user_input)
             self.current_scene[user_id] = next_scene
             
@@ -504,8 +518,9 @@ class ZenQuest:
                 self.current_stage[user_id] += 1
                 await self.send_scene(update, context)
         except Exception as e:
-            logger.error(f"Error progressing story: {e}")
-            await update.message.reply_text("An error occurred while processing your action. Please try again.")
+            logger.error(f"Error progressing story: {e}", exc_info=True)
+            await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
+            self.quest_active[user_id] = False
 
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -604,21 +619,21 @@ class ZenQuest:
         return await generate_response(prompt, elaborate=True)
 
     async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
-        user_id = update.effective_user.id
-        self.quest_active[user_id] = False
-        self.in_combat[user_id] = False
-        if victory:
-            zen_points = random.randint(10, 50)
-            await update.message.reply_text(f"{reason} You have earned {zen_points} Zen points!")
-            await add_zen_points(update, context, zen_points)
-        else:
-            await update.message.reply_text(f"{reason} Your quest has ended.")
+            user_id = update.effective_user.id
+            self.quest_active[user_id] = False
+            self.in_combat[user_id] = False
+            if victory:
+                zen_points = random.randint(10, 50)
+                await update.message.reply_text(f"{reason} You have earned {zen_points} Zen points!")
+                await add_zen_points(update, context, zen_points)
+            else:
+                await update.message.reply_text(f"{reason} Your quest has ended.")
 
         # Clear quest data for this user
-        self.player_hp.pop(user_id, None)
-        self.current_stage.pop(user_id, None)
-        self.story.pop(user_id, None)
-        self.current_scene.pop(user_id, None)
+                self.player_hp.pop(user_id, None)
+                self.current_stage.pop(user_id, None)
+                self.story.pop(user_id, None)
+                self.current_scene.pop(user_id, None)
 
     async def interrupt_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -1120,7 +1135,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if it's a private chat
     if chat_type == 'private':
         logger.info("Private chat detected, processing message")
-        if user_message.lower() == '/interrupt':
+        if user_message.lower() == '/zenquest':
+            await zenquest_command(update, context)
+        elif user_message.lower() == '/interrupt':
             await zen_quest.interrupt_quest(update, context)
         elif zen_quest.quest_active.get(user_id, False):
             await zen_quest.handle_input(update, context)
