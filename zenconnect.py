@@ -122,28 +122,30 @@ def setup_database():
                 """)
                 
                 # Table for PvP battles
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS pvp_battles (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    challenger_id BIGINT,
-                    opponent_id BIGINT,
-                    group_id BIGINT,
-                    status ENUM('pending', 'in_progress', 'completed') DEFAULT 'pending',
-                    current_turn BIGINT,
-                    challenger_hp INT DEFAULT 100,
-                    opponent_hp INT DEFAULT 100,
-                    last_move_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (challenger_id) REFERENCES users(user_id),
-                    FOREIGN KEY (opponent_id) REFERENCES users(user_id)
-                )
-                """)
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pvp_battles (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            challenger_id BIGINT,
+            opponent_id BIGINT,
+            group_id BIGINT,
+            status ENUM('pending', 'in_progress', 'completed') DEFAULT 'pending',
+            current_turn BIGINT,
+            challenger_hp INT DEFAULT 100,
+            opponent_hp INT DEFAULT 100,
+            challenger_energy INT DEFAULT 50,
+            opponent_energy INT DEFAULT 50,  # Add this line
+            last_move_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (challenger_id) REFERENCES users(user_id),
+            FOREIGN KEY (opponent_id) REFERENCES users(user_id)
+        )
+        """)
                 
                 # Check if 'winner_id' column exists, and if not, add it
-                cursor.execute("SHOW COLUMNS FROM pvp_battles LIKE 'winner_id'")
-                result = cursor.fetchone()
-                if not result:
-                    cursor.execute("ALTER TABLE pvp_battles ADD COLUMN winner_id BIGINT NULL")
-                    logger.info("Added 'winner_id' column to 'pvp_battles' table.")
+            cursor.execute("SHOW COLUMNS FROM pvp_battles LIKE 'winner_id'")
+            result = cursor.fetchone()
+            if not result:
+                cursor.execute("ALTER TABLE pvp_battles ADD COLUMN winner_id BIGINT NULL")
+                logger.info("Added 'winner_id' column to 'pvp_battles' table.")
                 
             connection.commit()
             logger.info("Database setup completed successfully.")
