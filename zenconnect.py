@@ -479,6 +479,7 @@ class ZenQuest:
             await update.message.reply_text("An error occurred while starting the quest. Please try again.")
             self.quest_active[user_id] = False
 
+
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         if not self.quest_active.get(user_id, False) or update.message.chat.type != 'private':
@@ -530,29 +531,29 @@ class ZenQuest:
             await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
             self.quest_active[user_id] = False
 
-async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not self.current_scene.get(user_id):
-        await update.message.reply_text("An error occurred. The quest cannot continue.")
-        return
+    async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if not self.current_scene.get(user_id):
+            await update.message.reply_text("An error occurred. The quest cannot continue.")
+            return
 
-    scene = self.current_scene[user_id]
-    # Split the scene into description and choices
-    scene_parts = scene.split("Your choices:")
-    description = scene_parts[0].strip()
-    choices = scene_parts[1].strip() if len(scene_parts) > 1 else ""
+        scene = self.current_scene[user_id]
+        # Split the scene into description and choices
+        scene_parts = scene.split("Your choices:")
+        description = scene_parts[0].strip()
+        choices = scene_parts[1].strip() if len(scene_parts) > 1 else ""
 
     # Truncate the description if it's too long
-    max_description_length = 3000
-    if len(description) > max_description_length:
-        description = description[:max_description_length] + "..."
+        max_description_length = 3000
+        if len(description) > max_description_length:
+            description = description[:max_description_length] + "..."
 
     # Send the description
-    await update.message.reply_text(description)
+        await update.message.reply_text(description)
 
     # Send the choices separately, if they exist
-    if choices:
-        await update.message.reply_text(f"Your choices:\n{choices}")
+        if choices:
+            await update.message.reply_text(f"Your choices:\n{choices}")
 
 
     async def update_quest_state(self, user_id):
@@ -573,7 +574,7 @@ async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         Ensure the total length is concise to fit within message limits.
         Do not use any scene titles or headers.
         """
-        initial_scene = await generate_response(prompt, elaborate=False)
+        return await generate_response(prompt, elaborate=False)
 
     async def generate_next_scene(self, previous_scene, user_input, quest_state):
         prompt = f"""
