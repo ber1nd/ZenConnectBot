@@ -597,35 +597,38 @@ class ZenQuest:
         Do not repeat choices from the previous scene.
         """
         return await generate_response(prompt, elaborate=True)
+    
+async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    opponent_id = 7283636452  # Bot's ID
 
-    async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        opponent_id = 7283636452  # Bot's ID
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor(dictionary=True)
+            cursor.execute("""
+                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, status, current_turn, challenger_hp, opponent_hp, challenger_energy, opponent_energy)
+                VALUES (%s, %s, %s, 'in_progress', %s, 100, 100, 50, 50)
+            """, (user_id, opponent_id, update.effective_chat.id, user_id))
+            db.commit()
 
-        db = get_db_connection()
-        if db:
-            try:
-                cursor = db.cursor(dictionary=True)
-                cursor.execute("""
-                    INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
-                    VALUES (%s, %s, %s, %s, 'in_progress')
-                """, (user_id, opponent_id, update.effective_chat.id, user_id))
-                db.commit()
+            context.user_data['challenger_energy'] = 50
+            context.user_data['opponent_energy'] = 50
 
-                context.user_data['challenger_energy'] = 50
-                context.user_data['opponent_energy'] = 50
-
-                await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
-                await send_game_rules(context, user_id, opponent_id)
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="Choose your move:",
-                    reply_markup=generate_pvp_move_buttons(user_id)
-                )
-            finally:
-                if db.is_connected():
-                    cursor.close()
-                    db.close()
+            await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
+            await send_game_rules(context, user_id, opponent_id)
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Choose your move:",
+                reply_markup=generate_pvp_move_buttons(user_id)
+            )
+        except Exception as e:
+            logger.error(f"Error initiating combat: {e}")
+            await update.message.reply_text("An error occurred while initiating combat. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
 
     def split_scene_and_choices(self, scene):
         lines = scene.split('\n')
@@ -754,41 +757,7 @@ async def add_zen_points(update: Update, context: ContextTypes.DEFAULT_TYPE, poi
         logger.error(f"Error adding Zen points: {e}")
         await update.message.reply_text("An error occurred while updating your Zen points. Please try again later.")
 
-async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    db = get_db_connection()
 
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
-
-            # Create a new PvP battle against the bot
-            opponent_id = 7283636452  # Bot's ID
-            context.user_data['challenger_energy'] = 50
-            context.user_data['opponent_energy'] = 50
-
-            cursor.execute("""
-                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
-                VALUES (%s, %s, %s, %s, 'pending')
-            """, (user_id, opponent_id, update.effective_chat.id, user_id))
-            db.commit()
-
-            await send_game_rules(context, user_id, opponent_id)
-            await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
-
-            # Start the combat automatically
-            await start_new_battle(update, context)
-            await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
-
-        except mysql.connector.Error as e:
-            logger.error(f"MySQL error in initiate_combat: {e}")
-            await update.message.reply_text("An error occurred while initiating the combat. Please try again later.")
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 async def send_split_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message: str):
     max_message_length = 4000  # Telegram's message limit is 4096 characters, but we'll leave a margin
