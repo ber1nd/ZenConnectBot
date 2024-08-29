@@ -122,30 +122,28 @@ def setup_database():
                 """)
                 
                 # Table for PvP battles
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pvp_battles (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            challenger_id BIGINT,
-            opponent_id BIGINT,
-            group_id BIGINT,
-            status ENUM('pending', 'in_progress', 'completed') DEFAULT 'pending',
-            current_turn BIGINT,
-            challenger_hp INT DEFAULT 100,
-            opponent_hp INT DEFAULT 100,
-            challenger_energy INT DEFAULT 50,
-            opponent_energy INT DEFAULT 50,  # Add this line
-            last_move_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (challenger_id) REFERENCES users(user_id),
-            FOREIGN KEY (opponent_id) REFERENCES users(user_id)
-        )
-        """)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS pvp_battles (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    challenger_id BIGINT,
+                    opponent_id BIGINT,
+                    group_id BIGINT,
+                    status ENUM('pending', 'in_progress', 'completed') DEFAULT 'pending',
+                    current_turn BIGINT,
+                    challenger_hp INT DEFAULT 100,
+                    opponent_hp INT DEFAULT 100,
+                    last_move_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (challenger_id) REFERENCES users(user_id),
+                    FOREIGN KEY (opponent_id) REFERENCES users(user_id)
+                )
+                """)
                 
                 # Check if 'winner_id' column exists, and if not, add it
-            cursor.execute("SHOW COLUMNS FROM pvp_battles LIKE 'winner_id'")
-            result = cursor.fetchone()
-            if not result:
-                cursor.execute("ALTER TABLE pvp_battles ADD COLUMN winner_id BIGINT NULL")
-                logger.info("Added 'winner_id' column to 'pvp_battles' table.")
+                cursor.execute("SHOW COLUMNS FROM pvp_battles LIKE 'winner_id'")
+                result = cursor.fetchone()
+                if not result:
+                    cursor.execute("ALTER TABLE pvp_battles ADD COLUMN winner_id BIGINT NULL")
+                    logger.info("Added 'winner_id' column to 'pvp_battles' table.")
                 
             connection.commit()
             logger.info("Database setup completed successfully.")
@@ -489,45 +487,49 @@ class ZenQuest:
 
         user_input = update.message.text.lower()
 
-        # Check for PvP trigger keywords
-        combat_keywords = ["fight", "attack", "battle", "confront", "challenge", "kill"]
-        if any(keyword in user_input for keyword in combat_keywords) and not self.in_combat.get(user_id, False):
-            await update.message.reply_text("Your actions have led to a confrontation. Prepare for combat!")
-            self.in_combat[user_id] = True
-            await self.initiate_combat(update, context)
+        if any(action in user_input for action in self.unfeasible_actions):
+            await update.message.reply_text("That action is not possible for a human in this realm. Please choose a realistic action.")
             return
 
-    # Handle other quest inputs
-        await self.progress_story(update, context, user_input)
+        if any(action in user_input for action in self.failure_actions):
+            await self.end_quest(update, context, victory=False, reason="Your actions have led to the failure of your quest.")
+            return
+
+        if self.in_combat.get(user_id, False):
+            await execute_pvp_move_wrapper(update, context)
+        else:
+            await self.progress_story(update, context, user_input)
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
         user_id = update.effective_user.id
 
-        # Generate consequence based on the player's input and current quest state
-        consequence_prompt = f"""
-        In the current quest, the player has chosen the action: "{user_input}". 
-        Based on this action, and considering the current environment and quest state, 
-        describe the appropriate consequence. 
-        The consequence should be realistic and vary depending on the context: 
-        - If the action is morally questionable or violent, the consequence might involve law enforcement, 
-        spiritual retribution, or the loss of allies.
-        - If the player is in a village or populated area, local authorities or villagers should react. 
-        - If the action is against nature (e.g., killing an animal), consider consequences such as a vengeful spirit, bad karma, or environmental backlash.
+        try:
+            next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id])
+            self.current_scene[user_id] = next_scene
 
-        Ensure the consequence aligns with Zen principles and the overall theme of the quest. 
-        """
+            combat_keywords = ["fight", "attack", "battle", "confront", "challenge"]
+            if any(keyword in user_input.lower() for keyword in combat_keywords) and not self.in_combat.get(user_id, False):
+                await update.message.reply_text("Your actions have led to a confrontation. Prepare for combat!")
+                self.in_combat[user_id] = True
+                await self.initiate_combat(update, context)
+                return
 
-        consequence = await generate_response(consequence_prompt, elaborate=True)
+            if "COMBAT_START" in next_scene:
+                self.in_combat[user_id] = True
+                await self.initiate_combat(update, context)
+            elif "QUEST_COMPLETE" in next_scene:
+                await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+            elif "QUEST_FAIL" in next_scene:
+                await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
+            else:
+                self.current_stage[user_id] += 1
+                await self.update_quest_state(user_id)
+                await self.send_scene(update, context)
 
-        # Check if the action should result in quest failure
-        if "imprisoned" in consequence.lower() or "death" in consequence.lower() or "QUEST_FAIL" in consequence:
-            await update.message.reply_text(consequence)
-            await self.end_quest(update, context, victory=False, reason="Your actions have led to your downfall.")
-            return
-
-        # If the consequence does not end the quest, continue the story
-        await update.message.reply_text(consequence)
-        await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id])
+        except Exception as e:
+            logger.error(f"Error progressing story: {e}", exc_info=True)
+            await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
+            self.quest_active[user_id] = False
 
     async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -585,21 +587,22 @@ class ZenQuest:
         2. Three distinct, non-repeated choices for the player (each choice should be one sentence)
         3. A brief Zen-like insight or question (1 sentence)
 
-        Regularly introduce high-risk choices:
-        - Moral dilemmas that can result in death or failure
+        Regularly introduce challenging elements:
+        - Moral dilemmas that test the player's adherence to Zen principles
+        - Riddles or puzzles that require careful thought
         - Situations where hasty or violent actions could lead to quest failure
-        - Logical consequences of poor decisions (e.g., death, imprisonment, loss of allies)
 
         If appropriate, introduce:
         - A combat situation (indicate with 'COMBAT_START')
         - A successful quest completion (indicate with 'QUEST_COMPLETE')
         - An unsuccessful quest ending (indicate with 'QUEST_FAIL')
 
+        Ensure all situations and actions are realistic for a human character.
         The quest should end if the player's choices lead to a natural conclusion or a significant failure.
         Do not repeat choices from the previous scene.
         """
         return await generate_response(prompt, elaborate=True)
-    
+
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         opponent_id = 7283636452  # Bot's ID
@@ -609,12 +612,11 @@ class ZenQuest:
             try:
                 cursor = db.cursor(dictionary=True)
                 cursor.execute("""
-                    INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, status, current_turn, challenger_hp, opponent_hp)
-                    VALUES (%s, %s, %s, 'in_progress', %s, 100, 100)
+                    INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
+                    VALUES (%s, %s, %s, %s, 'in_progress')
                 """, (user_id, opponent_id, update.effective_chat.id, user_id))
                 db.commit()
 
-            # Initialize energy in context instead of the database
                 context.user_data['challenger_energy'] = 50
                 context.user_data['opponent_energy'] = 50
 
@@ -625,9 +627,6 @@ class ZenQuest:
                     text="Choose your move:",
                     reply_markup=generate_pvp_move_buttons(user_id)
                 )
-            except Exception as e:
-                logger.error(f"Error initiating combat: {e}")
-                await update.message.reply_text("An error occurred while initiating combat. Please try again later.")
             finally:
                 if db.is_connected():
                     cursor.close()
@@ -667,15 +666,7 @@ class ZenQuest:
             if line.strip().startswith(('1.', '2.', '3.')):
                 choices.append(line.strip())
         return choices
-    async def resolve_pvp_outcome(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool):
-        user_id = update.effective_user.id
 
-        if victory:
-            await update.message.reply_text("You have won the battle! The quest continues...")
-            await self.progress_story(update, context, "victory in combat")
-        else:
-            await self.end_quest(update, context, victory=False, reason="You have been defeated in combat.")
-            
     async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
         user_id = update.effective_user.id
         self.quest_active[user_id] = False
@@ -761,7 +752,41 @@ async def add_zen_points(update: Update, context: ContextTypes.DEFAULT_TYPE, poi
         logger.error(f"Error adding Zen points: {e}")
         await update.message.reply_text("An error occurred while updating your Zen points. Please try again later.")
 
+async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    db = get_db_connection()
 
+    if db:
+        try:
+            cursor = db.cursor(dictionary=True)
+
+            # Create a new PvP battle against the bot
+            opponent_id = 7283636452  # Bot's ID
+            context.user_data['challenger_energy'] = 50
+            context.user_data['opponent_energy'] = 50
+
+            cursor.execute("""
+                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
+                VALUES (%s, %s, %s, %s, 'pending')
+            """, (user_id, opponent_id, update.effective_chat.id, user_id))
+            db.commit()
+
+            await send_game_rules(context, user_id, opponent_id)
+            await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
+
+            # Start the combat automatically
+            await start_new_battle(update, context)
+            await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
+
+        except mysql.connector.Error as e:
+            logger.error(f"MySQL error in initiate_combat: {e}")
+            await update.message.reply_text("An error occurred while initiating the combat. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 async def send_split_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message: str):
     max_message_length = 4000  # Telegram's message limit is 4096 characters, but we'll leave a margin
@@ -1025,13 +1050,11 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db:
         try:
             cursor = db.cursor(dictionary=True)
-            # Fetch the active battle where the bot is involved
             cursor.execute("""
                 SELECT * FROM pvp_battles 
                 WHERE (challenger_id = 7283636452 OR opponent_id = 7283636452) AND status = 'in_progress'
             """)
             battle = cursor.fetchone()
-            cursor.fetchall()  # Consume any remaining results
 
             if not battle:
                 logger.info("No active battle found for the bot.")
@@ -1041,12 +1064,20 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info("It's not the bot's turn.")
                 return
 
-            # Determine bot's HP and opponent's HP
-            bot_hp = battle['challenger_hp'] if battle['challenger_id'] == 7283636452 else battle['opponent_hp']
-            opponent_hp = battle['opponent_hp'] if battle['challenger_id'] == 7283636452 else battle['challenger_hp']
+            # Determine if the bot is the challenger or opponent
+            bot_is_challenger = battle['challenger_id'] == 7283636452
 
-            # Retrieve bot's energy level
-            bot_energy = context.user_data.get('challenger_energy' if battle['challenger_id'] == 7283636452 else 'opponent_energy', 50)
+            # Retrieve bot's HP, energy, and previous move
+            if bot_is_challenger:
+                bot_hp = battle['challenger_hp']
+                bot_energy = context.user_data.get('challenger_energy', 50)
+                bot_previous_move = context.user_data.get('challenger_previous_move', 'None')
+                opponent_hp = battle['opponent_hp']
+            else:
+                bot_hp = battle['opponent_hp']
+                bot_energy = context.user_data.get('opponent_energy', 50)
+                bot_previous_move = context.user_data.get('opponent_previous_move', 'None')
+                opponent_hp = battle['challenger_hp']
 
             # Generate AI decision-making prompt
             prompt = f"""
@@ -1056,7 +1087,7 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             - Your HP: {bot_hp}/100
             - Opponent's HP: {opponent_hp}/100
             - Your Energy: {bot_energy}/100
-            - Last Move: {context.user_data.get('previous_move', 'None')}
+            - Your Last Move: {bot_previous_move}
 
             Available actions:
             - Strike: Deal moderate damage to the opponent. Costs 12 energy.
