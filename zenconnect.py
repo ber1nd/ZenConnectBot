@@ -708,6 +708,14 @@ async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await zen_quest.start_quest(update, context)
 
+async def handle_quest_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if zen_quest.quest_active.get(update.effective_user.id, False):
+        await zen_quest.handle_input(update, context)
+    else:
+        # If no quest is active, pass the message to the regular message handler
+        await handle_message(update, context)
+
+
 async def interrupt_quest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await zen_quest.interrupt_quest(update, context)
 
@@ -721,7 +729,7 @@ async def handle_quest_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 def setup_zenquest_handlers(application):
     application.add_handler(CommandHandler("zenquest", zenquest_command))
     application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.Chat(chat_id=lambda id: zen_quest.quest_active),
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
         handle_quest_input
     ))
 
