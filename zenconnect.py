@@ -499,38 +499,36 @@ class ZenQuest:
         else:
             await self.progress_story(update, context, user_input)
 
-async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
-    user_id = update.effective_user.id
+    async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
+        user_id = update.effective_user.id
 
-    try:
-        next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id])
-        self.current_scene[user_id] = next_scene
+        try:
+            next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id])
+            self.current_scene[user_id] = next_scene
 
-        # Check for combat keywords in user input or scene
-        combat_keywords = ["fight", "attack", "battle", "confront", "challenge", "duel", "combat", "clash", "face off"]
-        if (any(keyword in user_input.lower() for keyword in combat_keywords) or 
-            any(keyword in next_scene.lower() for keyword in combat_keywords)) and not self.in_combat.get(user_id, False):
-            await update.message.reply_text("Your actions have led to a confrontation. Prepare for combat!")
-            self.in_combat[user_id] = True
-            await self.initiate_combat(update, context)
-            return
+            combat_keywords = ["fight", "attack", "battle", "confront", "challenge"]
+            if any(keyword in user_input.lower() for keyword in combat_keywords) and not self.in_combat.get(user_id, False):
+                await update.message.reply_text("Your actions have led to a confrontation. Prepare for combat!")
+                self.in_combat[user_id] = True
+                await self.initiate_combat(update, context)
+                return
 
-        if "COMBAT_START" in next_scene:
-            self.in_combat[user_id] = True
-            await self.initiate_combat(update, context)
-        elif "QUEST_COMPLETE" in next_scene:
-            await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
-        elif "QUEST_FAIL" in next_scene:
-            await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
-        else:
-            self.current_stage[user_id] += 1
-            await self.update_quest_state(user_id)
-            await self.send_scene(update, context)
+            if "COMBAT_START" in next_scene:
+                self.in_combat[user_id] = True
+                await self.initiate_combat(update, context)
+            elif "QUEST_COMPLETE" in next_scene:
+                await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+            elif "QUEST_FAIL" in next_scene:
+                await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
+            else:
+                self.current_stage[user_id] += 1
+                await self.update_quest_state(user_id)
+                await self.send_scene(update, context)
 
-    except Exception as e:
-        logger.error(f"Error progressing story: {e}", exc_info=True)
-        await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
-        self.quest_active[user_id] = False
+        except Exception as e:
+            logger.error(f"Error progressing story: {e}", exc_info=True)
+            await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
+            self.quest_active[user_id] = False
 
 async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -566,15 +564,16 @@ async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
     async def generate_initial_scene(self):
         prompt = """
         Generate the opening scene for a Zen-themed quest. Include:
-        1. A vivid description of the starting environment
-        2. The quest's purpose and initial challenge
-        3. At least three distinct choices for the player to begin their journey
-        4. A hint of the challenges and growth that lie ahead
+        1. A brief, vivid description of the starting environment (2-3 sentences)
+        2. The quest's purpose and initial challenge (1-2 sentences)
+        3. Three distinct choices for the player to begin their journey (each choice should be one short sentence)
+        4. A hint of the challenges and growth that lie ahead (1 sentence)
 
         The scene should be engaging and open-ended, allowing for various paths forward.
+        Ensure the total length is concise to fit within message limits.
         Do not use any scene titles or headers.
         """
-        return await generate_response(prompt, elaborate=True)
+        initial_scene = await generate_response(prompt, elaborate=False)
 
     async def generate_next_scene(self, previous_scene, user_input, quest_state):
         prompt = f"""
@@ -1698,121 +1697,114 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         return
 
     try:
-        with db.cursor(dictionary=True) as cursor:
-            cursor.execute("""
-                SELECT * FROM pvp_battles 
-                WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
-            """, (user_id, user_id))
-            battle = cursor.fetchone()
+        cursor = db.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT * FROM pvp_battles 
+            WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
+        """, (user_id, user_id))
+        battle = cursor.fetchone()
+        cursor.fetchall()  # Consume any remaining results
 
-            if not battle:
-                if not bot_mode:
-                    await send_message(update, "You are not in an active battle.")
-                return
+        if not battle:
+            if not bot_mode:
+                await send_message(update, "You are not in an active battle.")
+            return
 
-            if battle['current_turn'] != user_id:
-                if not bot_mode:
-                    await send_message(update, "It's not your turn.")
-                return
+        if battle['current_turn'] != user_id:
+            if not bot_mode:
+                await send_message(update, "It's not your turn.")
+            return
 
-            is_challenger = battle['challenger_id'] == user_id
-            player_key = 'challenger' if is_challenger else 'opponent'
-            opponent_key = 'opponent' if is_challenger else 'challenger'
+        is_challenger = battle['challenger_id'] == user_id
+        player_key = 'challenger' if is_challenger else 'opponent'
+        opponent_key = 'opponent' if is_challenger else 'challenger'
 
-            user_hp = battle[f'{player_key}_hp']
-            opponent_hp = battle[f'{opponent_key}_hp']
-            user_energy = context.user_data.get(f'{player_key}_energy', 50)
-            opponent_energy = context.user_data.get(f'{opponent_key}_energy', 50)
+        user_hp = battle[f'{player_key}_hp']
+        opponent_hp = battle[f'{opponent_key}_hp']
+        user_energy = context.user_data.get(f'{player_key}_energy', 50)
+        opponent_energy = context.user_data.get(f'{opponent_key}_energy', 50)
 
-            opponent_id = battle[f'{opponent_key}_id']
-            opponent_name = "Bot" if opponent_id == 7283636452 else update.effective_user.first_name if bot_mode else "Opponent"
+        opponent_id = battle[f'{opponent_key}_id']
+        opponent_name = "Bot" if opponent_id == 7283636452 else update.effective_user.first_name if bot_mode else "Opponent"
 
-            # Perform the action
-            result = await perform_action(
-                action, user_hp, opponent_hp, user_energy, context.user_data.get(f'{player_key}_next_turn_synergy', {}),
-                context, player_key, bot_mode, opponent_name
-            )
+        result = await perform_action(
+            action, user_hp, opponent_hp, user_energy, context.user_data.get(f'{player_key}_next_turn_synergy', {}),
+            context, player_key, bot_mode, opponent_name
+        )
 
-            if result is None:
-                if not bot_mode:
-                    await update.callback_query.answer("Not enough energy for this move!")
-                return
+        if result is None:
+            if not bot_mode:
+                await update.callback_query.answer("Not enough energy for this move!")
+            return
 
-            result_message, user_hp, opponent_hp, user_energy, damage, heal, energy_cost, energy_gain, synergy_effect = result
+        result_message, user_hp, opponent_hp, user_energy, damage, heal, energy_cost, energy_gain, synergy_effect = result
 
-            # Clear the next turn synergy
-            context.user_data[f'{player_key}_next_turn_synergy'] = {}
+        context.user_data[f'{player_key}_next_turn_synergy'] = {}
 
-            # Define winner_name and last_move_details here
-            winner_name = None
-            last_move_details = f"Last move was {action}, dealing {damage} damage."
-
-            # Check if the battle ends
-            if opponent_hp <= 0 or user_hp <= 0:
-                winner_id = user_id if opponent_hp <= 0 else opponent_id
-                cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
-                db.commit()
-                winner_name = "Bot" if winner_id == 7283636452 else update.effective_user.first_name if bot_mode else "You"
-                await send_message(update, f"{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!\n{last_move_details}")
-
-                # End combat in the quest and progress the story
-                if zen_quest.quest_active.get(user_id, False):
-                    zen_quest.in_combat[user_id] = False
-                    if winner_id == user_id:
-                        await zen_quest.progress_story(update, context, "victory in combat")
-                    else:
-                        await zen_quest.end_quest(update, context, victory=False, reason="You have been defeated in combat.")
-                return
-
-            # Update the battle status
-            cursor.execute(f"""
-                UPDATE pvp_battles 
-                SET {player_key}_hp = %s, {opponent_key}_hp = %s, current_turn = %s 
-                WHERE id = %s
-            """, (user_hp, opponent_hp, opponent_id, battle['id']))
+        if opponent_hp <= 0 or user_hp <= 0:
+            winner_id = user_id if opponent_hp <= 0 else opponent_id
+            cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
             db.commit()
+            winner_name = "Bot" if winner_id == 7283636452 else update.effective_user.first_name if bot_mode else "You"
+            await send_message(update, f"{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!")
 
-            # Update energy levels in context
-            context.user_data[f'{player_key}_energy'] = user_energy
-            context.user_data[f'{opponent_key}_energy'] = opponent_energy
+            if zen_quest.quest_active.get(user_id, False):
+                zen_quest.in_combat[user_id] = False
+                if winner_id == user_id:
+                    await zen_quest.progress_story(update, context, "victory in combat")
+                else:
+                    await zen_quest.end_quest(update, context, victory=False, reason="You have been defeated in combat.")
+            return
 
-            # Create and send the battle view
-            battle_view = create_battle_view(
-                "Bot" if bot_mode else update.effective_user.first_name,
-                user_hp,
-                user_energy,
-                opponent_name,
-                opponent_hp,
-                opponent_energy
+        cursor.execute(f"""
+            UPDATE pvp_battles 
+            SET {player_key}_hp = %s, {opponent_key}_hp = %s, current_turn = %s 
+            WHERE id = %s
+        """, (user_hp, opponent_hp, opponent_id, battle['id']))
+        db.commit()
+
+        context.user_data[f'{player_key}_energy'] = user_energy
+        context.user_data[f'{opponent_key}_energy'] = opponent_energy
+
+        battle_view = create_battle_view(
+            "Bot" if bot_mode else update.effective_user.first_name,
+            user_hp,
+            user_energy,
+            opponent_name,
+            opponent_hp,
+            opponent_energy
+        )
+
+        numeric_stats = f"Move: {action.capitalize()}, Effect: {synergy_effect or 'None'}, Damage: {damage}, Heal: {heal}, Energy Cost: {energy_cost}, Energy Gained: {energy_gain}"
+
+        try:
+            await context.bot.send_message(
+                chat_id=battle['group_id'], 
+                text=f"{escape_markdown_v2(result_message)}\n\n{escape_markdown_v2(battle_view)}\n\n{escape_markdown_v2(numeric_stats)}",
+                parse_mode='MarkdownV2'
+            )
+        except BadRequest as e:
+            logger.error(f"Error sending battle update: {e}")
+            await context.bot.send_message(
+                chat_id=battle['group_id'],
+                text="An error occurred while updating the battle. Please check /pvpstatus for the current state."
             )
 
-            # Creating detailed move summary
-            numeric_stats = f"Move: {action.capitalize()}, Effect: {synergy_effect or 'None'}, Numeric Stats: Damage: {damage}, Heal: {heal}, Energy Cost: {energy_cost}, Energy Gained: {energy_gain}, Synergy: {synergy_effect or 'None'}"
-
-            # Send the result of the action along with the updated battle view
-            try:
-                await context.bot.send_message(
-                    chat_id=battle['group_id'], 
-                    text=f"{escape_markdown_v2(result_message)}\n\n{escape_markdown_v2(battle_view)}\n\n{escape_markdown_v2(numeric_stats)}",
-                    parse_mode='MarkdownV2'
-                )
-            except BadRequest as e:
-                logger.error(f"Error sending battle update: {e}")
-                await context.bot.send_message(
-                    chat_id=battle['group_id'],
-                    text="An error occurred while updating the battle. Please check /pvpstatus for the current state."
-                )
-
-            # Notify the next player
-            if opponent_id != 7283636452:
-                await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
-            else:
-                await bot_pvp_move(update, context)
+        if opponent_id != 7283636452:
+            await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
+        else:
+            await bot_pvp_move(update, context)
 
     except Exception as e:
         logger.error(f"Error in execute_pvp_move: {e}")
         if not bot_mode and update.callback_query:
             await update.callback_query.answer("An error occurred while executing the PvP move. Please try again later.")
+    finally:
+        if 'cursor' in locals():
+            cursor.close()
+        if db.is_connected():
+            db.close()
+
 
 # Call this function at the start of a new battle
 async def start_new_battle(update, context):
