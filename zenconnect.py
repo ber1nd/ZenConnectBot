@@ -495,7 +495,7 @@ class ZenQuest:
             next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id])
             self.current_scene[user_id] = next_scene
 
-        # Check for failure conditions
+            # Check for failure conditions
             failure_keywords = ["kill innocent", "abandon quest", "betray", "give up"]
             if any(keyword in user_input.lower() for keyword in failure_keywords):
                 await self.end_quest(update, context, victory=False, reason="Your actions have strayed from the path of wisdom.")
@@ -513,7 +513,7 @@ class ZenQuest:
                 await self.update_quest_state(user_id)
                 await self.send_scene(update, context)
 
-        # Check for combat keywords in user input
+            # Check for combat keywords in user input
             combat_keywords = ["fight", "attack", "battle", "confront", "challenge"]
             if any(keyword in user_input.lower() for keyword in combat_keywords) and not self.in_combat[user_id]:
                 await update.message.reply_text("Your actions have led to a confrontation. Prepare for combat!")
@@ -550,10 +550,10 @@ class ZenQuest:
         User's action: "{user_input}"
         Current quest state: {quest_state}
 
-        Generate the next concise scene of the Zen-themed quest. Include:
-        1. A very brief description of the environment and consequences of the user's action (1-2 sentences)
-        2. Three short, distinct choices for the player (each choice should be one short sentence)
-        3. A brief Zen-like insight or question (optional, 1 sentence)
+        Generate the next scene of the Zen-themed quest. Include:
+        1. A brief description of the environment and consequences of the user's action (2-3 sentences)
+        2. Three distinct choices for the player (each choice should be one sentence)
+        3. A brief Zen-like insight or question (1 sentence)
 
         Regularly introduce challenging elements:
         - Moral dilemmas that test the player's adherence to Zen principles
@@ -567,10 +567,8 @@ class ZenQuest:
 
         Ensure all situations and actions are realistic for a human character.
         The quest should end if the player's choices lead to a natural conclusion or a significant failure.
-        Total response should not exceed 80 words.
         """
-        return await generate_response(prompt, elaborate=False)
-
+        return await generate_response(prompt, elaborate=True)
 
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -630,7 +628,7 @@ class ZenQuest:
         if current_chunk:
             chunks.append(current_chunk.strip())
         return chunks
-    
+
     def extract_choices(self, scene):
         choices = []
         for line in scene.split('\n'):
@@ -688,7 +686,7 @@ class ZenQuest:
 
 zen_quest = ZenQuest()
 
-
+zen_quest = ZenQuest()
 
 async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -711,6 +709,13 @@ async def handle_quest_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # If no quest is active, pass the message to the regular message handler
         await handle_message(update, context)
 
+def setup_zenquest_handlers(application):
+    application.add_handler(CommandHandler("zenquest", zenquest_command))
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.Chat(chat_id=lambda id: zen_quest.quest_active),
+        handle_quest_input
+    ))
+
 
 @with_database_connection
 async def add_zen_points(update: Update, context: ContextTypes.DEFAULT_TYPE, points: int, db):
@@ -723,14 +728,6 @@ async def add_zen_points(update: Update, context: ContextTypes.DEFAULT_TYPE, poi
     except Error as e:
         logger.error(f"Error adding Zen points: {e}")
         await update.message.reply_text("An error occurred while updating your Zen points. Please try again later.")
-
-def setup_zenquest_handlers(application):
-    application.add_handler(CommandHandler("zenquest", zenquest_command))
-    application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.Chat(chat_id=lambda id: zen_quest.quest_active),
-        handle_quest_input
-    ))
-
 
 async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
