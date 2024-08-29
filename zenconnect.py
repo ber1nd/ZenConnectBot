@@ -487,49 +487,45 @@ class ZenQuest:
 
         user_input = update.message.text.lower()
 
-        if any(action in user_input for action in self.unfeasible_actions):
-            await update.message.reply_text("That action is not possible for a human in this realm. Please choose a realistic action.")
+        # Check for PvP trigger keywords
+        combat_keywords = ["fight", "attack", "battle", "confront", "challenge", "kill"]
+        if any(keyword in user_input for keyword in combat_keywords) and not self.in_combat.get(user_id, False):
+            await update.message.reply_text("Your actions have led to a confrontation. Prepare for combat!")
+            self.in_combat[user_id] = True
+            await self.initiate_combat(update, context)
             return
 
-        if any(action in user_input for action in self.failure_actions):
-            await self.end_quest(update, context, victory=False, reason="Your actions have led to the failure of your quest.")
-            return
-
-        if self.in_combat.get(user_id, False):
-            await execute_pvp_move_wrapper(update, context)
-        else:
-            await self.progress_story(update, context, user_input)
+    # Handle other quest inputs
+        await self.progress_story(update, context, user_input)
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
         user_id = update.effective_user.id
 
-        try:
-            next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id])
-            self.current_scene[user_id] = next_scene
+        # Generate consequence based on the player's input and current quest state
+        consequence_prompt = f"""
+        In the current quest, the player has chosen the action: "{user_input}". 
+        Based on this action, and considering the current environment and quest state, 
+        describe the appropriate consequence. 
+        The consequence should be realistic and vary depending on the context: 
+        - If the action is morally questionable or violent, the consequence might involve law enforcement, 
+        spiritual retribution, or the loss of allies.
+        - If the player is in a village or populated area, local authorities or villagers should react. 
+        - If the action is against nature (e.g., killing an animal), consider consequences such as a vengeful spirit, bad karma, or environmental backlash.
 
-            combat_keywords = ["fight", "attack", "battle", "confront", "challenge"]
-            if any(keyword in user_input.lower() for keyword in combat_keywords) and not self.in_combat.get(user_id, False):
-                await update.message.reply_text("Your actions have led to a confrontation. Prepare for combat!")
-                self.in_combat[user_id] = True
-                await self.initiate_combat(update, context)
-                return
+        Ensure the consequence aligns with Zen principles and the overall theme of the quest. 
+        """
 
-            if "COMBAT_START" in next_scene:
-                self.in_combat[user_id] = True
-                await self.initiate_combat(update, context)
-            elif "QUEST_COMPLETE" in next_scene:
-                await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
-            elif "QUEST_FAIL" in next_scene:
-                await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
-            else:
-                self.current_stage[user_id] += 1
-                await self.update_quest_state(user_id)
-                await self.send_scene(update, context)
+        consequence = await generate_response(consequence_prompt, elaborate=True)
 
-        except Exception as e:
-            logger.error(f"Error progressing story: {e}", exc_info=True)
-            await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
-            self.quest_active[user_id] = False
+        # Check if the action should result in quest failure
+        if "imprisoned" in consequence.lower() or "death" in consequence.lower() or "QUEST_FAIL" in consequence:
+            await update.message.reply_text(consequence)
+            await self.end_quest(update, context, victory=False, reason="Your actions have led to your downfall.")
+            return
+
+        # If the consequence does not end the quest, continue the story
+        await update.message.reply_text(consequence)
+        await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id])
 
     async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -587,17 +583,16 @@ class ZenQuest:
         2. Three distinct, non-repeated choices for the player (each choice should be one sentence)
         3. A brief Zen-like insight or question (1 sentence)
 
-        Regularly introduce challenging elements:
-        - Moral dilemmas that test the player's adherence to Zen principles
-        - Riddles or puzzles that require careful thought
+        Regularly introduce high-risk choices:
+        - Moral dilemmas that can result in death or failure
         - Situations where hasty or violent actions could lead to quest failure
+        - Logical consequences of poor decisions (e.g., death, imprisonment, loss of allies)
 
         If appropriate, introduce:
         - A combat situation (indicate with 'COMBAT_START')
         - A successful quest completion (indicate with 'QUEST_COMPLETE')
         - An unsuccessful quest ending (indicate with 'QUEST_FAIL')
 
-        Ensure all situations and actions are realistic for a human character.
         The quest should end if the player's choices lead to a natural conclusion or a significant failure.
         Do not repeat choices from the previous scene.
         """
@@ -666,7 +661,14 @@ class ZenQuest:
             if line.strip().startswith(('1.', '2.', '3.')):
                 choices.append(line.strip())
         return choices
+async def resolve_pvp_outcome(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool):
+    user_id = update.effective_user.id
 
+    if victory:
+        await update.message.reply_text("You have won the battle! The quest continues...")
+        await self.progress_story(update, context, "victory in combat")
+    else:
+        await self.end_quest(update, context, victory=False, reason="You have been defeated in combat.")
     async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
         user_id = update.effective_user.id
         self.quest_active[user_id] = False
