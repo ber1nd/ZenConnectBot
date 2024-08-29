@@ -1048,17 +1048,16 @@ def generate_pvp_move_buttons(user_id):
 def escape_markdown(text):
     return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
 
-def generate_opponent_name(current_scene, default_name):
-    # Use AI to generate a suitable opponent name based on the current scene
+async def generate_opponent_name(current_scene, default_name):
     prompt = f"""
     Based on the current scene: "{current_scene}"
     Generate a short, appropriate name or title for the opponent in this Zen-themed battle.
     If no specific opponent is evident, use the default name: {default_name}
     Keep the name or title under 3 words.
     """
-    return generate_response(prompt, elaborate=False)
+    return await generate_response(prompt, elaborate=False)
 
-def create_battle_view(challenger_name, challenger_hp, challenger_energy, opponent_name, opponent_hp, opponent_energy, current_scene):
+async def create_battle_view(challenger_name, challenger_hp, challenger_energy, opponent_name, opponent_hp, opponent_energy, current_scene):
     def create_bar(value, max_value, fill_char='█', empty_char='░'):
         bar_length = 10
         filled = int((value / max_value) * bar_length)
@@ -1070,7 +1069,7 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
     o_energy_bar = create_bar(opponent_energy, 100)
 
     # Generate a dynamic opponent name based on the current scene
-    dynamic_opponent_name = generate_opponent_name(current_scene, opponent_name)
+    dynamic_opponent_name = await generate_opponent_name(current_scene, opponent_name)
 
     battle_view = f"""
 ⚪ {challenger_name}
@@ -1828,13 +1827,17 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         context.user_data[f'{player_key}_energy'] = user_energy
         context.user_data[f'{opponent_key}_energy'] = opponent_energy
 
-        battle_view = create_battle_view(
+        # Fetch the current scene from ZenQuest
+        current_scene = zen_quest.current_scene.get(user_id, "A mysterious battlefield")
+
+        battle_view = await create_battle_view(
             "Bot" if bot_mode else update.effective_user.first_name,
             user_hp,
             user_energy,
             opponent_name,
             opponent_hp,
-            opponent_energy
+            opponent_energy,
+            current_scene
         )
 
         numeric_stats = f"Move: {action.capitalize()}, Effect: {synergy_effect or 'None'}, Damage: {damage}, Heal: {heal}, Energy Cost: {energy_cost}, Energy Gained: {energy_gain}"
