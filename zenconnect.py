@@ -60,7 +60,7 @@ def with_database_connection(func):
         except mysql.connector.Error as e:
             logger.error(f"MySQL error in {func.__name__}: {e}")
             if isinstance(args[0], Update):
-                await args[0].message.reply_text("A database error occurred. Please try again later.")
+                await args[0].message.reply_text("A database error occurred. Please try again later")
         except Exception as e:
             logger.error(f"Unexpected error in {func.__name__}: {e}")
             if isinstance(args[0], Update):
