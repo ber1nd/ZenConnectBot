@@ -1683,6 +1683,10 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if user_id_from_callback != user_id:
                 await query.answer("It's not your turn!")
                 return
+        elif not zen_quest.in_combat.get(user_id, False):
+            # Automatically initiate combat if it's not already in progress
+            await zen_quest.initiate_combat(update, context)
+            return
         else:
             await update.message.reply_text("Invalid move. Please use the provided buttons.")
             return
@@ -1721,7 +1725,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         opponent_energy = context.user_data.get(f'{opponent_key}_energy', 50)
 
         opponent_id = battle[f'{opponent_key}_id']
-        opponent_name = zen_quest.current_enemy.get(user_id, "Unknown Enemy") if opponent_id == 7283636452 else update.effective_user.first_name if bot_mode else "Opponent"
+        opponent_name = context.user_data.get('current_enemy', "Opponent")
 
         # Perform the action
         result = await perform_action(
@@ -1739,22 +1743,21 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         # Clear the next turn synergy
         context.user_data[f'{player_key}_next_turn_synergy'] = {}
 
-        # Define winner_name and last_move_details here
-        winner_name = None
-        last_move_details = f"Last move was {action}, dealing {damage} damage."
-
         # Check if the battle ends
         if opponent_hp <= 0 or user_hp <= 0:
             winner_id = user_id if opponent_hp <= 0 else opponent_id
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
             db.commit()
             winner_name = "You" if winner_id == user_id else opponent_name
-            await send_message(update, f"{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!\n{last_move_details}")
+            await send_message(update, f"{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!")
 
             # End combat in the quest
             if zen_quest.quest_active.get(user_id, False):
-                victory = winner_id == user_id
-                await zen_quest.end_combat(update, context, victory)
+                zen_quest.in_combat[user_id] = False
+                if winner_id == user_id:
+                    await zen_quest.continue_after_combat(update, context, victory=True)
+                else:
+                    await zen_quest.continue_after_combat(update, context, victory=False)
             return
 
         # Update the battle status
@@ -1771,7 +1774,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
 
         # Create and send the battle view
         battle_view = create_battle_view(
-            update.effective_user.first_name if not bot_mode else "You",
+            "You",
             user_hp,
             user_energy,
             opponent_name,
@@ -1809,7 +1812,6 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
     finally:
         if db.is_connected():
             cursor.close()
-   
 
 # Call this function at the start of a new battle
 async def start_new_battle(update, context):
