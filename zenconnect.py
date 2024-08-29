@@ -487,21 +487,38 @@ class ZenQuest:
 
         user_input = update.message.text.lower()
 
-        if any(action in user_input for action in self.unfeasible_actions):
-            await update.message.reply_text("That action is not possible for a human in this realm. Please choose a realistic action.")
-            return
+        # Check for PvP trigger keywords
+        combat_keywords = ["fight", "attack", "battle", "confront", "challenge", "kill"]
+        
+        # New: Check if the current scene or quest state allows for combat
+        current_scene = self.current_scene.get(user_id, "")
+        quest_state = self.quest_state.get(user_id, "")
+        
+        combat_possible = any(word in current_scene.lower() for word in ["enemy", "opponent", "rival", "foe"])
+        
+        if any(keyword in user_input for keyword in combat_keywords) and combat_possible and not self.in_combat.get(user_id, False):
+            # Generate a confirmation prompt
+            confirmation_prompt = f"""
+            Based on the user's input "{user_input}" and the current quest state:
+            Current scene: {current_scene}
+            Quest state: {quest_state}
 
-        if any(action in user_input for action in self.failure_actions):
-            await self.end_quest(update, context, victory=False, reason="Your actions have led to the failure of your quest.")
-            return
+            Should a PvP battle be initiated? Consider if there's a logical opponent present in the story.
+            Respond with either 'Yes' or 'No' and a brief explanation.
+            """
+            
+            confirmation = await generate_response(confirmation_prompt)
+            
+            if confirmation.lower().startswith("yes"):
+                await update.message.reply_text("Your actions have led to a confrontation. Prepare for combat!")
+                self.in_combat[user_id] = True
+                await self.initiate_combat(update, context)
+                return
+            else:
+                await update.message.reply_text("There doesn't seem to be anyone to fight at the moment. The quest continues.")
 
-        if "kill" in user_input and "myself" not in user_input:
-            # Initiate combat for non-self killing attempts
-            await self.initiate_combat(update, context)
-        elif self.in_combat.get(user_id, False):
-            await execute_pvp_move_wrapper(update, context)
-        else:
-            await self.progress_story(update, context, user_input)
+        # Handle other quest inputs
+        await self.progress_story(update, context, user_input)
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
         user_id = update.effective_user.id
@@ -1787,11 +1804,12 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
                     await zen_quest.end_quest(update, context, victory=False, reason="You have been defeated in combat.")
             return
 
+        next_turn = opponent_id if user_id == battle['challenger_id'] else battle['challenger_id']
         cursor.execute(f"""
             UPDATE pvp_battles 
             SET {player_key}_hp = %s, {opponent_key}_hp = %s, current_turn = %s 
             WHERE id = %s
-        """, (user_hp, opponent_hp, opponent_id, battle['id']))
+        """, (user_hp, opponent_hp, next_turn, battle['id']))
         db.commit()
 
         context.user_data[f'{player_key}_energy'] = user_energy
@@ -1824,10 +1842,11 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         if opponent_id != 7283636452:
             await context.bot.send_message(chat_id=opponent_id, text="Your turn! Choose your move:", reply_markup=generate_pvp_move_buttons(opponent_id))
         else:
-            await bot_pvp_move(update, context)
+            # Delay the bot's move to prevent immediate execution
+            context.job_queue.run_once(lambda _: bot_pvp_move(update, context), 2)
 
     except Exception as e:
-        logger.error(f"Error in execute_pvp_move: {e}", exc_info=True)
+        logger.error(f"Error in execute_pvp_move: {e}")
         if not bot_mode and update.callback_query:
             await update.callback_query.answer("An error occurred while executing the PvP move. Please try again later.")
     finally:
