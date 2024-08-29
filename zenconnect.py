@@ -156,11 +156,11 @@ def setup_database():
 
 async def generate_response(prompt, elaborate=False):
     try:
-        max_tokens = 150 if elaborate else 50
+        max_tokens = 300 if elaborate else 150
         response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a wise Zen warrior. Respond to battle strategies and PvP moves with concise, insightful decisions."},
+                {"role": "system", "content": "You are a wise Zen warrior guiding a quest. Maintain realism for human capabilities. Actions should have logical consequences. Provide challenging moral dilemmas and opportunities for growth."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=max_tokens,
@@ -447,7 +447,17 @@ class ZenQuest:
         self.story = {}
         self.current_scene = {}
         self.in_combat = {}
-        self.quest_state = {}  # To track overall quest progress
+        self.quest_state = {}
+        self.unfeasible_actions = [
+            "fly", "teleport", "time travel", "breathe underwater", "become invisible",
+            "read minds", "shoot lasers", "transform", "resurrect", "conjure",
+            "summon creatures", "control weather", "phase through walls"
+        ]
+        self.failure_actions = [
+            "kill myself", "suicide", "give up", "abandon quest", "betray", "surrender",
+            "destroy sacred artifact", "harm innocent", "break vow", "ignore warning",
+            "consume poison", "jump off cliff", "attack ally", "steal from temple"
+        ]
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -475,12 +485,12 @@ class ZenQuest:
 
         user_input = update.message.text.lower()
 
-        if user_input == "/surrender":
-            await self.end_quest(update, context, victory=False, reason="You have surrendered your quest.")
+        if any(action in user_input for action in self.unfeasible_actions):
+            await update.message.reply_text("That action is not possible for a human in this realm. Please choose a realistic action.")
             return
 
-        if user_input == "/interrupt":
-            await self.interrupt_quest(update, context)
+        if any(action in user_input for action in self.failure_actions):
+            await self.end_quest(update, context, victory=False, reason="Your actions have led to the failure of your quest.")
             return
 
         if self.in_combat.get(user_id, False):
@@ -494,12 +504,6 @@ class ZenQuest:
         try:
             next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id])
             self.current_scene[user_id] = next_scene
-
-            # Check for failure conditions
-            failure_keywords = ["kill innocent", "abandon quest", "betray", "give up"]
-            if any(keyword in user_input.lower() for keyword in failure_keywords):
-                await self.end_quest(update, context, victory=False, reason="Your actions have strayed from the path of wisdom.")
-                return
 
             if "COMBAT_START" in next_scene:
                 self.in_combat[user_id] = True
@@ -524,6 +528,7 @@ class ZenQuest:
             logger.error(f"Error progressing story: {e}", exc_info=True)
             await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
             self.quest_active[user_id] = False
+
 
     async def update_quest_state(self, user_id):
         if self.current_stage[user_id] == 1:
@@ -552,7 +557,7 @@ class ZenQuest:
 
         Generate the next scene of the Zen-themed quest. Include:
         1. A brief description of the environment and consequences of the user's action (2-3 sentences)
-        2. Three distinct choices for the player (each choice should be one sentence)
+        2. Three distinct, non-repeated choices for the player (each choice should be one sentence)
         3. A brief Zen-like insight or question (1 sentence)
 
         Regularly introduce challenging elements:
@@ -567,6 +572,7 @@ class ZenQuest:
 
         Ensure all situations and actions are realistic for a human character.
         The quest should end if the player's choices lead to a natural conclusion or a significant failure.
+        Do not repeat choices from the previous scene.
         """
         return await generate_response(prompt, elaborate=True)
 
@@ -642,33 +648,18 @@ class ZenQuest:
         self.in_combat[user_id] = False
 
         conclusion = await self.generate_quest_conclusion(victory, self.current_stage[user_id])
-        await update.message.reply_text(conclusion)
+        await update.message.reply_text(f"{reason}\n\n{conclusion}")
 
         if victory:
             zen_points = random.randint(30, 50)
-            await update.message.reply_text(f"{reason} You have earned {zen_points} Zen points!")
+            await update.message.reply_text(f"You have earned {zen_points} Zen points!")
             await add_zen_points(update, context, zen_points)
-        else:
-            await update.message.reply_text(f"{reason} Your quest has ended.")
 
         # Clear quest data for this user
         self.player_hp.pop(user_id, None)
         self.current_stage.pop(user_id, None)
         self.current_scene.pop(user_id, None)
         self.quest_state.pop(user_id, None)
-
-    async def generate_quest_conclusion(self, victory: bool, stages_completed):
-        prompt = f"""
-        Generate a concluding paragraph for a Zen-themed quest where the player has {'succeeded' if victory else 'failed'}.
-        Stages completed: {stages_completed}
-        The conclusion should:
-        1. Summarize the journey and its challenges
-        2. Highlight the wisdom or lessons learned
-        3. Provide a sense of {'accomplishment and growth' if victory else 'reflection and potential for future growth'}
-        4. Tie back to the original purpose of the quest
-        5. End with a thought-provoking Zen-like statement or question
-        """
-        return await generate_response(prompt, elaborate=True)
 
     async def interrupt_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -684,7 +675,6 @@ class ZenQuest:
         else:
             await update.message.reply_text("You don't have an active quest to interrupt.")
 
-zen_quest = ZenQuest()
 
 zen_quest = ZenQuest()
 
