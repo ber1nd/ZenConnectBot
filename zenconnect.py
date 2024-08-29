@@ -495,7 +495,10 @@ class ZenQuest:
             await self.end_quest(update, context, victory=False, reason="Your actions have led to the failure of your quest.")
             return
 
-        if self.in_combat.get(user_id, False):
+        if "kill" in user_input and "myself" not in user_input:
+            # Initiate combat for non-self killing attempts
+            await self.initiate_combat(update, context)
+        elif self.in_combat.get(user_id, False):
             await execute_pvp_move_wrapper(update, context)
         else:
             await self.progress_story(update, context, user_input)
@@ -620,7 +623,7 @@ class ZenQuest:
                 context.user_data['challenger_energy'] = 50
                 context.user_data['opponent_energy'] = 50
 
-                await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
+                await update.message.reply_text("Your actions have led to a confrontation. Prepare for battle!")
                 await send_game_rules(context, user_id, opponent_id)
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
@@ -679,12 +682,39 @@ class ZenQuest:
             zen_points = random.randint(30, 50)
             await update.message.reply_text(f"You have earned {zen_points} Zen points!")
             await add_zen_points(update, context, zen_points)
+        else:
+            # Deduct Zen points for quest failure
+            zen_points = random.randint(10, 20)
+            await update.message.reply_text(f"You have lost {zen_points} Zen points due to your actions.")
+            await add_zen_points(update, context, -zen_points)
 
         # Clear quest data for this user
         self.player_hp.pop(user_id, None)
         self.current_stage.pop(user_id, None)
         self.current_scene.pop(user_id, None)
         self.quest_state.pop(user_id, None)
+
+
+    async def generate_quest_conclusion(self, victory: bool, stage: int):
+        if victory:
+            prompt = f"""
+            Generate a brief, zen-like conclusion for a successful quest that ended at stage {stage}.
+            Include:
+            1. A reflection on the journey and growth
+            2. A subtle zen teaching or insight gained
+            3. Encouragement for future quests
+            Keep it concise, around 3-4 sentences.
+            """
+        else:
+            prompt = f"""
+            Generate a brief, zen-like conclusion for a failed quest that ended at stage {stage}.
+            Include:
+            1. A reflection on the lessons from failure
+            2. A zen teaching about impermanence or acceptance
+            3. Gentle encouragement to try again
+            Keep it concise, around 3-4 sentences.
+            """
+        return await generate_response(prompt)
 
     async def interrupt_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
