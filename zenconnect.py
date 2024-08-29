@@ -667,14 +667,15 @@ class ZenQuest:
             if line.strip().startswith(('1.', '2.', '3.')):
                 choices.append(line.strip())
         return choices
-async def resolve_pvp_outcome(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool):
-    user_id = update.effective_user.id
+    async def resolve_pvp_outcome(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool):
+        user_id = update.effective_user.id
 
-    if victory:
-        await update.message.reply_text("You have won the battle! The quest continues...")
-        await self.progress_story(update, context, "victory in combat")
-    else:
-        await self.end_quest(update, context, victory=False, reason="You have been defeated in combat.")
+        if victory:
+            await update.message.reply_text("You have won the battle! The quest continues...")
+            await self.progress_story(update, context, "victory in combat")
+        else:
+            await self.end_quest(update, context, victory=False, reason="You have been defeated in combat.")
+            
     async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
         user_id = update.effective_user.id
         self.quest_active[user_id] = False
