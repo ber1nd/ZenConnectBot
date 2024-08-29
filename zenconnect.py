@@ -1024,11 +1024,13 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db:
         try:
             cursor = db.cursor(dictionary=True)
+            # Fetch the active battle where the bot is involved
             cursor.execute("""
                 SELECT * FROM pvp_battles 
                 WHERE (challenger_id = 7283636452 OR opponent_id = 7283636452) AND status = 'in_progress'
             """)
             battle = cursor.fetchone()
+            cursor.fetchall()  # Consume any remaining results
 
             if not battle:
                 logger.info("No active battle found for the bot.")
@@ -1038,20 +1040,12 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info("It's not the bot's turn.")
                 return
 
-            # Determine if the bot is the challenger or opponent
-            bot_is_challenger = battle['challenger_id'] == 7283636452
+            # Determine bot's HP and opponent's HP
+            bot_hp = battle['challenger_hp'] if battle['challenger_id'] == 7283636452 else battle['opponent_hp']
+            opponent_hp = battle['opponent_hp'] if battle['challenger_id'] == 7283636452 else battle['challenger_hp']
 
-            # Retrieve bot's HP, energy, and previous move
-            if bot_is_challenger:
-                bot_hp = battle['challenger_hp']
-                bot_energy = context.user_data.get('challenger_energy', 50)
-                bot_previous_move = context.user_data.get('challenger_previous_move', 'None')
-                opponent_hp = battle['opponent_hp']
-            else:
-                bot_hp = battle['opponent_hp']
-                bot_energy = context.user_data.get('opponent_energy', 50)
-                bot_previous_move = context.user_data.get('opponent_previous_move', 'None')
-                opponent_hp = battle['challenger_hp']
+            # Retrieve bot's energy level
+            bot_energy = context.user_data.get('challenger_energy' if battle['challenger_id'] == 7283636452 else 'opponent_energy', 50)
 
             # Generate AI decision-making prompt
             prompt = f"""
@@ -1061,7 +1055,7 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             - Your HP: {bot_hp}/100
             - Opponent's HP: {opponent_hp}/100
             - Your Energy: {bot_energy}/100
-            - Your Last Move: {bot_previous_move}
+            - Last Move: {context.user_data.get('previous_move', 'None')}
 
             Available actions:
             - Strike: Deal moderate damage to the opponent. Costs 12 energy.
