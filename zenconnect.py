@@ -600,37 +600,38 @@ class ZenQuest:
         """
         return await generate_response(prompt, elaborate=True)
     
-    async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        opponent_id = 7283636452  # Bot's ID
+async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    opponent_id = 7283636452  # Bot's ID
 
-        db = get_db_connection()
-        if db:
-            try:
-                cursor = db.cursor(dictionary=True)
-                cursor.execute("""
-                    INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, status, current_turn, challenger_hp, opponent_hp, challenger_energy, opponent_energy)
-                    VALUES (%s, %s, %s, 'in_progress', %s, 100, 100, 50, 50)
-                """, (user_id, opponent_id, update.effective_chat.id, user_id))
-                db.commit()
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor(dictionary=True)
+            cursor.execute("""
+                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, status, current_turn, challenger_hp, opponent_hp)
+                VALUES (%s, %s, %s, 'in_progress', %s, 100, 100)
+            """, (user_id, opponent_id, update.effective_chat.id, user_id))
+            db.commit()
 
-                context.user_data['challenger_energy'] = 50
-                context.user_data['opponent_energy'] = 50
+            # Initialize energy in context instead of the database
+            context.user_data['challenger_energy'] = 50
+            context.user_data['opponent_energy'] = 50
 
-                await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
-                await send_game_rules(context, user_id, opponent_id)
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="Choose your move:",
-                    reply_markup=generate_pvp_move_buttons(user_id)
-                )
-            except Exception as e:
-                logger.error(f"Error initiating combat: {e}")
-                await update.message.reply_text("An error occurred while initiating combat. Please try again later.")
-            finally:
-                if db.is_connected():
-                    cursor.close()
-                    db.close()
+            await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
+            await send_game_rules(context, user_id, opponent_id)
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Choose your move:",
+                reply_markup=generate_pvp_move_buttons(user_id)
+            )
+        except Exception as e:
+            logger.error(f"Error initiating combat: {e}")
+            await update.message.reply_text("An error occurred while initiating combat. Please try again later.")
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
 
     def split_scene_and_choices(self, scene):
         lines = scene.split('\n')
