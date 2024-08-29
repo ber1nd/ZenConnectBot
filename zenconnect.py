@@ -459,24 +459,25 @@ class ZenQuest:
             "consume poison", "jump off cliff", "attack ally", "steal from temple"
         ]
 
-    async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        if update.message.chat.type != 'private':
-            await update.message.reply_text("Zen quests can only be started in private chats with the bot.")
-            return
+async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if update.message.chat.type != 'private':
+        await update.message.reply_text("Zen quests can only be started in private chats with the bot.")
+        return
 
-        try:
-            self.quest_active[user_id] = True
-            self.player_hp[user_id] = 100
-            self.current_stage[user_id] = 0
-            self.quest_state[user_id] = "beginning"
-            initial_scene = await self.generate_initial_scene()
-            self.current_scene[user_id] = initial_scene
-            await self.send_scene(update, context)
-        except Exception as e:
-            logger.error(f"Error starting quest: {e}")
-            await update.message.reply_text("An error occurred while starting the quest. Please try again.")
-            self.quest_active[user_id] = False
+    try:
+        self.quest_active[user_id] = True
+        self.player_hp[user_id] = 100
+        self.current_stage[user_id] = 0
+        self.quest_state[user_id] = "beginning"
+        self.in_combat[user_id] = False  # Initialize combat status
+        initial_scene = await self.generate_initial_scene()
+        self.current_scene[user_id] = initial_scene
+        await self.send_scene(update, context)
+    except Exception as e:
+        logger.error(f"Error starting quest: {e}")
+        await update.message.reply_text("An error occurred while starting the quest. Please try again.")
+        self.quest_active[user_id] = False
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -498,36 +499,62 @@ class ZenQuest:
         else:
             await self.progress_story(update, context, user_input)
 
-    async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
+    async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
+        if update.message.chat.type != 'private':
+            await update.message.reply_text("Zen quests can only be started in private chats with the bot.")
+            return
 
-        try:
-            next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id])
-            self.current_scene[user_id] = next_scene
+    try:
+        self.quest_active[user_id] = True
+        self.player_hp[user_id] = 100
+        self.current_stage[user_id] = 0
+        self.quest_state[user_id] = "beginning"
+        self.in_combat[user_id] = False  # Initialize combat status
+        initial_scene = await self.generate_initial_scene()
+        self.current_scene[user_id] = initial_scene
+        await self.send_scene(update, context)
+    except Exception as e:
+        logger.error(f"Error starting quest: {e}")
+        await update.message.reply_text("An error occurred while starting the quest. Please try again.")
+        self.quest_active[user_id] = False
 
-            if "COMBAT_START" in next_scene:
-                self.in_combat[user_id] = True
-                await self.initiate_combat(update, context)
-            elif "QUEST_COMPLETE" in next_scene:
-                await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
-            elif "QUEST_FAIL" in next_scene:
-                await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
-            else:
-                self.current_stage[user_id] += 1
-                await self.update_quest_state(user_id)
-                await self.send_scene(update, context)
+async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
+    user_id = update.effective_user.id
 
-            # Check for combat keywords in user input
-            combat_keywords = ["fight", "attack", "battle", "confront", "challenge"]
-            if any(keyword in user_input.lower() for keyword in combat_keywords) and not self.in_combat[user_id]:
-                await update.message.reply_text("Your actions have led to a confrontation. Prepare for combat!")
-                self.in_combat[user_id] = True
-                await self.initiate_combat(update, context)
+    try:
+        next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id])
+        self.current_scene[user_id] = next_scene
 
-        except Exception as e:
-            logger.error(f"Error progressing story: {e}", exc_info=True)
-            await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
-            self.quest_active[user_id] = False
+        # Check for failure conditions
+        failure_keywords = ["kill innocent", "abandon quest", "betray", "give up", "suicide", "kill myself"]
+        if any(keyword in user_input.lower() for keyword in failure_keywords):
+            await self.end_quest(update, context, victory=False, reason="Your actions have led to an unfortunate end.")
+            return
+
+        if "COMBAT_START" in next_scene:
+            self.in_combat[user_id] = True
+            await self.initiate_combat(update, context)
+        elif "QUEST_COMPLETE" in next_scene:
+            await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+        elif "QUEST_FAIL" in next_scene:
+            await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
+        else:
+            self.current_stage[user_id] += 1
+            await self.update_quest_state(user_id)
+            await self.send_scene(update, context)
+
+        # Check for combat keywords in user input
+        combat_keywords = ["fight", "attack", "battle", "confront", "challenge"]
+        if any(keyword in user_input.lower() for keyword in combat_keywords) and not self.in_combat.get(user_id, False):
+            await update.message.reply_text("Your actions have led to a confrontation. Prepare for combat!")
+            self.in_combat[user_id] = True
+            await self.initiate_combat(update, context)
+
+    except Exception as e:
+        logger.error(f"Error progressing story: {e}", exc_info=True)
+        await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
+        self.quest_active[user_id] = False
 
 
     async def update_quest_state(self, user_id):
@@ -612,14 +639,29 @@ class ZenQuest:
             return
 
         scene = self.current_scene[user_id]
-        chunks = self.split_message(scene, max_length=4000)  # Increased max_length
-        for i, chunk in enumerate(chunks):
-            if i == len(chunks) - 1:  # If it's the last chunk
-                # Ensure the choices are in this message
-                choices = self.extract_choices(scene)
-                if choices:
-                    chunk += "\n\nYour choices:\n" + "\n".join(choices)
+        description, choices = self.split_scene_and_choices(scene)
+    
+        message = description
+        if choices:
+            message += "\n\nYour choices:\n" + "\n".join(choices)
+    
+        chunks = self.split_message(message, max_length=4000)
+        for chunk in chunks:
             await update.message.reply_text(chunk)
+
+    def split_scene_and_choices(self, scene):
+        lines = scene.split('\n')
+        description = []
+        choices = []
+        in_choices = False
+        for line in lines:
+            if line.strip().startswith(('1.', '2.', '3.')):
+                in_choices = True
+            if in_choices:
+                choices.append(line.strip())
+            else:
+                description.append(line)
+        return '\n'.join(description), choices
 
     def split_message(self, message, max_length=4000):
         chunks = []
