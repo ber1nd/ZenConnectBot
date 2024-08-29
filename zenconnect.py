@@ -489,13 +489,13 @@ class ZenQuest:
 
         # Check for PvP trigger keywords
         combat_keywords = ["fight", "attack", "battle", "confront", "challenge", "kill"]
-        
-        # New: Check if the current scene or quest state allows for combat
+
+        # Check if the current scene or quest state allows for combat
         current_scene = self.current_scene.get(user_id, "")
         quest_state = self.quest_state.get(user_id, "")
-        
+
         combat_possible = any(word in current_scene.lower() for word in ["enemy", "opponent", "rival", "foe"])
-        
+
         if any(keyword in user_input for keyword in combat_keywords) and combat_possible and not self.in_combat.get(user_id, False):
             # Generate a confirmation prompt
             confirmation_prompt = f"""
@@ -506,9 +506,9 @@ class ZenQuest:
             Should a PvP battle be initiated? Consider if there's a logical opponent present in the story.
             Respond with either 'Yes' or 'No' and a brief explanation.
             """
-            
+
             confirmation = await generate_response(confirmation_prompt)
-            
+
             if confirmation.lower().startswith("yes"):
                 await update.message.reply_text("Your actions have led to a confrontation. Prepare for combat!")
                 self.in_combat[user_id] = True
@@ -1048,7 +1048,17 @@ def generate_pvp_move_buttons(user_id):
 def escape_markdown(text):
     return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
 
-def create_battle_view(challenger_name, challenger_hp, challenger_energy, opponent_name, opponent_hp, opponent_energy):
+def generate_opponent_name(current_scene, default_name):
+    # Use AI to generate a suitable opponent name based on the current scene
+    prompt = f"""
+    Based on the current scene: "{current_scene}"
+    Generate a short, appropriate name or title for the opponent in this Zen-themed battle.
+    If no specific opponent is evident, use the default name: {default_name}
+    Keep the name or title under 3 words.
+    """
+    return generate_response(prompt, elaborate=False)
+
+def create_battle_view(challenger_name, challenger_hp, challenger_energy, opponent_name, opponent_hp, opponent_energy, current_scene):
     def create_bar(value, max_value, fill_char='█', empty_char='░'):
         bar_length = 10
         filled = int((value / max_value) * bar_length)
@@ -1059,6 +1069,9 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
     o_hp_bar = create_bar(opponent_hp, 100)
     o_energy_bar = create_bar(opponent_energy, 100)
 
+    # Generate a dynamic opponent name based on the current scene
+    dynamic_opponent_name = generate_opponent_name(current_scene, opponent_name)
+
     battle_view = f"""
 ⚪ {challenger_name}
 ━━━━━━━━━━━━━━━━━
@@ -1066,14 +1079,13 @@ def create_battle_view(challenger_name, challenger_hp, challenger_energy, oppone
 💠 Chi [{c_energy_bar}] {challenger_energy}
 ━━━━━━━━━━━━━━━━━
            ☯
-⚪ {opponent_name}
+⚪ {dynamic_opponent_name}
 ━━━━━━━━━━━━━━━━━
 💚 HP  [{o_hp_bar}] {opponent_hp}
 💠 Chi [{o_energy_bar}] {opponent_energy}
 ━━━━━━━━━━━━━━━━━
 """
     return battle_view
-
 
 
 
@@ -1708,18 +1720,17 @@ async def perform_action(action, user_hp, opponent_hp, user_energy, current_syne
 
     # Generate dynamic message
     dynamic_message = await generate_response(f"""
-    {'' if bot_mode else 'You'} just performed {action}.
-    Damage dealt: {damage if action in ['strike', 'zenstrike'] else 'N/A'}
-    Healing done: {heal if action == 'defend' else 'N/A'}
-    Energy cost: {energy_cost} 
-    Energy gained: {energy_gain if action in ['defend', 'focus'] else 'N/A'}
-    Synergy effect: {synergy_effect}
-    Opponent: {opponent_name}
-    """, elaborate=True)
+    Briefly describe the outcome of a {action} move in a Zen-themed battle. 
+    Include only the most important effects and any notable synergies.
+    Damage: {damage if damage > 0 else 'N/A'}
+    Healing: {heal if heal > 0 else 'N/A'}
+    Energy changes: cost {energy_cost}, gained {energy_gain}
+    Keep the description under 50 words.
+    """, elaborate=False)
 
     # Combine dynamic message with results
     result_message = f"{dynamic_message}\n\n{synergy_effect}"
-    
+
     return result_message, user_hp, opponent_hp, user_energy, damage, heal, energy_cost, energy_gain, synergy_effect
 
 async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, db, bot_mode=False, action=None):
@@ -1794,12 +1805,14 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
             db.commit()
             winner_name = "Bot" if winner_id == 7283636452 else update.effective_user.first_name if bot_mode else "You"
-            await send_message(update, f"{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!")
+            final_move_message = f"The battle ended with {winner_name} using {action}, dealing {damage} damage."
+            await send_message(update, f"{final_move_message}\n{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!")
 
             if zen_quest.quest_active.get(user_id, False):
                 zen_quest.in_combat[user_id] = False
                 if winner_id == user_id:
                     await zen_quest.progress_story(update, context, "victory in combat")
+                    await send_message(update, "Your quest continues. What would you like to do next?")
                 else:
                     await zen_quest.end_quest(update, context, victory=False, reason="You have been defeated in combat.")
             return
