@@ -588,25 +588,38 @@ class ZenQuest:
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         opponent_id = 7283636452  # Bot's ID
+        current_scene = self.current_scene.get(user_id, "A mysterious battlefield")
+        opponent_name = await generate_opponent_name(current_scene, "Mysterious Opponent")
 
         db = get_db_connection()
         if db:
             try:
                 cursor = db.cursor(dictionary=True)
                 cursor.execute("""
-                    INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
-                    VALUES (%s, %s, %s, %s, 'in_progress')
-                """, (user_id, opponent_id, update.effective_chat.id, user_id))
+                    INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status, opponent_name)
+                    VALUES (%s, %s, %s, %s, 'in_progress', %s)
+                """, (user_id, opponent_id, update.effective_chat.id, user_id, opponent_name))
                 db.commit()
 
                 context.user_data['challenger_energy'] = 50
                 context.user_data['opponent_energy'] = 50
+                context.user_data['opponent_name'] = opponent_name  # Store the opponent name
 
-                await update.message.reply_text("Your actions have led to a confrontation. Prepare for battle!")
+                await update.message.reply_text(f"Your actions have led to a confrontation with {opponent_name}. Prepare for battle!")
                 await send_game_rules(context, user_id, opponent_id)
+            
+                battle_view = await create_battle_view(
+                    update.effective_user.first_name,
+                    100,  # Initial challenger HP
+                    50,   # Initial challenger energy
+                    opponent_name,
+                    100,  # Initial opponent HP
+                    50    # Initial opponent energy
+                )
+            
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text="Choose your move:",
+                    text=f"{battle_view}\n\nChoose your move:",
                     reply_markup=generate_pvp_move_buttons(user_id)
                 )
             finally:
@@ -904,9 +917,19 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
 
         # Automatically send move buttons if the battle is against the bot
         if opponent_id == 7283636452:
-            # Here, ensure only one set of buttons is displayed
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="Choose your move:", reply_markup=generate_pvp_move_buttons(user_id))
-
+            current_scene = "A mysterious battlefield"  # You might want to generate this based on the user's current state
+            opponent_name = await generate_opponent_name(current_scene, "Mysterious Opponent")
+            cursor.execute("""
+                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status, opponent_name)
+                VALUES (%s, %s, %s, %s, 'pending', %s)
+            """, (user_id, opponent_id, update.effective_chat.id, user_id, opponent_name))
+        else:
+            cursor.execute("""
+                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
+                VALUES (%s, %s, %s, %s, 'pending')
+            """, (user_id, opponent_id, update.effective_chat.id, user_id))
+        db.commit()
+        
     except mysql.connector.Error as e:
         logger.error(f"MySQL error in start_pvp: {e}")
         await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
@@ -1015,7 +1038,7 @@ async def generate_opponent_name(current_scene, default_name):
     """
     return await generate_response(prompt, elaborate=False)
 
-async def create_battle_view(challenger_name, challenger_hp, challenger_energy, opponent_name, opponent_hp, opponent_energy):
+async def create_battle_view(challenger_name, challenger_hp, challenger_energy, opponent_name, opponent_hp, opponent_energy, current_scene):
     def create_bar(value, max_value, fill_char='█', empty_char='░'):
         bar_length = 10
         filled = int((value / max_value) * bar_length)
@@ -1699,7 +1722,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         opponent_energy = context.user_data.get(f'{opponent_key}_energy', 50)
 
         opponent_id = battle[f'{opponent_key}_id']
-        opponent_name = "Bot" if opponent_id == 7283636452 else update.effective_user.first_name if bot_mode else "Opponent"
+        opponent_name = battle['opponent_name']  # Use the stored opponent name
 
         result = await perform_action(
             action, user_hp, opponent_hp, user_energy, context.user_data.get(f'{player_key}_next_turn_synergy', {}),
@@ -1752,8 +1775,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             user_energy,
             opponent_name,
             opponent_hp,
-            opponent_energy,
-            current_scene
+            opponent_energy
         )
 
         numeric_stats = f"Move: {action.capitalize()}, Effect: {synergy_effect or 'None'}, Damage: {damage}, Heal: {heal}, Energy Cost: {energy_cost}, Energy Gained: {energy_gain}"
