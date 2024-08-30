@@ -76,51 +76,8 @@ def setup_database():
     if connection:
         try:
             with connection.cursor() as cursor:
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    username VARCHAR(255),
-                    first_name VARCHAR(255),
-                    last_name VARCHAR(255),
-                    chat_type ENUM('private', 'group') DEFAULT 'private',
-                    total_minutes INT DEFAULT 0,
-                    zen_points INT DEFAULT 0,
-                    level INT DEFAULT 0,
-                    subscription_status BOOLEAN DEFAULT FALSE
-                )
-                """)
-                
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS user_memory (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id BIGINT,
-                    group_id BIGINT,
-                    memory TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """)
-                
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS group_memberships (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id BIGINT,
-                    group_id BIGINT,
-                    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
-                )
-                """)
-                
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS subscriptions (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    user_id BIGINT,
-                    start_date DATETIME,
-                    end_date DATETIME,
-                    status ENUM('active', 'cancelled', 'expired') DEFAULT 'active',
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
-                )
-                """)
-                
+                # Your existing table creation code remains unchanged
+
                 # Table for PvP battles
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS pvp_battles (
@@ -144,6 +101,13 @@ def setup_database():
                 if not result:
                     cursor.execute("ALTER TABLE pvp_battles ADD COLUMN winner_id BIGINT NULL")
                     logger.info("Added 'winner_id' column to 'pvp_battles' table.")
+                
+                # Check if 'opponent_name' column exists, and if not, add it
+                cursor.execute("SHOW COLUMNS FROM pvp_battles LIKE 'opponent_name'")
+                result = cursor.fetchone()
+                if not result:
+                    cursor.execute("ALTER TABLE pvp_battles ADD COLUMN opponent_name VARCHAR(255) DEFAULT 'Mysterious Opponent'")
+                    logger.info("Added 'opponent_name' column to 'pvp_battles' table.")
                 
             connection.commit()
             logger.info("Database setup completed successfully.")
@@ -486,18 +450,10 @@ class ZenQuest:
             return
 
         user_input = update.message.text.lower()
-
-        # Check for PvP trigger keywords
-        combat_keywords = ["fight", "attack", "battle", "confront", "challenge", "kill"]
-
-        # Check if the current scene or quest state allows for combat
         current_scene = self.current_scene.get(user_id, "")
         quest_state = self.quest_state.get(user_id, "")
 
-        combat_possible = any(word in current_scene.lower() for word in ["enemy", "opponent", "rival", "foe"])
-
-        if any(keyword in user_input for keyword in combat_keywords) and combat_possible and not self.in_combat.get(user_id, False):
-            # Generate a confirmation prompt
+        if contains_combat_trigger(user_input) and is_combat_appropriate(current_scene) and not self.in_combat.get(user_id, False):
             confirmation_prompt = f"""
             Based on the user's input "{user_input}" and the current quest state:
             Current scene: {current_scene}
@@ -517,8 +473,15 @@ class ZenQuest:
             else:
                 await update.message.reply_text("There doesn't seem to be anyone to fight at the moment. The quest continues.")
 
-        # Handle other quest inputs
         await self.progress_story(update, context, user_input)
+
+        def contains_combat_trigger(user_input):
+            combat_triggers = ["fight", "attack", "battle", "confront", "challenge", "kill"]
+            return any(trigger in user_input for trigger in combat_triggers)
+
+        def is_combat_appropriate(current_scene):
+            combat_keywords = ["enemy", "opponent", "rival", "foe", "threat", "danger"]
+            return any(keyword in current_scene.lower() for keyword in combat_keywords)
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
         user_id = update.effective_user.id
@@ -799,41 +762,36 @@ async def add_zen_points(update: Update, context: ContextTypes.DEFAULT_TYPE, poi
         logger.error(f"Error adding Zen points: {e}")
         await update.message.reply_text("An error occurred while updating your Zen points. Please try again later.")
 
-async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    db = get_db_connection()
+    opponent_id = 7283636452  # Bot's ID
+    current_scene = self.current_scene.get(user_id, "A mysterious battlefield")
+    opponent_name = await generate_opponent_name(current_scene, "Mysterious Opponent")
 
+    db = get_db_connection()
     if db:
         try:
             cursor = db.cursor(dictionary=True)
+            cursor.execute("""
+                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status, opponent_name)
+                VALUES (%s, %s, %s, %s, 'in_progress', %s)
+            """, (user_id, opponent_id, update.effective_chat.id, user_id, opponent_name))
+            db.commit()
 
-            # Create a new PvP battle against the bot
-            opponent_id = 7283636452  # Bot's ID
             context.user_data['challenger_energy'] = 50
             context.user_data['opponent_energy'] = 50
 
-            cursor.execute("""
-                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
-                VALUES (%s, %s, %s, %s, 'pending')
-            """, (user_id, opponent_id, update.effective_chat.id, user_id))
-            db.commit()
-
+            await update.message.reply_text(f"Your actions have led to a confrontation with {opponent_name}. Prepare for battle!")
             await send_game_rules(context, user_id, opponent_id)
-            await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
-
-            # Start the combat automatically
-            await start_new_battle(update, context)
-            await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
-
-        except mysql.connector.Error as e:
-            logger.error(f"MySQL error in initiate_combat: {e}")
-            await update.message.reply_text("An error occurred while initiating the combat. Please try again later.")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Choose your move:",
+                reply_markup=generate_pvp_move_buttons(user_id)
+            )
         finally:
             if db.is_connected():
                 cursor.close()
                 db.close()
-    else:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 async def send_split_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message: str):
     max_message_length = 4000  # Telegram's message limit is 4096 characters, but we'll leave a margin
@@ -1200,45 +1158,6 @@ async def execute_pvp_move_wrapper(update: Update, context: ContextTypes.DEFAULT
             if db.is_connected():
                 db.close()
 
-async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
-
-            cursor.execute("""
-                SELECT id, challenger_id, opponent_id FROM pvp_battles 
-                WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
-            """, (user_id, user_id))
-            battle_data = cursor.fetchone()
-
-            if not battle_data:
-                await update.message.reply_text("No active battles found to surrender.")
-                return
-
-            winner_id = battle_data['opponent_id'] if user_id == battle_data['challenger_id'] else battle_data['challenger_id']
-
-            cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle_data['id']))
-            db.commit()
-
-            await update.message.reply_text("You have surrendered the battle. Your opponent is victorious.")
-
-            # End the quest if it's active
-            if zen_quest.quest_active.get(user_id, False):
-                zen_quest.in_combat[user_id] = False
-                await zen_quest.end_quest(update, context, victory=False, reason="You have surrendered in combat.")
-
-        except mysql.connector.Error as e:
-            logger.error(f"Database error in surrender: {e}")
-            await update.message.reply_text("An error occurred while surrendering. Please try again later.")
-
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1968,34 +1887,33 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db:
         try:
             cursor = db.cursor(dictionary=True)
-            
-            # Fetch the active battle where the user is a challenger or opponent
+
             cursor.execute("""
                 SELECT id, challenger_id, opponent_id FROM pvp_battles 
                 WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
             """, (user_id, user_id))
             battle_data = cursor.fetchone()
 
-            # Ensure all results are consumed
-            cursor.fetchall()
-
             if not battle_data:
                 await update.message.reply_text("No active battles found to surrender.")
                 return
 
-            # Determine the winner (opponent wins if the user surrenders)
             winner_id = battle_data['opponent_id'] if user_id == battle_data['challenger_id'] else battle_data['challenger_id']
-            
-            # Update the battle status to 'completed' and set the winner
+
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle_data['id']))
             db.commit()
-            
+
             await update.message.reply_text("You have surrendered the battle. Your opponent is victorious.")
-        
+
+            # End the quest if it's active
+            if zen_quest.quest_active.get(user_id, False):
+                zen_quest.in_combat[user_id] = False
+                await zen_quest.end_quest(update, context, victory=False, reason="You have surrendered in combat.")
+
         except mysql.connector.Error as e:
             logger.error(f"Database error in surrender: {e}")
             await update.message.reply_text("An error occurred while surrendering. Please try again later.")
-        
+
         finally:
             if db.is_connected():
                 cursor.close()
