@@ -607,16 +607,17 @@ class ZenQuest:
 
                 await update.message.reply_text(f"Your actions have led to a confrontation with {opponent_name}. Prepare for battle!")
                 await send_game_rules(context, user_id, opponent_id)
-            
+
                 battle_view = await create_battle_view(
                     update.effective_user.first_name,
                     100,  # Initial challenger HP
                     50,   # Initial challenger energy
                     opponent_name,
                     100,  # Initial opponent HP
-                    50    # Initial opponent energy
+                    50,   # Initial opponent energy
+                    current_scene  # Add this argument
                 )
-            
+
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     text=f"{battle_view}\n\nChoose your move:",
@@ -929,7 +930,7 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
                 VALUES (%s, %s, %s, %s, 'pending')
             """, (user_id, opponent_id, update.effective_chat.id, user_id))
         db.commit()
-        
+
     except mysql.connector.Error as e:
         logger.error(f"MySQL error in start_pvp: {e}")
         await update.message.reply_text("An error occurred while starting the PvP battle. Please try again later.")
