@@ -402,9 +402,9 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
-def contains_combat_trigger(user_input):
-            combat_triggers = ["fight", "attack", "battle", "confront", "challenge", "kill"]
-            return any(trigger in user_input for trigger in combat_triggers)
+def contains_combat_trigger(user_input, current_scene):
+    combat_triggers = ["fight", "attack", "battle", "confront", "challenge"]
+    return any(trigger in user_input.lower() for trigger in combat_triggers) and is_combat_appropriate(current_scene)
 
 def is_combat_appropriate(current_scene):
     combat_keywords = ["enemy", "opponent", "rival", "foe", "threat", "danger"]
@@ -460,7 +460,7 @@ class ZenQuest:
         current_scene = self.current_scene.get(user_id, "")
         quest_state = self.quest_state.get(user_id, "")
 
-        if contains_combat_trigger(user_input) and is_combat_appropriate(current_scene) and not self.in_combat.get(user_id, False):
+        if contains_combat_trigger(user_input, current_scene) and not self.in_combat.get(user_id, False):
             confirmation_prompt = f"""
             Based on the user's input "{user_input}" and the current quest state:
             Current scene: {current_scene}
@@ -479,8 +479,6 @@ class ZenQuest:
                 return
             else:
                 await update.message.reply_text("There doesn't seem to be anyone to fight at the moment. The quest continues.")
-
-        await self.progress_story(update, context, user_input)
 
         await self.progress_story(update, context, user_input)
 
@@ -781,6 +779,7 @@ async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TY
 
             context.user_data['challenger_energy'] = 50
             context.user_data['opponent_energy'] = 50
+            context.user_data['opponent_name'] = opponent_name  # Store the opponent name
 
             await update.message.reply_text(f"Your actions have led to a confrontation with {opponent_name}. Prepare for battle!")
             await send_game_rules(context, user_id, opponent_id)
@@ -1016,7 +1015,7 @@ async def generate_opponent_name(current_scene, default_name):
     """
     return await generate_response(prompt, elaborate=False)
 
-async def create_battle_view(challenger_name, challenger_hp, challenger_energy, opponent_name, opponent_hp, opponent_energy, current_scene):
+async def create_battle_view(challenger_name, challenger_hp, challenger_energy, opponent_name, opponent_hp, opponent_energy):
     def create_bar(value, max_value, fill_char='█', empty_char='░'):
         bar_length = 10
         filled = int((value / max_value) * bar_length)
@@ -1027,9 +1026,6 @@ async def create_battle_view(challenger_name, challenger_hp, challenger_energy, 
     o_hp_bar = create_bar(opponent_hp, 100)
     o_energy_bar = create_bar(opponent_energy, 100)
 
-    # Generate a dynamic opponent name based on the current scene
-    dynamic_opponent_name = await generate_opponent_name(current_scene, opponent_name)
-
     battle_view = f"""
 ⚪ {challenger_name}
 ━━━━━━━━━━━━━━━━━
@@ -1037,7 +1033,7 @@ async def create_battle_view(challenger_name, challenger_hp, challenger_energy, 
 💠 Chi [{c_energy_bar}] {challenger_energy}
 ━━━━━━━━━━━━━━━━━
            ☯
-⚪ {dynamic_opponent_name}
+⚪ {opponent_name}
 ━━━━━━━━━━━━━━━━━
 💚 HP  [{o_hp_bar}] {opponent_hp}
 💠 Chi [{o_energy_bar}] {opponent_energy}
