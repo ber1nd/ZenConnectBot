@@ -402,6 +402,14 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
+def contains_combat_trigger(user_input):
+            combat_triggers = ["fight", "attack", "battle", "confront", "challenge", "kill"]
+            return any(trigger in user_input for trigger in combat_triggers)
+
+def is_combat_appropriate(current_scene):
+    combat_keywords = ["enemy", "opponent", "rival", "foe", "threat", "danger"]
+    return any(keyword in current_scene.lower() for keyword in combat_keywords)
+
 
 class ZenQuest:
     def __init__(self):
@@ -443,7 +451,6 @@ class ZenQuest:
             await update.message.reply_text("An error occurred while starting the quest. Please try again.")
             self.quest_active[user_id] = False
 
-
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         if not self.quest_active.get(user_id, False) or update.message.chat.type != 'private':
@@ -475,13 +482,7 @@ class ZenQuest:
 
         await self.progress_story(update, context, user_input)
 
-        def contains_combat_trigger(user_input):
-            combat_triggers = ["fight", "attack", "battle", "confront", "challenge", "kill"]
-            return any(trigger in user_input for trigger in combat_triggers)
-
-        def is_combat_appropriate(current_scene):
-            combat_keywords = ["enemy", "opponent", "rival", "foe", "threat", "danger"]
-            return any(keyword in current_scene.lower() for keyword in combat_keywords)
+        await self.progress_story(update, context, user_input)
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
         user_id = update.effective_user.id
