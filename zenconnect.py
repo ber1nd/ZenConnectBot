@@ -470,15 +470,39 @@ class ZenQuest:
             self.player_hp[user_id] = 100
             self.current_stage[user_id] = 0
             self.quest_state[user_id] = "beginning"
-            self.in_combat[user_id] = False  # Initialize combat state
-            initial_scene = await self.generate_initial_scene()
-            self.current_scene[user_id] = initial_scene
-            await self.send_scene(update, context)
+            self.in_combat[user_id] = False
+
+            # Generate quest goal
+            goal_prompt = """
+            Generate a Zen-themed quest goal. The goal should be:
+            1. Achievable through human actions (no supernatural abilities)
+            2. Related to personal growth or helping others
+            3. Challenging but not impossible
+            4. Clear and concise (1-2 sentences)
+            """
+            self.quest_goal[user_id] = await generate_response(goal_prompt)
+
+            # Generate initial scene
+            initial_scene_prompt = f"""
+            Generate the opening scene for a Zen-themed quest with the following goal:
+            {self.quest_goal[user_id]}
+
+            Include:
+            1. A brief, vivid description of the starting environment (2-3 sentences)
+            2. An introduction to the quest's purpose and initial challenge (1-2 sentences)
+            3. Three distinct choices for the player to begin their journey (each choice should be one short sentence)
+            4. A hint of the challenges and growth that lie ahead (1 sentence)
+
+            The scene should be engaging and open-ended, allowing for various paths forward.
+            Ensure the total length is concise to fit within message limits.
+            """
+            self.current_scene[user_id] = await generate_response(initial_scene_prompt)
+
+            await update.message.reply_text(f"Your quest begins!\n\nYour goal: {self.quest_goal[user_id]}\n\n{self.current_scene[user_id]}")
         except Exception as e:
             logger.error(f"Error starting quest: {e}")
             await update.message.reply_text("An error occurred while starting the quest. Please try again.")
             self.quest_active[user_id] = False
-
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -487,16 +511,13 @@ class ZenQuest:
 
         user_input = update.message.text.lower()
 
-        # Check for PvP trigger keywords
-        combat_keywords = ["fight", "attack", "battle", "confront", "challenge", "kill"]
-
         # Check if the current scene or quest state allows for combat
         current_scene = self.current_scene.get(user_id, "")
         quest_state = self.quest_state.get(user_id, "")
 
         combat_possible = any(word in current_scene.lower() for word in ["enemy", "opponent", "rival", "foe"])
 
-        if any(keyword in user_input for keyword in combat_keywords) and combat_possible and not self.in_combat.get(user_id, False):
+        if combat_possible and not self.in_combat.get(user_id, False):
             # Generate a confirmation prompt
             confirmation_prompt = f"""
             Based on the user's input "{user_input}" and the current quest state:
@@ -524,15 +545,23 @@ class ZenQuest:
         user_id = update.effective_user.id
 
         try:
+            # Check if the action goes against Zen teachings
+            morality_check = await self.check_action_morality(user_input)
+        
+            if morality_check['is_immoral']:
+                consequence = await self.generate_consequence(morality_check['reason'], self.current_scene[user_id])
+                await update.message.reply_text(consequence['description'])
+            
+                if consequence['type'] == 'jail':
+                    await self.end_quest(update, context, victory=False, reason="You have been imprisoned for your actions.")
+                    return
+                elif consequence['type'] == 'attack':
+                    self.in_combat[user_id] = True
+                    await self.initiate_combat(update, context)
+                    return
+
             next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id])
             self.current_scene[user_id] = next_scene
-
-            combat_keywords = ["fight", "attack", "battle", "confront", "challenge"]
-            if any(keyword in user_input.lower() for keyword in combat_keywords) and not self.in_combat.get(user_id, False):
-                await update.message.reply_text("Your actions have led to a confrontation. Prepare for combat!")
-                self.in_combat[user_id] = True
-                await self.initiate_combat(update, context)
-                return
 
             if "COMBAT_START" in next_scene:
                 self.in_combat[user_id] = True
@@ -550,6 +579,30 @@ class ZenQuest:
             logger.error(f"Error progressing story: {e}", exc_info=True)
             await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
             self.quest_active[user_id] = False
+
+    async def check_action_morality(self, action):
+        prompt = f"""
+        Evaluate the following action in the context of Zen teachings:
+        "{action}"
+        Is this action against Zen principles? Respond with 'Yes' or 'No' and provide a brief explanation.
+        """
+        response = await generate_response(prompt)
+        is_immoral = response.lower().startswith("yes")
+        reason = response.split(":", 1)[1].strip() if ":" in response else response
+        return {"is_immoral": is_immoral, "reason": reason}
+
+    async def generate_consequence(self, reason, current_scene):
+        prompt = f"""
+        The player has acted against Zen teachings: {reason}
+        Current scene: {current_scene}
+        Generate a consequence for this action. It should either be:
+        1. Imprisonment if in a populated area
+        2. An attack by spirits or natural forces if in a remote area
+        Provide a brief description of the consequence and specify the type ('jail' or 'attack').
+        """
+        response = await generate_response(prompt)
+        type = 'jail' if 'imprison' in response.lower() else 'attack'
+        return {"type": type, "description": response}
 
     async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
