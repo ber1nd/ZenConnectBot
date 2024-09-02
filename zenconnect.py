@@ -448,6 +448,7 @@ class ZenQuest:
         self.current_scene = {}
         self.in_combat = {}
         self.quest_state = {}
+        self.quest_goal = {}  # New attribute to store quest goals
         self.unfeasible_actions = [
             "fly", "teleport", "time travel", "breathe underwater", "become invisible",
             "read minds", "shoot lasers", "transform", "resurrect", "conjure",
@@ -458,6 +459,7 @@ class ZenQuest:
             "destroy sacred artifact", "harm innocent", "break vow", "ignore warning",
             "consume poison", "jump off cliff", "attack ally", "steal from temple"
         ]
+
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
