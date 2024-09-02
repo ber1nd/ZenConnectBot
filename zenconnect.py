@@ -448,7 +448,8 @@ class ZenQuest:
         self.current_scene = {}
         self.in_combat = {}
         self.quest_state = {}
-        self.quest_goal = {}  # New attribute to store quest goals
+        self.quest_goal = {}
+        self.player_karma = {}
         self.unfeasible_actions = [
             "fly", "teleport", "time travel", "breathe underwater", "become invisible",
             "read minds", "shoot lasers", "transform", "resurrect", "conjure",
@@ -459,7 +460,6 @@ class ZenQuest:
             "destroy sacred artifact", "harm innocent", "break vow", "ignore warning",
             "consume poison", "jump off cliff", "attack ally", "steal from temple"
         ]
-
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -473,34 +473,12 @@ class ZenQuest:
             self.current_stage[user_id] = 0
             self.quest_state[user_id] = "beginning"
             self.in_combat[user_id] = False
+            self.player_karma[user_id] = 0
 
-            # Generate quest goal
-            goal_prompt = """
-            Generate a Zen-themed quest goal. The goal should be:
-            1. Achievable through human actions (no supernatural abilities)
-            2. Related to personal growth or helping others
-            3. Challenging but not impossible
-            4. Clear and concise (1-2 sentences)
-            """
-            self.quest_goal[user_id] = await generate_response(goal_prompt)
+            self.quest_goal[user_id] = await self.generate_quest_goal()
+            self.current_scene[user_id] = await self.generate_initial_scene(self.quest_goal[user_id])
 
-            # Generate initial scene
-            initial_scene_prompt = f"""
-            Generate the opening scene for a Zen-themed quest with the following goal:
-            {self.quest_goal[user_id]}
-
-            Include:
-            1. A brief, vivid description of the starting environment (2-3 sentences)
-            2. An introduction to the quest's purpose and initial challenge (1-2 sentences)
-            3. Three distinct choices for the player to begin their journey (each choice should be one short sentence)
-            4. A hint of the challenges and growth that lie ahead (1 sentence)
-
-            The scene should be engaging and open-ended, allowing for various paths forward.
-            Ensure the total length is concise to fit within message limits.
-            """
-            self.current_scene[user_id] = await generate_response(initial_scene_prompt)
-
-            await update.message.reply_text(f"Your quest begins!\n\nYour goal: {self.quest_goal[user_id]}\n\n{self.current_scene[user_id]}")
+            await update.message.reply_text(f"Your quest begins!\n\n{self.quest_goal[user_id]}\n\n{self.current_scene[user_id]}")
         except Exception as e:
             logger.error(f"Error starting quest: {e}")
             await update.message.reply_text("An error occurred while starting the quest. Please try again.")
@@ -512,61 +490,39 @@ class ZenQuest:
             return
 
         user_input = update.message.text.lower()
-
-        # Check if the current scene or quest state allows for combat
-        current_scene = self.current_scene.get(user_id, "")
-        quest_state = self.quest_state.get(user_id, "")
-
-        combat_possible = any(word in current_scene.lower() for word in ["enemy", "opponent", "rival", "foe"])
-
-        if combat_possible and not self.in_combat.get(user_id, False):
-            # Generate a confirmation prompt
-            confirmation_prompt = f"""
-            Based on the user's input "{user_input}" and the current quest state:
-            Current scene: {current_scene}
-            Quest state: {quest_state}
-
-            Should a PvP battle be initiated? Consider if there's a logical opponent present in the story.
-            Respond with either 'Yes' or 'No' and a brief explanation.
-            """
-
-            confirmation = await generate_response(confirmation_prompt)
-
-            if confirmation.lower().startswith("yes"):
-                await update.message.reply_text("Your actions have led to a confrontation. Prepare for combat!")
-                self.in_combat[user_id] = True
-                await self.initiate_combat(update, context)
-                return
-            else:
-                await update.message.reply_text("There doesn't seem to be anyone to fight at the moment. The quest continues.")
-
-        # Handle other quest inputs
-        await self.progress_story(update, context, user_input)
+    
+        if self.is_action_unfeasible(user_input):
+            await self.handle_unfeasible_action(update, context)
+        elif self.is_action_failure(user_input):
+            await self.handle_failure_action(update, context)
+        else:
+            await self.progress_story(update, context, user_input)
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
         user_id = update.effective_user.id
 
         try:
-            # Check if the action goes against Zen teachings
             morality_check = await self.check_action_morality(user_input)
-        
-            if morality_check['is_immoral']:
-                consequence = await self.generate_consequence(morality_check['reason'], self.current_scene[user_id])
-                await update.message.reply_text(consequence['description'])
             
-                if consequence['type'] == 'jail':
-                    await self.end_quest(update, context, victory=False, reason="You have been imprisoned for your actions.")
-                    return
-                elif consequence['type'] == 'attack':
-                    self.in_combat[user_id] = True
-                    await self.initiate_combat(update, context)
-                    return
+            if morality_check['is_immoral']:
+                consequence = await self.generate_severe_consequence(morality_check['reason'], self.current_scene[user_id])
+                await update.message.reply_text(consequence['description'])
+                
+                self.player_karma[user_id] -= 20
 
-            next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id])
+                if consequence['type'] == 'quest_fail':
+                    await self.end_quest(update, context, victory=False, reason=consequence['description'])
+                    return
+                elif consequence['type'] == 'combat':
+                    await self.initiate_combat(update, context, opponent="spiritual guardians")
+                    return
+                elif consequence['type'] == 'affliction':
+                    await self.apply_affliction(update, context, consequence['description'])
+
+            next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id], self.quest_goal[user_id])
             self.current_scene[user_id] = next_scene
 
             if "COMBAT_START" in next_scene:
-                self.in_combat[user_id] = True
                 await self.initiate_combat(update, context)
             elif "QUEST_COMPLETE" in next_scene:
                 await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
@@ -582,29 +538,107 @@ class ZenQuest:
             await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
             self.quest_active[user_id] = False
 
+    async def generate_quest_goal(self):
+        prompt = """
+        Create a Zen-themed quest goal. The goal should:
+        1. Involve a journey of self-discovery or helping others
+        2. Incorporate exploration of mystical or natural locations
+        3. Include a search for spiritual wisdom, enlightenment, or a symbolic artifact
+        4. Present both physical and spiritual challenges
+        5. Require the application of Zen principles throughout the journey
+        
+        The goal should be clear, concise, and inspiring (2-3 sentences).
+        """
+        return await generate_response(prompt)
+
+    async def generate_initial_scene(self, quest_goal):
+        prompt = f"""
+        Create the opening scene for a Zen-themed quest with the following goal:
+        {quest_goal}
+
+        Include:
+        1. A vivid description of the starting location (2-3 sentences)
+        2. An introduction to the quest's purpose and initial challenge (1-2 sentences)
+        3. Three distinct choices for the player to begin their journey (each choice should be one short sentence)
+        4. A hint of the spiritual and physical challenges ahead (1 sentence)
+
+        The scene should be engaging and mystical, setting the tone for a journey of self-discovery and adventure.
+        Avoid modern or technological elements, focusing instead on natural and spiritual aspects.
+        """
+        return await generate_response(prompt)
+
+    async def generate_next_scene(self, previous_scene, user_input, quest_state, quest_goal):
+        prompt = f"""
+        Previous scene: {previous_scene}
+        User's action: "{user_input}"
+        Current quest state: {quest_state}
+        Quest goal: {quest_goal}
+
+        Generate the next scene of the Zen-themed quest. Include:
+        1. A vivid description of the new environment or changes in the current location (2-3 sentences)
+        2. The outcome of the user's action and its impact on the quest progress (1-2 sentences)
+        3. A new challenge, puzzle, or encounter related to Zen principles (1-2 sentences)
+        4. Three distinct, non-repeated choices for the player (each choice should be one sentence)
+        5. A brief Zen-like insight or question relevant to the current situation (1 sentence)
+
+        Possible elements to include:
+        - Discovery of clues or items relevant to the quest goal
+        - Encounters with wise mentors, troublesome adversaries, or spiritual entities
+        - Natural or metaphysical obstacles to overcome
+        - Opportunities for meditation, self-reflection, or applying Zen teachings
+        - Moral dilemmas that test the player's adherence to Zen principles
+
+        If appropriate, introduce:
+        - A combat situation (indicate with 'COMBAT_START')
+        - A successful quest completion (indicate with 'QUEST_COMPLETE')
+        - An unsuccessful quest ending (indicate with 'QUEST_FAIL')
+
+        Ensure all situations and actions are realistic for a human character in a mystical setting.
+        The quest should progress towards its goal or end if the player's choices lead to a significant milestone or failure.
+        Maintain a balance between physical adventure and spiritual growth throughout the journey.
+        """
+        return await generate_response(prompt, elaborate=True)
+
     async def check_action_morality(self, action):
         prompt = f"""
-        Evaluate the following action in the context of Zen teachings:
+        Evaluate the following action in the context of Zen teachings and general morality:
         "{action}"
-        Is this action against Zen principles? Respond with 'Yes' or 'No' and provide a brief explanation.
+        Is this action against Zen principles or morally wrong? Respond with 'Yes' or 'No' and provide a brief explanation.
+        Consider not just violence, but also actions that promote greed, hatred, or delusion.
         """
         response = await generate_response(prompt)
         is_immoral = response.lower().startswith("yes")
         reason = response.split(":", 1)[1].strip() if ":" in response else response
         return {"is_immoral": is_immoral, "reason": reason}
 
-    async def generate_consequence(self, reason, current_scene):
+    async def generate_severe_consequence(self, reason, current_scene):
         prompt = f"""
-        The player has acted against Zen teachings: {reason}
+        The player has committed a severely immoral or unethical act: {reason}
         Current scene: {current_scene}
-        Generate a consequence for this action. It should either be:
-        1. Imprisonment if in a populated area
-        2. An attack by spirits or natural forces if in a remote area
-        Provide a brief description of the consequence and specify the type ('jail' or 'attack').
+
+        Generate a severe consequence for this action. It should be one of:
+        1. Immediate quest failure due to a complete violation of Zen principles
+        2. Confrontation with powerful spiritual guardians leading to combat
+        3. A karmic curse or spiritual affliction that greatly hinders the player's progress
+
+        Provide a vivid description of the consequence (3-4 sentences) and specify the type ('quest_fail', 'combat', or 'affliction').
+        The consequence should be severe and directly tied to the player's action, emphasizing the importance of moral choices in the quest.
+        It should also fit within the mystical and spiritual theme of the quest.
         """
         response = await generate_response(prompt)
-        type = 'jail' if 'imprison' in response.lower() else 'attack'
+        if "quest_fail" in response.lower():
+            type = "quest_fail"
+        elif "combat" in response.lower():
+            type = "combat"
+        else:
+            type = "affliction"
         return {"type": type, "description": response}
+
+    async def apply_affliction(self, update: Update, context: ContextTypes.DEFAULT_TYPE, affliction_description):
+        user_id = update.effective_user.id
+        self.player_karma[user_id] -= 10
+        await update.message.reply_text(f"You have been afflicted: {affliction_description}")
+        # Implement additional affliction effects here
 
     async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -613,74 +647,45 @@ class ZenQuest:
             return
 
         scene = self.current_scene[user_id]
-        # Split the scene into description and choices
-        scene_parts = scene.split("Your choices:")
-        description = scene_parts[0].strip()
-        choices = scene_parts[1].strip() if len(scene_parts) > 1 else ""
+        description, choices = self.process_scene(scene)
 
-    # Truncate the description if it's too long
-        max_description_length = 3000
-        if len(description) > max_description_length:
-            description = description[:max_description_length] + "..."
-
-    # Send the description
-        await update.message.reply_text(description)
-
-    # Send the choices separately, if they exist
+        await update.message.reply_text(description[:4000])  # Telegram message limit
         if choices:
             await update.message.reply_text(f"Your choices:\n{choices}")
 
+    def process_scene(self, scene):
+        parts = scene.split("Your choices:")
+        description = parts[0].strip()
+        choices = parts[1].strip() if len(parts) > 1 else ""
+        return description, choices
 
     async def update_quest_state(self, user_id):
-        if self.current_stage[user_id] == 1:
-            self.quest_state[user_id] = "middle"
-        elif self.current_stage[user_id] > 5:  # Arbitrary number, can be adjusted
+        scene_content = self.current_scene.get(user_id, "")
+        if "nearing your goal" in scene_content.lower():
             self.quest_state[user_id] = "nearing_end"
+        elif self.current_stage[user_id] > 0:
+            self.quest_state[user_id] = "middle"
 
-    async def generate_initial_scene(self):
-        prompt = """
-        Generate the opening scene for a Zen-themed quest. Include:
-        1. A brief, vivid description of the starting environment (2-3 sentences)
-        2. The quest's purpose and initial challenge (1-2 sentences)
-        3. Three distinct choices for the player to begin their journey (each choice should be one short sentence)
-        4. A hint of the challenges and growth that lie ahead (1 sentence)
-
-        The scene should be engaging and open-ended, allowing for various paths forward.
-        Ensure the total length is concise to fit within message limits.
-        Do not use any scene titles or headers.
-        """
-        return await generate_response(prompt, elaborate=False)
-
-    async def generate_next_scene(self, previous_scene, user_input, quest_state):
-        prompt = f"""
-        Previous scene: {previous_scene}
-        User's action: "{user_input}"
-        Current quest state: {quest_state}
-
-        Generate the next scene of the Zen-themed quest. Include:
-        1. A brief description of the environment and consequences of the user's action (2-3 sentences)
-        2. Three distinct, non-repeated choices for the player (each choice should be one sentence)
-        3. A brief Zen-like insight or question (1 sentence)
-
-        Regularly introduce challenging elements:
-        - Moral dilemmas that test the player's adherence to Zen principles
-        - Riddles or puzzles that require careful thought
-        - Situations where hasty or violent actions could lead to quest failure
-
-        If appropriate, introduce:
-        - A combat situation (indicate with 'COMBAT_START')
-        - A successful quest completion (indicate with 'QUEST_COMPLETE')
-        - An unsuccessful quest ending (indicate with 'QUEST_FAIL')
-
-        Ensure all situations and actions are realistic for a human character.
-        The quest should end if the player's choices lead to a natural conclusion or a significant failure.
-        Do not repeat choices from the previous scene.
-        """
-        return await generate_response(prompt, elaborate=True)
-
-    async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent="unknown"):
         user_id = update.effective_user.id
-        opponent_id = 7283636452  # Bot's ID
+        self.in_combat[user_id] = True
+        
+        # Setup for PvP or NPC combat based on the opponent
+        if opponent == "spiritual guardians" or opponent == "unknown":
+            # NPC combat setup
+            await self.setup_npc_combat(update, context, opponent)
+        else:
+            # PvP combat setup
+            await self.setup_pvp_combat(update, context, opponent)
+
+    async def setup_npc_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
+        # Implement NPC combat logic here
+        await update.message.reply_text(f"You enter into combat with {opponent}. Prepare for a spiritual battle!")
+        # Add combat options and mechanics for NPC fights
+
+    async def setup_pvp_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
+        user_id = update.effective_user.id
+        opponent_id = 7283636452  # Bot's ID for PvP simulation
 
         db = get_db_connection()
         if db:
@@ -707,41 +712,6 @@ class ZenQuest:
                     cursor.close()
                     db.close()
 
-    def split_scene_and_choices(self, scene):
-        lines = scene.split('\n')
-        description = []
-        choices = []
-        in_choices = False
-        for line in lines:
-            if line.strip().startswith(('1.', '2.', '3.')):
-                in_choices = True
-            if in_choices:
-                choices.append(line.strip())
-            else:
-                description.append(line)
-        return '\n'.join(description), choices
-
-    def split_message(self, message, max_length=4000):
-        chunks = []
-        lines = message.split('\n')
-        current_chunk = ""
-        for line in lines:
-            if len(current_chunk) + len(line) + 1 <= max_length:
-                current_chunk += line + "\n"
-            else:
-                chunks.append(current_chunk.strip())
-                current_chunk = line + "\n"
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-        return chunks
-
-    def extract_choices(self, scene):
-        choices = []
-        for line in scene.split('\n'):
-            if line.strip().startswith(('1.', '2.', '3.')):
-                choices.append(line.strip())
-        return choices
-
     async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
         user_id = update.effective_user.id
         self.quest_active[user_id] = False
@@ -750,42 +720,23 @@ class ZenQuest:
         conclusion = await self.generate_quest_conclusion(victory, self.current_stage[user_id])
         await update.message.reply_text(f"{reason}\n\n{conclusion}")
 
-        if victory:
-            zen_points = random.randint(30, 50)
-            await update.message.reply_text(f"You have earned {zen_points} Zen points!")
-            await add_zen_points(update, context, zen_points)
-        else:
-            # Deduct Zen points for quest failure
-            zen_points = random.randint(10, 20)
-            await update.message.reply_text(f"You have lost {zen_points} Zen points due to your actions.")
-            await add_zen_points(update, context, -zen_points)
+        zen_points = random.randint(30, 50) if victory else -random.randint(10, 20)
+        await update.message.reply_text(f"You have {'earned' if victory else 'lost'} {abs(zen_points)} Zen points!")
+        await add_zen_points(update, context, zen_points)
 
         # Clear quest data for this user
-        self.player_hp.pop(user_id, None)
-        self.current_stage.pop(user_id, None)
-        self.current_scene.pop(user_id, None)
-        self.quest_state.pop(user_id, None)
-
+        for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal']:
+            getattr(self, attr).pop(user_id, None)
 
     async def generate_quest_conclusion(self, victory: bool, stage: int):
-        if victory:
-            prompt = f"""
-            Generate a brief, zen-like conclusion for a successful quest that ended at stage {stage}.
-            Include:
-            1. A reflection on the journey and growth
-            2. A subtle zen teaching or insight gained
-            3. Encouragement for future quests
-            Keep it concise, around 3-4 sentences.
-            """
-        else:
-            prompt = f"""
-            Generate a brief, zen-like conclusion for a failed quest that ended at stage {stage}.
-            Include:
-            1. A reflection on the lessons from failure
-            2. A zen teaching about impermanence or acceptance
-            3. Gentle encouragement to try again
-            Keep it concise, around 3-4 sentences.
-            """
+        prompt = f"""
+        Generate a brief, zen-like conclusion for a {'successful' if victory else 'failed'} quest that ended at stage {stage}.
+        Include:
+        1. A reflection on the journey and {'growth' if victory else 'lessons from failure'}
+        2. A subtle zen teaching or insight gained
+        3. {'Encouragement for future quests' if victory else 'Gentle encouragement to try again'}
+        Keep it concise, around 3-4 sentences.
+        """
         return await generate_response(prompt)
 
     async def interrupt_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -795,14 +746,66 @@ class ZenQuest:
             self.in_combat[user_id] = False
             await update.message.reply_text("Your quest has been interrupted. You can start a new one with /zenquest.")
             # Clear quest data for this user
-            self.player_hp.pop(user_id, None)
-            self.current_stage.pop(user_id, None)
-            self.current_scene.pop(user_id, None)
-            self.quest_state.pop(user_id, None)
+            for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal']:
+                getattr(self, attr).pop(user_id, None)
         else:
             await update.message.reply_text("You don't have an active quest to interrupt.")
 
+    def is_action_unfeasible(self, action):
+        return any(unfeasible in action.lower() for unfeasible in self.unfeasible_actions)
 
+    def is_action_failure(self, action):
+        return any(failure in action.lower() for failure in self.failure_actions)
+
+    async def handle_unfeasible_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text("That action is not possible in this realm. Please choose a different path.")
+
+    async def handle_failure_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        await update.message.reply_text("Your choice leads to an unfortunate end.")
+        await self.end_quest(update, context, victory=False, reason="You have chosen a path that ends your journey prematurely.")
+
+    async def get_quest_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if not self.quest_active.get(user_id, False):
+            await update.message.reply_text("You are not currently on a quest. Use /zenquest to start a new journey.")
+            return
+
+        status_message = f"""
+        Quest Status:
+        Goal: {self.quest_goal.get(user_id, 'Unknown')}
+        Current Stage: {self.current_stage.get(user_id, 0)}
+        HP: {self.player_hp.get(user_id, 100)}
+        Karma: {self.player_karma.get(user_id, 0)}
+        Quest State: {self.quest_state.get(user_id, 'Unknown')}
+        In Combat: {'Yes' if self.in_combat.get(user_id, False) else 'No'}
+        """
+        await update.message.reply_text(status_message)
+
+    async def meditate(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if not self.quest_active.get(user_id, False):
+            await update.message.reply_text("You can only meditate during an active quest. Use /zenquest to start a journey.")
+            return
+
+        meditation_prompt = f"""
+        The player decides to meditate in their current situation:
+        Current scene: {self.current_scene.get(user_id, 'Unknown')}
+        Quest state: {self.quest_state.get(user_id, 'Unknown')}
+
+        Generate a brief meditation experience (2-3 sentences) that:
+        1. Provides a moment of insight or clarity
+        2. Slightly improves the player's spiritual state
+        3. Hints at a possible path forward in the quest
+        """
+        meditation_result = await generate_response(meditation_prompt)
+        
+        self.player_karma[user_id] = min(100, self.player_karma.get(user_id, 0) + 5)
+        self.player_hp[user_id] = min(100, self.player_hp.get(user_id, 100) + 10)
+
+        await update.message.reply_text(f"{meditation_result}\n\nYour karma and HP have slightly improved.")
+
+# Global instance of ZenQuest
 zen_quest = ZenQuest()
 
 async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1486,12 +1489,16 @@ async def getbotid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_id = bot_user.id
     await update.message.reply_text(f"My user ID is: {bot_id}")
 
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await zen_quest.get_quest_status(update, context)
+
+async def meditate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await zen_quest.meditate(update, context)
+
 def setup_handlers(application):
     application.add_handler(CommandHandler("zenquest", zenquest_command))
-    application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND,
-        handle_message
-    ))
+    application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("meditate", meditate_command))
     application.add_handler(CommandHandler("subscribe", subscribe_command))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     application.add_handler(CommandHandler("subscriptionstatus", subscription_status_command))
@@ -1582,8 +1589,6 @@ async def main():
         while True:
             await asyncio.sleep(1)
 
-if __name__ == '__main__':
-    setup_database()  # Ensure the database is set up before starting the bot
 
 import re
 
