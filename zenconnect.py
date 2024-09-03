@@ -478,11 +478,42 @@ class ZenQuest:
             self.quest_goal[user_id] = await self.generate_quest_goal()
             self.current_scene[user_id] = await self.generate_initial_scene(self.quest_goal[user_id])
 
-            await update.message.reply_text(f"Your quest begins!\n\n{self.quest_goal[user_id]}\n\n{self.current_scene[user_id]}")
+            start_message = f"Your quest begins!\n\n{self.quest_goal[user_id]}\n\n{self.current_scene[user_id]}"
+            await self.send_split_message(update, start_message)
         except Exception as e:
             logger.error(f"Error starting quest: {e}")
             await update.message.reply_text("An error occurred while starting the quest. Please try again.")
             self.quest_active[user_id] = False
+
+#to check it it's working though
+    async def initiate_pvp_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
+        user_id = update.effective_user.id
+        opponent_id = 7283636452  # Bot's ID for PvP simulation
+
+        db = get_db_connection()
+        if db:
+            try:
+                cursor = db.cursor(dictionary=True)
+                cursor.execute("""
+                    INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
+                    VALUES (%s, %s, %s, %s, 'in_progress')
+                """, (user_id, opponent_id, update.effective_chat.id, user_id))
+                db.commit()
+
+                context.user_data['challenger_energy'] = 50
+                context.user_data['opponent_energy'] = 50
+
+                await update.message.reply_text("Your actions have led to a confrontation. Prepare for battle!")
+                await send_game_rules(context, user_id, opponent_id)
+                await context.bot.send_message(
+                    hat_id=update.effective_chat.id,
+                    text="Choose your move:",
+                    reply_markup=generate_pvp_move_buttons(user_id)
+                )
+            finally:
+                if db.is_connected():
+                    cursor.close()
+                    db.close()
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -501,7 +532,7 @@ class ZenQuest:
             if morality_check['is_immoral']:
                 consequence = await self.generate_severe_consequence(morality_check['reason'], self.current_scene[user_id])
                 await self.send_split_message(update, consequence['description'])
-                
+            
                 self.player_karma[user_id] -= 20
 
                 if consequence['type'] == 'quest_fail':
@@ -519,6 +550,8 @@ class ZenQuest:
 
             if "COMBAT_START" in next_scene:
                 await self.initiate_combat(update, context)
+            elif "PVP_COMBAT_START" in next_scene:
+                await self.initiate_pvp_combat(update, context, "opponent")
             elif "QUEST_COMPLETE" in next_scene:
                 await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
             elif "QUEST_FAIL" in next_scene:
@@ -620,8 +653,15 @@ class ZenQuest:
 
         If appropriate, introduce:
         - A combat situation (indicate with 'COMBAT_START')
+        - A PvP combat situation (indicate with 'PVP_COMBAT_START')
         - A successful quest completion (indicate with 'QUEST_COMPLETE')
         - An unsuccessful quest ending (indicate with 'QUEST_FAIL')
+
+        Consider initiating combat if:
+        - The user's actions have been consistently aggressive or confrontational
+        - The quest narrative has built up tension or conflict
+        - There's a thematic opportunity for a spiritual or physical challenge
+        - The user hasn't experienced combat in a while and it fits the story
 
         Ensure all situations and actions are realistic for a human character in a mystical setting.
         The quest should progress towards its goal or end if the player's choices lead to a significant milestone or failure.
@@ -668,8 +708,8 @@ class ZenQuest:
     async def apply_affliction(self, update: Update, context: ContextTypes.DEFAULT_TYPE, affliction_description):
         user_id = update.effective_user.id
         self.player_karma[user_id] -= 10
-        await update.message.reply_text(f"You have been afflicted: {affliction_description}")
-        # Implement additional affliction effects here
+        await self.send_split_message(update, f"You have been afflicted: {affliction_description}")
+    # Implement additional affliction effects here
 
     async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
