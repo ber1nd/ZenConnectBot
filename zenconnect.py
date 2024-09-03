@@ -1512,8 +1512,9 @@ def setup_handlers(application):
 
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND,
-        handle_quest_input
+        handle_message
     ))
+
 
     # Callback query handlers
     application.add_handler(CallbackQueryHandler(subscribe_callback, pattern="^subscribe$"))
