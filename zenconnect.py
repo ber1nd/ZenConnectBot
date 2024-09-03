@@ -805,6 +805,22 @@ class ZenQuest:
         for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal']:
             getattr(self, attr).pop(user_id, None)
 
+        # End any ongoing PvP battles
+        db = get_db_connection()
+        if db:
+            try:
+                cursor = db.cursor()
+                cursor.execute("""
+                    UPDATE pvp_battles 
+                    SET status = 'completed', winner_id = %s 
+                    WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
+                """, (7283636452 if not victory else user_id, user_id, user_id))
+                db.commit()
+            finally:
+                if db.is_connected():
+                    cursor.close()
+                    db.close()
+
     async def generate_quest_conclusion(self, victory: bool, stage: int):
         prompt = f"""
         Generate a brief, zen-like conclusion for a {'successful' if victory else 'failed'} quest that ended at stage {stage}.
