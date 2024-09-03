@@ -490,13 +490,43 @@ class ZenQuest:
             return
 
         user_input = update.message.text.lower()
-    
+
         if self.is_action_unfeasible(user_input):
             await self.handle_unfeasible_action(update, context)
         elif self.is_action_failure(user_input):
             await self.handle_failure_action(update, context)
         else:
-            await self.progress_story(update, context, user_input)
+            # Check for moral consequences first
+            morality_check = await self.check_action_morality(user_input)
+            if morality_check['is_immoral']:
+                consequence = await self.generate_severe_consequence(morality_check['reason'], self.current_scene[user_id])
+                await self.send_split_message(update, consequence['description'])
+                
+                self.player_karma[user_id] -= 20
+
+                if consequence['type'] == 'quest_fail':
+                    await self.end_quest(update, context, victory=False, reason=consequence['description'])
+                    return
+                elif consequence['type'] == 'combat':
+                    await self.initiate_combat(update, context, opponent="spiritual guardians")
+                    return
+                elif consequence['type'] == 'affliction':
+                    await self.apply_affliction(update, context, consequence['description'])
+
+            # Generate next scene
+            next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id], self.quest_goal[user_id])
+            self.current_scene[user_id] = next_scene
+
+            if "COMBAT_START" in next_scene:
+                await self.initiate_combat(update, context)
+            elif "QUEST_COMPLETE" in next_scene:
+                await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+            elif "QUEST_FAIL" in next_scene:
+                await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
+            else:
+                self.current_stage[user_id] += 1
+                await self.update_quest_state(user_id)
+                await self.send_scene(update, context)
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
         user_id = update.effective_user.id
@@ -575,18 +605,18 @@ class ZenQuest:
         Quest goal: {quest_goal}
 
         Generate the next scene of the Zen-themed quest. Include:
-        1. A vivid description of the new environment or changes in the current location (2-3 sentences)
-        2. The outcome of the user's action and its impact on the quest progress (1-2 sentences)
-        3. A new challenge, puzzle, or encounter related to Zen principles (1-2 sentences)
-        4. Three distinct, non-repeated choices for the player (each choice should be one sentence)
-        5. A brief Zen-like insight or question relevant to the current situation (1 sentence)
+        1. A brief, vivid description of the new environment or changes (1-2 sentences)
+        2. The outcome of the user's action and its impact (1 sentence)
+        3. A new challenge or encounter related to Zen principles (1 sentence)
+        4. Two distinct, non-repeated choices for the player (1 short sentence each)
+        5. A brief Zen-like insight relevant to the situation (1 short sentence)
 
         Possible elements to include:
-        - Discovery of clues or items relevant to the quest goal
-        - Encounters with wise mentors, troublesome adversaries, or spiritual entities
-        - Natural or metaphysical obstacles to overcome
-        - Opportunities for meditation, self-reflection, or applying Zen teachings
-        - Moral dilemmas that test the player's adherence to Zen principles
+        - Discovery of quest-relevant items or clues
+        - Encounters with mentors, adversaries, or spiritual entities
+        - Natural or metaphysical obstacles
+        - Opportunities for meditation or applying Zen teachings
+        - Moral dilemmas testing adherence to Zen principles
 
         If appropriate, introduce:
         - A combat situation (indicate with 'COMBAT_START')
@@ -595,7 +625,8 @@ class ZenQuest:
 
         Ensure all situations and actions are realistic for a human character in a mystical setting.
         The quest should progress towards its goal or end if the player's choices lead to a significant milestone or failure.
-        Maintain a balance between physical adventure and spiritual growth throughout the journey.
+        Maintain a balance between physical adventure and spiritual growth.
+        Keep the total response under 100 words.
         """
         return await generate_response(prompt, elaborate=True)
 
@@ -649,9 +680,15 @@ class ZenQuest:
         scene = self.current_scene[user_id]
         description, choices = self.process_scene(scene)
 
-        await update.message.reply_text(description[:4000])  # Telegram message limit
+        await self.send_split_message(update, description)
         if choices:
-            await update.message.reply_text(f"Your choices:\n{choices}")
+            await self.send_split_message(update, f"Your choices:\n{choices}")
+
+    async def send_split_message(self, update: Update, message: str):
+        max_length = 4000  # Telegram's message limit is 4096 characters, but we'll leave a margin
+        messages = [message[i:i+max_length] for i in range(0, len(message), max_length)]
+        for msg in messages:
+            await update.message.reply_text(msg)
 
     def process_scene(self, scene):
         parts = scene.split("Your choices:")
@@ -857,10 +894,9 @@ async def add_zen_points(update: Update, context: ContextTypes.DEFAULT_TYPE, poi
         logger.error(f"Error adding Zen points: {e}")
         await update.message.reply_text("An error occurred while updating your Zen points. Please try again later.")
 
-async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     db = get_db_connection()
-
     if db:
         try:
             cursor = db.cursor(dictionary=True)
@@ -872,16 +908,19 @@ async def initiate_combat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             cursor.execute("""
                 INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
-                VALUES (%s, %s, %s, %s, 'pending')
+                VALUES (%s, %s, %s, %s, 'in_progress')
             """, (user_id, opponent_id, update.effective_chat.id, user_id))
             db.commit()
 
             await send_game_rules(context, user_id, opponent_id)
             await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
 
-            # Start the combat automatically
-            await start_new_battle(update, context)
-            await accept_pvp(update, context)  # Auto-accept the challenge if the opponent is the bot
+            # Start the combat
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Choose your move:",
+                reply_markup=generate_pvp_move_buttons(user_id)
+            )
 
         except mysql.connector.Error as e:
             logger.error(f"MySQL error in initiate_combat: {e}")
