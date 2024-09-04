@@ -563,10 +563,10 @@ class ZenQuest:
 
         # If no severe moral consequences, continue to generate the next scene
         next_scene = await self.generate_next_scene(
-            self.current_scene[user_id], 
-            user_input, 
-            self.quest_state[user_id], 
-            self.quest_goal[user_id]  # Ensure quest goal is passed properly
+            self.current_scene[user_id],  # previous_scene
+            user_input,                   # user's input
+            self.quest_state[user_id],     # current quest state
+            self.quest_goal[user_id]       # properly passed quest goal
         )
         self.current_scene[user_id] = next_scene
 
@@ -682,17 +682,17 @@ class ZenQuest:
 
     async def generate_next_scene(self, update: Update, previous_scene, user_input, quest_state, quest_goal):
         user_id = update.effective_user.id
-        player_karma = self.player_karma.get(user_id, 100)  # Default to 100 if no karma set
-
-        # Introduce PvP if karma is low
+        player_karma = self.player_karma.get(user_id, 100)  # Default to 100 if no karma is set
+        
+        # Introduce PvP based on karma level and random AI trigger
         if player_karma < 30 and random.random() < 0.3:  # 30% chance of PvP if karma is low
             return "PVP_COMBAT_START"
 
-        # AI-driven PvP trigger based on story dynamics
-        if random.random() < 0.1:  # 10% chance to trigger PvP randomly for story dynamics
+        # AI-driven PvP trigger based on story dynamics (10% chance)
+        if random.random() < 0.1:  # Additional PvP based on story randomness
             return "PVP_COMBAT_START"
 
-        # Standard scene generation logic
+        # Generate the prompt for OpenAI's response
         prompt = f"""
         Previous scene: {previous_scene}
         User's action: "{user_input}"
@@ -730,9 +730,18 @@ class ZenQuest:
         Maintain a balance between physical adventure and spiritual growth.
         Keep the total response under 100 words.
         """
-        
-        # Generate the next scene based on the prompt
-        return await generate_response(prompt, elaborate=True)
+
+        # Error handling for generating the scene
+        try:
+            # Request the response from OpenAI using the generated prompt
+            next_scene = await generate_response(prompt, elaborate=True)
+        except Exception as e:
+            # Log error and return a failure message
+            logger.error(f"Error generating next scene: {e}")
+            return "An error occurred while generating the next scene. Please try again."
+
+        # Return the generated next scene or result
+        return next_scene
     
     async def end_pvp(self, update: Update, context: ContextTypes.DEFAULT_TYPE, winner_id):
         user_id = update.effective_user.id
