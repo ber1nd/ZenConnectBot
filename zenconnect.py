@@ -517,24 +517,38 @@ class ZenQuest:
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
+    
+        # Only handle input if the quest is active and in a private chat
         if not self.quest_active.get(user_id, False) or update.message.chat.type != 'private':
             return
 
         user_input = update.message.text.lower()
 
+        # Handle unfeasible actions first (e.g., trying to fly)
         if self.is_action_unfeasible(user_input):
             await self.handle_unfeasible_action(update, context)
+            return
+    
+        # Handle failure actions (e.g., "kill myself")
         elif self.is_action_failure(user_input):
             await self.handle_failure_action(update, context)
+            return
+    
         else:
-            # Check for moral consequences first
+            # Check for moral consequences first (karma impact)
             morality_check = await self.check_action_morality(user_input)
-            if morality_check['is_immoral']:
-                consequence = await self.generate_severe_consequence(morality_check['reason'], self.current_scene[user_id])
-                await self.send_split_message(update, consequence['description'])
         
+            if morality_check['is_immoral']:
+                # Generate a severe consequence based on the immorality of the action
+                consequence = await self.generate_severe_consequence(morality_check['reason'], self.current_scene[user_id])
+            
+                # Send the consequence description to the user
+                await self.send_split_message(update, consequence['description'])
+
+                # Reduce the player's karma due to the immoral action
                 self.player_karma[user_id] -= 20
 
+                # Apply consequences based on the result type (quest failure, combat, or affliction)
                 if consequence['type'] == 'quest_fail':
                     await self.end_quest(update, context, victory=False, reason=consequence['description'])
                     return
@@ -543,23 +557,51 @@ class ZenQuest:
                     return
                 elif consequence['type'] == 'affliction':
                     await self.apply_affliction(update, context, consequence['description'])
-
-            # Generate next scene
+        
+            # If no severe moral consequences, continue to generate the next scene
             next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id], self.quest_goal[user_id])
             self.current_scene[user_id] = next_scene
 
+            # Check for combat or PvP initiation
             if "COMBAT_START" in next_scene or "Consequence Type: Combat" in next_scene:
                 await self.initiate_combat(update, context, opponent="spiritual guardians")
             elif "PVP_COMBAT_START" in next_scene:
+                # Karma or AI logic can trigger PvP at appropriate moments
                 await self.initiate_pvp_combat(update, context, "opponent")
+        
+            # Check for quest completion or failure
             elif "QUEST_COMPLETE" in next_scene:
                 await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
             elif "QUEST_FAIL" in next_scene:
                 await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
+        
+            # If none of the above, update the current stage and continue the quest
             else:
                 self.current_stage[user_id] += 1
                 await self.update_quest_state(user_id)
                 await self.send_scene(update, context)
+
+    async def apply_karma_consequence(self, update: Update, context: ContextTypes.DEFAULT_TYPE, reason: str):
+        user_id = update.effective_user.id
+        current_scene = self.current_scene.get(user_id, "")
+
+        # Determine the consequence based on the player's location
+        if "village" in current_scene.lower():
+            consequence = "You have been caught by the village guards and thrown into jail for your misdeeds."
+            self.quest_state[user_id] = "jailed"
+        elif "forest" in current_scene.lower():
+            consequence = "Angry spirits attack you as punishment for your reckless actions."
+            await self.initiate_combat(update, context, opponent="spirits")
+            return  # Exit early as combat is initiated
+        else:
+            consequence = "You feel the weight of your actions, and your karma worsens."
+
+        # Send the consequence message and end the quest if necessary
+        await self.send_split_message(update, consequence)
+    
+        # If jailed, end the quest or handle accordingly
+        if self.quest_state[user_id] == "jailed":
+            await self.end_quest(update, context, victory=False, reason=consequence)
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
         user_id = update.effective_user.id
@@ -630,7 +672,19 @@ class ZenQuest:
         """
         return await generate_response(prompt)
 
-    async def generate_next_scene(self, previous_scene, user_input, quest_state, quest_goal):
+    async def generate_next_scene(self, update: Update, previous_scene, user_input, quest_state, quest_goal):
+        user_id = update.effective_user.id
+        player_karma = self.player_karma.get(user_id, 100)  # Default to 100 if no karma set
+
+        # Introduce PvP if karma is low
+        if player_karma < 30 and random.random() < 0.3:  # 30% chance of PvP if karma is low
+            return "PVP_COMBAT_START"
+
+        # AI-driven PvP trigger based on story dynamics
+        if random.random() < 0.1:  # 10% chance to trigger PvP randomly for story dynamics
+            return "PVP_COMBAT_START"
+
+        # Standard scene generation logic
         prompt = f"""
         Previous scene: {previous_scene}
         User's action: "{user_input}"
@@ -668,7 +722,20 @@ class ZenQuest:
         Maintain a balance between physical adventure and spiritual growth.
         Keep the total response under 100 words.
         """
+        
+        # Generate the next scene based on the prompt
         return await generate_response(prompt, elaborate=True)
+    
+    async def end_pvp(self, update: Update, context: ContextTypes.DEFAULT_TYPE, winner_id):
+        user_id = update.effective_user.id
+        # Handle the outcome of the PvP battle
+        if winner_id == user_id:
+            # The player won, continue the quest with a positive consequence
+            next_scene = await self.generate_next_scene(self.current_scene[user_id], "victory in PvP", self.quest_state[user_id], self.quest_goal[user_id])
+            await self.send_split_message(update, next_scene)
+        else:
+            # The player lost, end the quest with a failure consequence
+            await self.end_quest(update, context, victory=False, reason="You lost the PvP battle.")
 
     async def check_action_morality(self, action):
         prompt = f"""
@@ -747,6 +814,11 @@ class ZenQuest:
         elif self.current_stage[user_id] > 0:
             self.quest_state[user_id] = "middle"
 
+    async def check_quest_failure(self, user_id):
+        if self.player_karma[user_id] < 10 and random.random() < 0.4:  # 40% failure chance at very low karma
+            return True
+        return False
+    
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent="unknown"):
         user_id = update.effective_user.id
         self.in_combat[user_id] = True
@@ -992,12 +1064,14 @@ async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TY
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
-async def send_split_message(update: Update, context: ContextTypes.DEFAULT_TYPE, message: str):
-    max_message_length = 4000  # Telegram's message limit is 4096 characters, but we'll leave a margin
-    message_parts = [message[i:i + max_message_length] for i in range(0, len(message), max_message_length)]
-
-    for part in message_parts:
-        await update.message.reply_text(part)
+async def send_split_message(update: Update, message: str):
+    max_length = 4000  # Set to slightly below Telegram's 4096 character limit for safety
+    messages = [message[i:i + max_length] for i in range(0, len(message), max_length)]
+    for msg in messages:
+        if update.callback_query:
+            await update.callback_query.message.reply_text(msg)
+        else:
+            await update.message.reply_text(msg)
 
 # PvP Functionality
 
