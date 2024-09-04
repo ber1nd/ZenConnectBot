@@ -548,8 +548,8 @@ class ZenQuest:
             next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id], self.quest_goal[user_id])
             self.current_scene[user_id] = next_scene
 
-            if "COMBAT_START" in next_scene:
-                await self.initiate_combat(update, context)
+            if "COMBAT_START" in next_scene or "Consequence Type: Combat" in next_scene:
+                await self.initiate_combat(update, context, opponent="spiritual guardians")
             elif "PVP_COMBAT_START" in next_scene:
                 await self.initiate_pvp_combat(update, context, "opponent")
             elif "QUEST_COMPLETE" in next_scene:
@@ -912,7 +912,7 @@ async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if zen_quest.quest_active.get(user_id, False):
-        await update.message.reply_text("You are already on a quest. Use /surrender to end your current quest before starting a new one.")
+        await update.message.reply_text("You are already on a quest. Use /interrupt to end your current quest before starting a new one.")
     else:
         await zen_quest.start_quest(update, context)
 
