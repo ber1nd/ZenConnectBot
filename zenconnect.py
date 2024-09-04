@@ -485,7 +485,7 @@ class ZenQuest:
             await update.message.reply_text("An error occurred while starting the quest. Please try again.")
             self.quest_active[user_id] = False
 
-#to check it it's working though
+    #to check it it's working though
     async def initiate_pvp_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
         user_id = update.effective_user.id
         opponent_id = 7283636452  # Bot's ID for PvP simulation
@@ -506,7 +506,7 @@ class ZenQuest:
                 await update.message.reply_text("Your actions have led to a confrontation. Prepare for battle!")
                 await send_game_rules(context, user_id, opponent_id)
                 await context.bot.send_message(
-                    hat_id=update.effective_chat.id,
+                    chat_id=update.effective_chat.id,
                     text="Choose your move:",
                     reply_markup=generate_pvp_move_buttons(user_id)
                 )
@@ -532,7 +532,7 @@ class ZenQuest:
             if morality_check['is_immoral']:
                 consequence = await self.generate_severe_consequence(morality_check['reason'], self.current_scene[user_id])
                 await self.send_split_message(update, consequence['description'])
-            
+        
                 self.player_karma[user_id] -= 20
 
                 if consequence['type'] == 'quest_fail':
@@ -708,7 +708,11 @@ class ZenQuest:
     async def apply_affliction(self, update: Update, context: ContextTypes.DEFAULT_TYPE, affliction_description):
         user_id = update.effective_user.id
         self.player_karma[user_id] -= 10
-        await self.send_split_message(update, f"You have been afflicted: {affliction_description}")
+    
+        # Generate a shorter, non-repetitive affliction message
+        short_affliction = await generate_response(f"Summarize this affliction in one brief sentence: {affliction_description}")
+    
+        await self.send_split_message(update, f"You have been afflicted: {short_affliction}")
     # Implement additional affliction effects here
 
     async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
