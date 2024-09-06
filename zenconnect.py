@@ -473,7 +473,7 @@ class ZenQuest:
             self.current_stage[user_id] = 0
             self.quest_state[user_id] = "beginning"
             self.in_combat[user_id] = False
-            self.player_karma[user_id] = 0
+            self.player_karma[user_id] = 100
 
             self.quest_goal[user_id] = await self.generate_quest_goal()
             self.current_scene[user_id] = await self.generate_initial_scene(self.quest_goal[user_id])
@@ -796,7 +796,7 @@ class ZenQuest:
             await self.send_split_message(update, f"Your choices:\n{choices}")
 
     async def send_split_message(self, update: Update, message: str):
-        max_length = 4000  # Telegram's message limit is 4096 characters, but we'll leave a margin
+        max_length = 3500  # Telegram's message limit is 4096 characters, but we'll leave a margin
         messages = [message[i:i+max_length] for i in range(0, len(message), max_length)]
         for msg in messages:
             await update.message.reply_text(msg)
