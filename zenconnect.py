@@ -2349,21 +2349,32 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         context.user_data[f'{player_key}_next_turn_synergy'] = {}
 
         if opponent_hp <= 0 or user_hp <= 0:
-            winner_id = user_id if opponent_hp <= 0 else opponent_id
-            cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
-            db.commit()
-            winner_name = "Bot" if winner_id == 7283636452 else update.effective_user.first_name if bot_mode else "You"
-            final_move_message = f"The battle ended with {winner_name} using {action}, dealing {damage} damage."
-            await send_message(update, f"{final_move_message}\n{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!")
+                winner_id = user_id if opponent_hp <= 0 else opponent_id
+                cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
+                db.commit()
+                winner_name = "Bot" if winner_id == 7283636452 else update.effective_user.first_name if bot_mode else "You"
+                final_move_message = f"The battle ended with {winner_name} using {action}, dealing {damage} damage."
+                await send_message(update, f"{final_move_message}\n{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!")
 
-            if zen_quest.quest_active.get(user_id, False):
-                zen_quest.in_combat[user_id] = False
-                if winner_id == user_id:
-                    await zen_quest.progress_story(update, context, "victory in combat")
-                    await send_message(update, "Your quest continues. What would you like to do next?")
-                else:
-                    await zen_quest.end_quest(update, context, victory=False, reason="You have been defeated in combat.")
-            return
+                if zen_quest.quest_active.get(user_id, False):
+                    zen_quest.in_combat[user_id] = False
+                    if winner_id == user_id:
+                        # Player wins
+                        karma_gain = random.randint(5, 15)
+                        zen_quest.player_karma[user_id] = min(100, zen_quest.player_karma.get(user_id, 0) + karma_gain)
+                        await send_message(update, f"You've gained {karma_gain} karma from your victory!")
+                        next_scene = await zen_quest.generate_next_scene(
+                            zen_quest.current_scene[user_id],
+                            "victory in combat",
+                            zen_quest.quest_state[user_id],
+                            zen_quest.quest_goal[user_id]
+                        )
+                        zen_quest.current_scene[user_id] = next_scene
+                        await zen_quest.send_scene(update, context)
+                    else:
+                        # Player loses
+                        await zen_quest.end_quest(update, context, victory=False, reason="You have been defeated in combat.")
+                return
 
         next_turn = opponent_id if user_id == battle['challenger_id'] else battle['challenger_id']
         cursor.execute(f"""
