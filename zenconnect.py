@@ -485,7 +485,64 @@ class ZenQuest:
             await update.message.reply_text("An error occurred while starting the quest. Please try again.")
             self.quest_active[user_id] = False
 
-    #to check it it's working though
+    async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+
+        if not self.quest_active.get(user_id, False) or update.message.chat.type != 'private':
+            return
+
+        user_input = update.message.text.lower()
+
+        # Handle unfeasible actions and failure actions (unchanged)
+        if self.is_action_unfeasible(user_input):
+            await self.handle_unfeasible_action(update, context)
+            return
+        elif self.is_action_failure(user_input):
+            await self.handle_failure_action(update, context)
+            return
+
+        # Check for moral consequences (unchanged)
+        morality_check = await self.check_action_morality(user_input)
+        
+        if morality_check['is_immoral']:
+            consequence = await self.generate_severe_consequence(morality_check['reason'], self.current_scene[user_id])
+            await self.send_split_message(update, consequence['description'])
+            self.player_karma[user_id] -= 20
+
+            if consequence['type'] == 'quest_fail':
+                await self.end_quest(update, context, victory=False, reason=consequence['description'])
+                return
+            elif consequence['type'] == 'combat':
+                await self.initiate_combat(update, context, opponent="spiritual guardians")
+                return
+            elif consequence['type'] == 'affliction':
+                await self.apply_affliction(update, context, consequence['description'])
+
+        # Generate the next scene
+        next_scene = await self.generate_next_scene(
+            update, 
+            previous_scene=self.current_scene[user_id], 
+            user_input=user_input, 
+            quest_state=self.quest_state[user_id], 
+            quest_goal=self.quest_goal[user_id]
+        )
+
+        self.current_scene[user_id] = next_scene
+
+        # Check for combat or PvP initiation
+        if "COMBAT_START" in next_scene or "Consequence Type: Combat" in next_scene:
+            await self.initiate_combat(update, context, opponent="spiritual guardians")
+        elif "PVP_COMBAT_START" in next_scene:
+            await self.initiate_pvp_combat(update, context, "opponent")
+        elif "QUEST_COMPLETE" in next_scene:
+            await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+        elif "QUEST_FAIL" in next_scene:
+            await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
+        else:
+            self.current_stage[user_id] += 1
+            await self.update_quest_state(user_id)
+            await self.send_scene(update, context)
+
     async def initiate_pvp_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
         user_id = update.effective_user.id
         opponent_id = 7283636452  # Bot's ID for PvP simulation
@@ -503,7 +560,7 @@ class ZenQuest:
                 context.user_data['challenger_energy'] = 50
                 context.user_data['opponent_energy'] = 50
 
-                await update.message.reply_text("Your actions have led to a confrontation. Prepare for battle!!")
+                await update.message.reply_text("Your actions have led to a confrontation. Prepare for battle!")
                 await send_game_rules(context, user_id, opponent_id)
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
@@ -514,80 +571,6 @@ class ZenQuest:
                 if db.is_connected():
                     cursor.close()
                     db.close()
-
-    async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-
-        # Only handle input if the quest is active and in a private chat
-        if not self.quest_active.get(user_id, False) or update.message.chat.type != 'private':
-            return
-
-        user_input = update.message.text.lower()
-
-        # Handle unfeasible actions first (e.g., trying to fly)
-        if self.is_action_unfeasible(user_input):
-            await self.handle_unfeasible_action(update, context)
-            return
-
-        # Handle failure actions (e.g., "kill myself")
-        elif self.is_action_failure(user_input):
-            await self.handle_failure_action(update, context)
-            return
-
-        else:
-            # Check for moral consequences first (karma impact)
-            morality_check = await self.check_action_morality(user_input)
-        
-            if morality_check['is_immoral']:
-                # Generate a severe consequence based on the immorality of the action
-                consequence = await self.generate_severe_consequence(morality_check['reason'], self.current_scene[user_id])
-            
-                # Send the consequence description to the user
-                await self.send_split_message(update, consequence['description'])
-
-                # Reduce the player's karma due to the immoral action
-                self.player_karma[user_id] -= 20
-
-                # Apply consequences based on the result type (quest failure, combat, or affliction)
-                if consequence['type'] == 'quest_fail':
-                    await self.end_quest(update, context, victory=False, reason=consequence['description'])
-                    return
-                elif consequence['type'] == 'combat':
-                    await self.initiate_combat(update, context, opponent="spiritual guardians")
-                    return
-                elif consequence['type'] == 'affliction':
-                    await self.apply_affliction(update, context, consequence['description'])
-
-            # If no severe moral consequences, continue to generate the next scene
-            # Ensure quest_goal is passed correctly when generating the next scene
-            next_scene = await self.generate_next_scene(
-                update, 
-                previous_scene=self.current_scene[user_id], 
-                user_input=user_input, 
-                quest_state=self.quest_state[user_id], 
-                quest_goal=self.quest_goal[user_id]  # Ensure quest_goal is passed correctly
-            )
-
-            self.current_scene[user_id] = next_scene
-
-            # Check for combat or PvP initiation
-            if "COMBAT_START" in next_scene or "Consequence Type: Combat" in next_scene:
-                await self.initiate_combat(update, context, opponent="spiritual guardians")
-            elif "PVP_COMBAT_START" in next_scene:
-                # Karma or AI logic can trigger PvP at appropriate moments
-                await self.initiate_pvp_combat(update, context, "opponent")
-
-            # Check for quest completion or failure
-            elif "QUEST_COMPLETE" in next_scene:
-                await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
-            elif "QUEST_FAIL" in next_scene:
-                await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
-
-            # If none of the above, update the current stage and continue the quest
-            else:
-                self.current_stage[user_id] += 1
-                await self.update_quest_state(user_id)
-                await self.send_scene(update, context)
 
     async def apply_karma_consequence(self, update: Update, context: ContextTypes.DEFAULT_TYPE, reason: str):
         user_id = update.effective_user.id
