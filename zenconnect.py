@@ -712,6 +712,7 @@ class ZenQuest:
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input):
         user_id = update.effective_user.id
+        player_karma = self.player_karma.get(user_id, 100)  # Default to 100 if no karma is set
 
         try:
             morality_check = await self.check_action_morality(user_input)
@@ -731,11 +732,56 @@ class ZenQuest:
                 elif consequence['type'] == 'affliction':
                     await self.apply_affliction(update, context, consequence['description'])
 
-            next_scene = await self.generate_next_scene(self.current_scene[user_id], user_input, self.quest_state[user_id], self.quest_goal[user_id])
+            # Generate the prompt for OpenAI's response
+            prompt = f"""
+            Previous scene: {self.current_scene[user_id]}
+            User's action: "{user_input}"
+            Current quest state: {self.quest_state[user_id]}
+            Quest goal: {self.quest_goal[user_id]}
+            Player karma: {player_karma}
+
+            Generate the next scene of the Zen-themed quest. Include:
+            1. A brief, vivid description of the new environment or changes (1-2 sentences)
+            2. The outcome of the user's action and its impact (1 sentence)
+            3. A new challenge or encounter related to Zen principles (1 sentence)
+            4. Two distinct, non-repeated choices for the player (1 short sentence each)
+            5. A brief Zen-like insight relevant to the situation (1 short sentence)
+
+            Possible elements to include:
+            - Discovery of quest-relevant items or clues
+            - Encounters with mentors, adversaries, or spiritual entities
+            - Natural or metaphysical obstacles
+            - Opportunities for meditation or applying Zen teachings
+            - Moral dilemmas testing adherence to Zen principles
+
+            If appropriate, introduce:
+            - A combat situation (indicate with 'COMBAT_START')
+            - A PvP combat situation (indicate with 'PVP_COMBAT_START')
+            - A successful quest completion (indicate with 'QUEST_COMPLETE')
+            - An unsuccessful quest ending (indicate with 'QUEST_FAIL')
+
+            Consider initiating combat if:
+            - The player's karma is low (current karma: {player_karma})
+            - The user's actions have been consistently aggressive or confrontational
+            - The quest narrative has built up tension or conflict
+            - There's a thematic opportunity for a spiritual or physical challenge
+            - The user hasn't experienced combat in a while and it fits the story
+
+            Ensure all situations and actions are realistic for a human character in a mystical setting.
+            The quest should progress towards its goal or end if the player's choices lead to a significant milestone or failure.
+            Maintain a balance between physical adventure and spiritual growth.
+            Keep the total response under 100 words.
+            """
+
+            # Generate the next scene
+            next_scene = await generate_response(prompt, elaborate=True)
             self.current_scene[user_id] = next_scene
 
+            # Check for combat or PvP initiation after generating the scene
             if "COMBAT_START" in next_scene:
-                await self.initiate_combat(update, context)
+                await self.initiate_combat(update, context, opponent="spiritual guardians")
+            elif "PVP_COMBAT_START" in next_scene:
+                await self.initiate_pvp_combat(update, context, "opponent")
             elif "QUEST_COMPLETE" in next_scene:
                 await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
             elif "QUEST_FAIL" in next_scene:
@@ -749,63 +795,8 @@ class ZenQuest:
             logger.error(f"Error progressing story: {e}", exc_info=True)
             await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
             self.quest_active[user_id] = False
-        
-        player_karma = self.player_karma.get(user_id, 100)  # Default to 100 if no karma is set
 
-        # Increase chance of PvP for low karma
-        pvp_chance = 0.3 if player_karma < 30 else 0.1
-        
-        if random.random() < pvp_chance:
-            return "PVP_COMBAT_START"
-
-        # Generate the prompt for OpenAI's response
-        prompt = f"""
-        Previous scene: {self.current_scene[user_id]}
-        User's action: "{user_input}"
-        Current quest state: {self.quest_state[user_id]}
-        Quest goal: {self.quest_goal[user_id]}
-        Player karma: {self.player_karma.get(user_id, 100)}  # Default to 100 if no karma is set
-
-        Generate the next scene of the Zen-themed quest. Include:
-        1. A brief, vivid description of the new environment or changes (1-2 sentences)
-        2. The outcome of the user's action and its impact (1 sentence)
-        3. A new challenge or encounter related to Zen principles (1 sentence)
-        4. Two distinct, non-repeated choices for the player (1 short sentence each)
-        5. A brief Zen-like insight relevant to the situation (1 short sentence)
-
-        Possible elements to include:
-        - Discovery of quest-relevant items or clues
-        - Encounters with mentors, adversaries, or spiritual entities
-        - Natural or metaphysical obstacles
-        - Opportunities for meditation or applying Zen teachings
-        - Moral dilemmas testing adherence to Zen principles
-
-        If appropriate, introduce:
-        - A combat situation (indicate with 'COMBAT_START')
-        - A PvP combat situation (indicate with 'PVP_COMBAT_START')
-        - A successful quest completion (indicate with 'QUEST_COMPLETE')
-        - An unsuccessful quest ending (indicate with 'QUEST_FAIL')
-
-        Consider initiating PvP or combat if:
-        - The player's karma is low (current karma: {self.player_karma.get(user_id, 100)})
-        - The user's actions have been consistently aggressive or confrontational
-        - The quest narrative has built up tension or conflict
-        - There's a thematic opportunity for a spiritual or physical challenge
-        - The user hasn't experienced combat in a while and it fits the story
-
-        Ensure all situations and actions are realistic for a human character in a mystical setting.
-        The quest should progress towards its goal or end if the player's choices lead to a significant milestone or failure.
-        Maintain a balance between physical adventure and spiritual growth.
-        Avoid suggesting actions that would directly harm the player character.
-        Keep the total response under 100 words.
-        """
-
-        try:
-            next_scene = await generate_response(prompt, elaborate=True)
-        except Exception as e:
-            logger.error(f"Error generating next scene: {e}")
-            return "An error occurred while generating the next scene. Please try again."
-
+        # Return the generated next scene or result
         return next_scene
     
     async def end_pvp(self, update: Update, context: ContextTypes.DEFAULT_TYPE, winner_id):
