@@ -460,6 +460,10 @@ class ZenQuest:
             "destroy sacred artifact", "harm innocent", "break vow", "ignore warning",
             "consume poison", "jump off cliff", "attack ally", "steal from temple"
         ]
+    
+    async def generate_response(self, prompt, elaborate=False):
+        # This method now calls the global generate_response function
+        return await generate_response(prompt, elaborate)
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -493,7 +497,7 @@ class ZenQuest:
         3. A search for wisdom or a symbolic artifact
         4. A hint at physical and spiritual challenges
         """
-        return await self.generate_response(prompt, elaborate=False)  # Added 'self.' to call the method correctly
+        return await self.generate_response(prompt, elaborate=False)
 
     async def generate_initial_scene(self, quest_goal):
         prompt = f"""
@@ -505,8 +509,6 @@ class ZenQuest:
         2. Introduction to the quest's purpose
         3. Two choices for the player to begin their journey
         4. A hint of challenges ahead
-        The scene should be engaging and mystical, setting the tone for a journey of self-discovery and adventure.
-        Avoid modern or technological elements, focusing instead on natural and spiritual aspects.
         """
         return await self.generate_response(prompt, elaborate=True)
 
@@ -530,11 +532,10 @@ class ZenQuest:
 
         # Generate the prompt for OpenAI's response
         prompt = f"""
-        Previous scene: {self.current_scene[user_id]}
+        Previous scene: {previous_scene}
         User's action: "{user_input}"
-        Current quest state: {self.quest_state[user_id]}
-        Quest goal: {self.quest_goal[user_id]}
-        Player karma: {self.player_karma.get(user_id, 100)}  # Default to 100 if no karma is set
+        Current quest state: {quest_state}
+        Quest goal: {quest_goal}
 
         Generate the next scene of the Zen-themed quest (max 100 words). Include:
         1. Brief description of the new environment or changes
