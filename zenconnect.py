@@ -473,21 +473,127 @@ class ZenQuest:
             self.current_stage[user_id] = 0
             self.quest_state[user_id] = "beginning"
             self.in_combat[user_id] = False
-            self.player_karma[user_id] = 100
+            self.player_karma[user_id] = 0
 
             self.quest_goal[user_id] = await self.generate_quest_goal()
             self.current_scene[user_id] = await self.generate_initial_scene(self.quest_goal[user_id])
 
-            # Shortened start message
-            start_message = f"Your Zen quest begins!\n\n{self.quest_goal[user_id]}"
-            await update.message.reply_text(start_message)
-
-            # Send the initial scene separately
-            await self.send_scene(update, context)
+            start_message = f"Your quest begins!\n\n{self.quest_goal[user_id]}\n\n{self.current_scene[user_id]}"
+            await self.send_split_message(update, start_message)
         except Exception as e:
             logger.error(f"Error starting quest: {e}")
             await update.message.reply_text("An error occurred while starting the quest. Please try again.")
             self.quest_active[user_id] = False
+
+    async def generate_quest_goal(self):
+        prompt = """
+        Create a brief Zen-themed quest goal (max 50 words). Include:
+        1. A journey of self-discovery or helping others
+        2. Exploration of a mystical or natural location
+        3. A search for wisdom or a symbolic artifact
+        4. A hint at physical and spiritual challenges
+        """
+        return await self.generate_response(prompt, elaborate=False)  # Added 'self.' to call the method correctly
+
+    async def generate_initial_scene(self, quest_goal):
+        prompt = f"""
+        Create a concise opening scene (max 100 words) for this Zen quest:
+        {quest_goal}
+
+        Include:
+        1. Brief description of the starting location
+        2. Introduction to the quest's purpose
+        3. Two choices for the player to begin their journey
+        4. A hint of challenges ahead
+        The scene should be engaging and mystical, setting the tone for a journey of self-discovery and adventure.
+        Avoid modern or technological elements, focusing instead on natural and spiritual aspects.
+        """
+        return await self.generate_response(prompt, elaborate=True)
+
+    async def send_split_message(self, update: Update, message: str):
+        max_length = 4000  # Telegram's message limit is 4096 characters, but we'll use 4000 to be safe
+        messages = [message[i:i+max_length] for i in range(0, len(message), max_length)]
+        for msg in messages:
+            await update.message.reply_text(msg)
+
+    async def generate_next_scene(self, update: Update, previous_scene, user_input, quest_state, quest_goal):
+        user_id = update.effective_user.id
+        player_karma = self.player_karma.get(user_id, 100)  # Default to 100 if no karma is set
+        
+        # Introduce PvP based on karma level and random AI trigger
+        if player_karma < 30 and random.random() < 0.3:  # 30% chance of PvP if karma is low
+            return "PVP_COMBAT_START"
+
+        # AI-driven PvP trigger based on story dynamics (10% chance)
+        if random.random() < 0.1:  # Additional PvP based on story randomness
+            return "PVP_COMBAT_START"
+
+        # Generate the prompt for OpenAI's response
+        prompt = f"""
+        Previous scene: {self.current_scene[user_id]}
+        User's action: "{user_input}"
+        Current quest state: {self.quest_state[user_id]}
+        Quest goal: {self.quest_goal[user_id]}
+        Player karma: {self.player_karma.get(user_id, 100)}  # Default to 100 if no karma is set
+
+        Generate the next scene of the Zen-themed quest (max 100 words). Include:
+        1. Brief description of the new environment or changes
+        2. Outcome of the user's action
+        3. A new challenge or encounter
+        4. Two distinct choices for the player
+        5. A brief Zen-like insight
+
+        If appropriate, end with:
+        COMBAT_START, PVP_COMBAT_START, QUEST_COMPLETE, or QUEST_FAIL
+        """
+
+        try:
+            next_scene = await self.generate_response(prompt, elaborate=True)
+            return next_scene
+        except Exception as e:
+            logger.error(f"Error generating next scene: {e}")
+            return "An error occurred while generating the next scene. Please try again."
+
+    async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent="unknown"):
+        user_id = update.effective_user.id
+        self.in_combat[user_id] = True
+        
+        # Setup for PvP or NPC combat based on the opponent
+        if opponent == "spiritual guardians" or opponent == "unknown":
+            # Start a PvP battle against the bot
+            await self.setup_pvp_combat(update, context, "Bot")
+        else:
+            # PvP combat setup (for player vs player)
+            await self.setup_pvp_combat(update, context, opponent)
+
+    async def setup_pvp_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
+        user_id = update.effective_user.id
+        opponent_id = 7283636452  # Bot's ID for PvP simulation
+
+        db = get_db_connection()
+        if db:
+            try:
+                cursor = db.cursor(dictionary=True)
+                cursor.execute("""
+                    INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
+                    VALUES (%s, %s, %s, %s, 'in_progress')
+                """, (user_id, opponent_id, update.effective_chat.id, user_id))
+                db.commit()
+
+                context.user_data['challenger_energy'] = 50
+                context.user_data['opponent_energy'] = 50
+
+                await update.message.reply_text(f"You enter into combat with {opponent}. Prepare for a spiritual battle!")
+                await send_game_rules(context, user_id, opponent_id)
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="Choose your move:",
+                    reply_markup=generate_pvp_move_buttons(user_id)
+                )
+            finally:
+                if db.is_connected():
+                    cursor.close()
+                    db.close()
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -642,40 +748,9 @@ class ZenQuest:
             logger.error(f"Error progressing story: {e}", exc_info=True)
             await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
             self.quest_active[user_id] = False
-
-    async def generate_quest_goal(self):
-        prompt = """
-        Create a Zen-themed quest goal. The goal should:
-        1. Involve a journey of self-discovery or helping others
-        2. Incorporate exploration of mystical or natural locations
-        3. Include a search for spiritual wisdom, enlightenment, or a symbolic artifact
-        4. Present both physical and spiritual challenges
-        5. Require the application of Zen principles throughout the journey
         
-        The goal should be clear, concise, and inspiring (2-3 sentences).
-        """
-        return await generate_response(prompt)
-
-    async def generate_initial_scene(self, quest_goal):
-        prompt = f"""
-        Create the opening scene for a Zen-themed quest with the following goal:
-        {quest_goal}
-
-        Include:
-        1. A vivid description of the starting location (2-3 sentences)
-        2. An introduction to the quest's purpose and initial challenge (1-2 sentences)
-        3. Three distinct choices for the player to begin their journey (each choice should be one short sentence)
-        4. A hint of the spiritual and physical challenges ahead (1 sentence)
-
-        The scene should be engaging and mystical, setting the tone for a journey of self-discovery and adventure.
-        Avoid modern or technological elements, focusing instead on natural and spiritual aspects.
-        """
-        return await generate_response(prompt)
-
-    async def generate_next_scene(self, update: Update, previous_scene, user_input, quest_state, quest_goal):
-        user_id = update.effective_user.id
         player_karma = self.player_karma.get(user_id, 100)  # Default to 100 if no karma is set
-        
+
         # Increase chance of PvP for low karma
         pvp_chance = 0.3 if player_karma < 30 else 0.1
         
@@ -684,11 +759,11 @@ class ZenQuest:
 
         # Generate the prompt for OpenAI's response
         prompt = f"""
-        Previous scene: {previous_scene}
+        Previous scene: {self.current_scene[user_id]}
         User's action: "{user_input}"
-        Current quest state: {quest_state}
-        Quest goal: {quest_goal}
-        Player karma: {player_karma}
+        Current quest state: {self.quest_state[user_id]}
+        Quest goal: {self.quest_goal[user_id]}
+        Player karma: {self.player_karma.get(user_id, 100)}  # Default to 100 if no karma is set
 
         Generate the next scene of the Zen-themed quest. Include:
         1. A brief, vivid description of the new environment or changes (1-2 sentences)
@@ -711,7 +786,7 @@ class ZenQuest:
         - An unsuccessful quest ending (indicate with 'QUEST_FAIL')
 
         Consider initiating PvP or combat if:
-        - The player's karma is low (current karma: {player_karma})
+        - The player's karma is low (current karma: {self.player_karma.get(user_id, 100)})
         - The user's actions have been consistently aggressive or confrontational
         - The quest narrative has built up tension or conflict
         - There's a thematic opportunity for a spiritual or physical challenge
@@ -801,12 +876,6 @@ class ZenQuest:
         if choices:
             await self.send_split_message(update, f"Your choices:\n{choices}")
 
-    async def send_split_message(self, update: Update, message: str):
-        max_length = 3500  # Telegram's message limit is 4096 characters, but we'll leave a margin
-        messages = [message[i:i+max_length] for i in range(0, len(message), max_length)]
-        for msg in messages:
-            await update.message.reply_text(msg)
-
     def process_scene(self, scene):
         parts = scene.split("Your choices:")
         description = parts[0].strip()
@@ -824,52 +893,12 @@ class ZenQuest:
         if self.player_karma[user_id] < 10 and random.random() < 0.4:  # 40% failure chance at very low karma
             return True
         return False
-    
-    async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent="unknown"):
-        user_id = update.effective_user.id
-        self.in_combat[user_id] = True
-        
-        # Setup for PvP or NPC combat based on the opponent
-        if opponent == "spiritual guardians" or opponent == "unknown":
-            # NPC combat setup
-            await self.setup_npc_combat(update, context, opponent)
-        else:
-            # PvP combat setup
-            await self.setup_pvp_combat(update, context, opponent)
 
     async def setup_npc_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
         # Implement NPC combat logic here
         await update.message.reply_text(f"You enter into combat with {opponent}. Prepare for a spiritual battle!")
         # Add combat options and mechanics for NPC fights
 
-    async def setup_pvp_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
-        user_id = update.effective_user.id
-        opponent_id = 7283636452  # Bot's ID for PvP simulation
-
-        db = get_db_connection()
-        if db:
-            try:
-                cursor = db.cursor(dictionary=True)
-                cursor.execute("""
-                    INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
-                    VALUES (%s, %s, %s, %s, 'in_progress')
-                """, (user_id, opponent_id, update.effective_chat.id, user_id))
-                db.commit()
-
-                context.user_data['challenger_energy'] = 50
-                context.user_data['opponent_energy'] = 50
-
-                await update.message.reply_text("Your actions have led to a confrontation. Prepare for battle!")
-                await send_game_rules(context, user_id, opponent_id)
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="Choose your move:",
-                    reply_markup=generate_pvp_move_buttons(user_id)
-                )
-            finally:
-                if db.is_connected():
-                    cursor.close()
-                    db.close()
 
     async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
         user_id = update.effective_user.id
@@ -1044,42 +1073,13 @@ async def apply_karma_consequence(self, update: Update, context: ContextTypes.DE
             logger.error(f"Error progressing story: {e}", exc_info=True)
             await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
             self.quest_active[user_id] = False
-
-    async def generate_quest_goal(self):
-        prompt = """
-        Create a Zen-themed quest goal. The goal should:
-        1. Involve a journey of self-discovery or helping others
-        2. Incorporate exploration of mystical or natural locations
-        3. Include a search for spiritual wisdom, enlightenment, or a symbolic artifact
-        4. Present both physical and spiritual challenges
-        5. Require the application of Zen principles throughout the journey
         
-        The goal should be clear, concise, and inspiring (2-3 sentences).
-        """
-        return await generate_response(prompt)
-
-    async def generate_initial_scene(self, quest_goal):
-        prompt = f"""
-        Create the opening scene for a Zen-themed quest with the following goal:
-        {quest_goal}
-
-        Include:
-        1. A vivid description of the starting location (2-3 sentences)
-        2. An introduction to the quest's purpose and initial challenge (1-2 sentences)
-        3. Three distinct choices for the player to begin their journey (each choice should be one short sentence)
-        4. A hint of the spiritual and physical challenges ahead (1 sentence)
-
-        The scene should be engaging and mystical, setting the tone for a journey of self-discovery and adventure.
-        Avoid modern or technological elements, focusing instead on natural and spiritual aspects.
-        """
-        return await generate_response(prompt)
-
-    async def generate_next_scene(self, update: Update, previous_scene, user_input, quest_state, quest_goal):
         user_id = update.effective_user.id
         player_karma = self.player_karma.get(user_id, 100)  # Default to 100 if no karma is set
-        
+        pvp_chance = 0.3 if player_karma < 30 else 0.1
+
         # Introduce PvP based on karma level and random AI trigger
-        if player_karma < 30 and random.random() < 0.3:  # 30% chance of PvP if karma is low
+        if random.random() < pvp_chance:
             return "PVP_COMBAT_START"
 
         # AI-driven PvP trigger based on story dynamics (10% chance)
@@ -1088,10 +1088,11 @@ async def apply_karma_consequence(self, update: Update, context: ContextTypes.DE
 
         # Generate the prompt for OpenAI's response
         prompt = f"""
-        Previous scene: {previous_scene}
+        Previous scene: {self.current_scene[user_id]}
         User's action: "{user_input}"
-        Current quest state: {quest_state}
-        Quest goal: {quest_goal}
+        Current quest state: {self.quest_state[user_id]}
+        Quest goal: {self.quest_goal[user_id]}
+        Player karma: {player_karma}
 
         Generate the next scene of the Zen-themed quest. Include:
         1. A brief, vivid description of the new environment or changes (1-2 sentences)
@@ -1114,6 +1115,7 @@ async def apply_karma_consequence(self, update: Update, context: ContextTypes.DE
         - An unsuccessful quest ending (indicate with 'QUEST_FAIL')
 
         Consider initiating combat if:
+        - The player's karma is low (current karma: {player_karma})
         - The user's actions have been consistently aggressive or confrontational
         - The quest narrative has built up tension or conflict
         - There's a thematic opportunity for a spiritual or physical challenge
@@ -1206,12 +1208,6 @@ async def apply_karma_consequence(self, update: Update, context: ContextTypes.DE
         if choices:
             await self.send_split_message(update, f"Your choices:\n{choices}")
 
-    async def send_split_message(self, update: Update, message: str):
-        max_length = 3500  # Telegram's message limit is 4096 characters, but we'll leave a margin
-        messages = [message[i:i+max_length] for i in range(0, len(message), max_length)]
-        for msg in messages:
-            await update.message.reply_text(msg)
-
     def process_scene(self, scene):
         parts = scene.split("Your choices:")
         description = parts[0].strip()
@@ -1230,51 +1226,12 @@ async def apply_karma_consequence(self, update: Update, context: ContextTypes.DE
             return True
         return False
     
-    async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent="unknown"):
-        user_id = update.effective_user.id
-        self.in_combat[user_id] = True
-        
-        # Setup for PvP or NPC combat based on the opponent
-        if opponent == "spiritual guardians" or opponent == "unknown":
-            # NPC combat setup
-            await self.setup_npc_combat(update, context, opponent)
-        else:
-            # PvP combat setup
-            await self.setup_pvp_combat(update, context, opponent)
 
     async def setup_npc_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
         # Implement NPC combat logic here
         await update.message.reply_text(f"You enter into combat with {opponent}. Prepare for a spiritual battle!")
         # Add combat options and mechanics for NPC fights
 
-    async def setup_pvp_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
-        user_id = update.effective_user.id
-        opponent_id = 7283636452  # Bot's ID for PvP simulation
-
-        db = get_db_connection()
-        if db:
-            try:
-                cursor = db.cursor(dictionary=True)
-                cursor.execute("""
-                    INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
-                    VALUES (%s, %s, %s, %s, 'in_progress')
-                """, (user_id, opponent_id, update.effective_chat.id, user_id))
-                db.commit()
-
-                context.user_data['challenger_energy'] = 50
-                context.user_data['opponent_energy'] = 50
-
-                await update.message.reply_text("Your actions have led to a confrontation. Prepare for battle!")
-                await send_game_rules(context, user_id, opponent_id)
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="Choose your move:",
-                    reply_markup=generate_pvp_move_buttons(user_id)
-                )
-            finally:
-                if db.is_connected():
-                    cursor.close()
-                    db.close()
 
     async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
         user_id = update.effective_user.id
@@ -1429,45 +1386,6 @@ async def add_zen_points(update: Update, context: ContextTypes.DEFAULT_TYPE, poi
     except Error as e:
         logger.error(f"Error adding Zen points: {e}")
         await update.message.reply_text("An error occurred while updating your Zen points. Please try again later.")
-
-async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
-
-            # Create a new PvP battle against the bot
-            opponent_id = 7283636452  # Bot's ID
-            context.user_data['challenger_energy'] = 50
-            context.user_data['opponent_energy'] = 50
-
-            cursor.execute("""
-                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
-                VALUES (%s, %s, %s, %s, 'in_progress')
-            """, (user_id, opponent_id, update.effective_chat.id, user_id))
-            db.commit()
-
-            await send_game_rules(context, user_id, opponent_id)
-            await update.message.reply_text("A hostile presence emerges. Prepare for battle!")
-
-            # Start the combat
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="Choose your move:",
-                reply_markup=generate_pvp_move_buttons(user_id)
-            )
-
-        except mysql.connector.Error as e:
-            logger.error(f"MySQL error in initiate_combat: {e}")
-            await update.message.reply_text("An error occurred while initiating the combat. Please try again later.")
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
-        await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
-
 
 # PvP Functionality
 
