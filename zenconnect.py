@@ -503,7 +503,7 @@ class ZenQuest:
                 context.user_data['challenger_energy'] = 50
                 context.user_data['opponent_energy'] = 50
 
-                await update.message.reply_text("Your actions have led to a confrontation. Prepare for battle!")
+                await update.message.reply_text("Your actions have led to a confrontation. Prepare for battle!!")
                 await send_game_rules(context, user_id, opponent_id)
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
