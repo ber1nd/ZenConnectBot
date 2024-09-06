@@ -1081,14 +1081,6 @@ async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TY
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
-async def send_split_message(update: Update, message: str):
-    max_length = 4000  # Set to slightly below Telegram's 4096 character limit for safety
-    messages = [message[i:i + max_length] for i in range(0, len(message), max_length)]
-    for msg in messages:
-        if update.callback_query:
-            await update.callback_query.message.reply_text(msg)
-        else:
-            await update.message.reply_text(msg)
 
 # PvP Functionality
 
