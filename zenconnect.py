@@ -477,7 +477,7 @@ class ZenQuest:
             self.current_stage[user_id] = 0
             self.quest_state[user_id] = "beginning"
             self.in_combat[user_id] = False
-            self.player_karma[user_id] = 0
+            self.player_karma[user_id] = 100
 
             self.quest_goal[user_id] = await self.generate_quest_goal()
             self.current_scene[user_id] = await self.generate_initial_scene(self.quest_goal[user_id])
