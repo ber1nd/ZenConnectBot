@@ -663,6 +663,18 @@ class ZenQuest:
         for msg in messages:
             await update.message.reply_text(msg)
 
+    async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent="unknown"):
+        user_id = update.effective_user.id
+        self.in_combat[user_id] = True
+        
+        # Setup for PvP or NPC combat based on the opponent
+        if opponent == "spiritual guardians" or opponent == "unknown":
+            # Start a PvP battle against the bot
+            await self.setup_pvp_combat(update, context, "Bot")
+        else:
+            # PvP combat setup (for player vs player)
+            await self.setup_pvp_combat(update, context, opponent)        
+
     async def setup_pvp_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
         user_id = update.effective_user.id
         opponent_id = 7283636452  # Bot's ID for PvP simulation
