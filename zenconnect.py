@@ -657,11 +657,11 @@ class ZenQuest:
             await self.end_quest(update, context, victory=False, reason="Your actions have led you astray from the path of enlightenment.")
             return
 
-    async def send_split_message(self, update: Update, message: str):
+    async def send_split_message_context(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, message: str):
         max_length = 4000  # Telegram's message limit is 4096 characters, but we'll use 4000 to be safe
         messages = [message[i:i+max_length] for i in range(0, len(message), max_length)]
         for msg in messages:
-            await update.message.reply_text(msg)
+            await context.bot.send_message(chat_id=user_id, text=msg)
 
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent="unknown"):
         user_id = update.effective_user.id
@@ -718,20 +718,48 @@ class ZenQuest:
                     cursor.close()
                     db.close()
 
-    async def end_pvp_battle(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool):
+    async def end_pvp_battle(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, battle_id: int):
         self.in_combat[user_id] = False
         
         # Generate battle conclusion
-        conclusion = await self.generate_pvp_conclusion(victory, self.current_scene[user_id], self.quest_goal[user_id])
+        conclusion = await self.generate_pvp_conclusion(victory, self.current_scene.get(user_id, ""), self.quest_goal.get(user_id, ""))
         
-        await update.message.reply_text(conclusion)
+        # Fetch the battle data to get the group_id
+        db = get_db_connection()
+        if db:
+            try:
+                cursor = db.cursor(dictionary=True)
+                cursor.execute("SELECT group_id FROM pvp_battles WHERE id = %s", (battle_id,))
+                battle_data = cursor.fetchone()
+                if battle_data:
+                    group_id = battle_data['group_id']
+                    await context.bot.send_message(chat_id=group_id, text=conclusion)
+                else:
+                    logger.error(f"No battle data found for battle_id: {battle_id}")
+            except Exception as e:
+                logger.error(f"Database error in end_pvp_battle: {e}")
+            finally:
+                if db.is_connected():
+                    cursor.close()
+                    db.close()
 
         if victory:
             self.player_karma[user_id] = min(100, self.player_karma.get(user_id, 0) + 10)
-            await update.message.reply_text("Your victory has increased your karma. The quest continues.")
+            await context.bot.send_message(chat_id=user_id, text="Your victory has increased your karma. The quest continues.")
+            
+            # Progress the story
+            next_scene = await self.progress_story(
+                self.current_scene.get(user_id, ""),
+                "victory in combat",
+                self.quest_state.get(user_id, ""),
+                self.quest_goal.get(user_id, "")
+            )
+            self.current_scene[user_id] = next_scene
+            await self.send_scene_message(context, user_id)
         else:
             self.player_karma[user_id] = max(0, self.player_karma.get(user_id, 0) - 10)
-            await self.end_quest(update, context, victory=False, reason="Your defeat in battle has ended your journey prematurely.")
+            await self.end_quest(context, user_id, victory=False, reason="Your defeat in battle has ended your journey prematurely.")
+
 
     async def generate_pvp_conclusion(self, victory: bool, current_scene, quest_goal):
         prompt = f"""
@@ -816,18 +844,30 @@ class ZenQuest:
         await self.send_split_message(update, f"You have been afflicted: {short_affliction}")
     # Implement additional affliction effects here
 
-    async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
+    async def send_scene(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, user_id: int = None):
+        if update:
+            user_id = update.effective_user.id
+        
         if not self.current_scene.get(user_id):
-            await update.message.reply_text("An error occurred. The quest cannot continue.")
+            message = "An error occurred. The quest cannot continue."
+            if update:
+                await update.message.reply_text(message)
+            elif context:
+                await context.bot.send_message(chat_id=user_id, text=message)
             return
 
         scene = self.current_scene[user_id]
         description, choices = self.process_scene(scene)
 
-        await self.send_split_message(update, description)
-        if choices:
-            await self.send_split_message(update, f"Your choices:\n{choices}")
+        if update:
+            await self.send_split_message(update, description)
+            if choices:
+                await self.send_split_message(update, f"Your choices:\n{choices}")
+        elif context:
+            await self.send_split_message_context(context, user_id, description)
+            if choices:
+                await self.send_split_message_context(context, user_id, f"Your choices:\n{choices}")
+
 
     def process_scene(self, scene):
         parts = scene.split("Your choices:")
@@ -870,17 +910,30 @@ class ZenQuest:
         # Add combat options and mechanics for NPC fights
 
 
-    async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
-        user_id = update.effective_user.id
+    async def end_quest(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, user_id: int = None, victory: bool = False, reason: str = ""):
+        if update:
+            user_id = update.effective_user.id
+        
         self.quest_active[user_id] = False
         self.in_combat[user_id] = False
 
-        conclusion = await self.generate_quest_conclusion(victory, self.current_stage[user_id])
-        await update.message.reply_text(f"{reason}\n\n{conclusion}")
+        conclusion = await self.generate_quest_conclusion(victory, self.current_stage.get(user_id, 0))
+        message = f"{reason}\n\n{conclusion}"
+        
+        if update:
+            await update.message.reply_text(message)
+        elif context:
+            await context.bot.send_message(chat_id=user_id, text=message)
 
         zen_points = random.randint(30, 50) if victory else -random.randint(10, 20)
-        await update.message.reply_text(f"You have {'earned' if victory else 'lost'} {abs(zen_points)} Zen points!")
-        await add_zen_points(update, context, zen_points)
+        zen_message = f"You have {'earned' if victory else 'lost'} {abs(zen_points)} Zen points!"
+        
+        if update:
+            await update.message.reply_text(zen_message)
+            await add_zen_points(update, context, zen_points)
+        elif context:
+            await context.bot.send_message(chat_id=user_id, text=zen_message)
+            await add_zen_points(context, user_id, zen_points)
 
         # Clear quest data for this user
         for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal']:
@@ -1014,16 +1067,55 @@ def setup_zenquest_handlers(application):
 
 
 @with_database_connection
-async def add_zen_points(update: Update, context: ContextTypes.DEFAULT_TYPE, points: int, db):
-    user_id = update.effective_user.id
-    try:
-        cursor = db.cursor()
-        cursor.execute("UPDATE users SET zen_points = zen_points + %s WHERE user_id = %s", (points, user_id))
-        db.commit()
-        await update_user_level(user_id, points, db)
-    except Error as e:
-        logger.error(f"Error adding Zen points: {e}")
-        await update.message.reply_text("An error occurred while updating your Zen points. Please try again later.")
+async def add_zen_points(update_or_context, context_or_user_id, points):
+    if isinstance(update_or_context, Update):
+        # Original case with update object
+        update = update_or_context
+        context = context_or_user_id
+        user_id = update.effective_user.id
+    else:
+        # New case with context and user_id
+        context = update_or_context
+        user_id = context_or_user_id
+
+    db = get_db_connection()
+    if db:
+        try:
+            cursor = db.cursor()
+            cursor.execute("SELECT zen_points FROM users WHERE user_id = %s", (user_id,))
+            result = cursor.fetchone()
+            
+            if result:
+                current_points = result[0]
+                new_points = max(0, current_points + points)  # Ensure points don't go below 0
+                cursor.execute("UPDATE users SET zen_points = %s WHERE user_id = %s", (new_points, user_id))
+            else:
+                new_points = max(0, points)  # Ensure points don't go below 0
+                cursor.execute("INSERT INTO users (user_id, zen_points) VALUES (%s, %s)", (user_id, new_points))
+            
+            db.commit()
+            
+            if isinstance(update_or_context, Update):
+                await update.message.reply_text(f"Your new Zen points balance: {new_points}")
+            else:
+                await context.bot.send_message(chat_id=user_id, text=f"Your new Zen points balance: {new_points}")
+        
+        except mysql.connector.Error as e:
+            logger.error(f"Database error in add_zen_points: {e}")
+            if isinstance(update_or_context, Update):
+                await update.message.reply_text("An error occurred while updating your Zen points. Please try again later.")
+            else:
+                await context.bot.send_message(chat_id=user_id, text="An error occurred while updating your Zen points. Please try again later.")
+        
+        finally:
+            if db.is_connected():
+                cursor.close()
+                db.close()
+    else:
+        if isinstance(update_or_context, Update):
+            await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+        else:
+            await context.bot.send_message(chat_id=user_id, text="I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 # PvP Functionality
 
@@ -1949,13 +2041,14 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             winner_id = user_id if opponent_hp <= 0 else opponent_id
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
             db.commit()
-            
+        
             victory = winner_id == user_id
             try:
-                await zen_quest.end_pvp_battle(update, context, user_id, victory)
+                await zen_quest.end_pvp_battle(context, user_id, victory, battle['id'])
             except Exception as e:
                 logger.error(f"Error in end_pvp_battle: {e}")
-                await send_message(update, "An error occurred while ending the battle. Your quest status may be affected.")
+                if not bot_mode:
+                    await send_message(update, "An error occurred while ending the battle. Your quest status may be affected.")
             
             return
 
@@ -2112,29 +2205,22 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             cursor = db.cursor(dictionary=True)
             
-            # Fetch the active battle where the user is a challenger or opponent
             cursor.execute("""
                 SELECT id, challenger_id, opponent_id FROM pvp_battles 
                 WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
             """, (user_id, user_id))
             battle_data = cursor.fetchone()
 
-            # Ensure all results are consumed
-            cursor.fetchall()
-
             if not battle_data:
                 await update.message.reply_text("No active battles found to surrender.")
                 return
 
-            # Determine the winner (opponent wins if the user surrenders)
             winner_id = battle_data['opponent_id'] if user_id == battle_data['challenger_id'] else battle_data['challenger_id']
             
-            # Update the battle status to 'completed' and set the winner
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle_data['id']))
             db.commit()
             
-            # End the PvP battle with a loss
-            await zen_quest.end_pvp_battle(update, context, user_id, victory=False)
+            await zen_quest.end_pvp_battle(context, user_id, victory=False, battle_id=battle_data['id'])
         
         except mysql.connector.Error as e:
             logger.error(f"Database error in surrender: {e}")
@@ -2146,7 +2232,6 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.close()
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
-
 
 
 def check_rate_limit(user_id):
