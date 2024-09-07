@@ -754,17 +754,12 @@ class ZenQuest:
             await context.bot.send_message(chat_id=user_id, text="Your victory has increased your karma. The quest continues.")
             
             # Progress the story
-            next_scene = await self.progress_story(
-                self.current_scene.get(user_id, ""),
-                "victory in combat",
-                self.quest_state.get(user_id, ""),
-                self.quest_goal.get(user_id, "")
-            )
+            next_scene = await self.generate_next_scene(user_id, "victory in combat")
             self.current_scene[user_id] = next_scene
-            await self.send_scene_message(context, user_id)
+            await self.send_scene(context=context, user_id=user_id)
         else:
             self.player_karma[user_id] = max(0, self.player_karma.get(user_id, 0) - 10)
-            await self.end_quest(context, user_id, victory=False, reason="Your defeat in battle has ended your journey prematurely.")
+            await self.end_quest(context=context, user_id=user_id, victory=False, reason="Your defeat in battle has ended your journey prematurely.")
 
 
     async def generate_pvp_conclusion(self, victory: bool, current_scene, quest_goal):
