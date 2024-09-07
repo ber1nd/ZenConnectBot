@@ -667,15 +667,29 @@ class ZenQuest:
         user_id = update.effective_user.id
         self.in_combat[user_id] = True
         
+        # Generate context for PvP battle
+        battle_context = await self.generate_pvp_context(self.current_scene[user_id], self.quest_goal[user_id])
+        
         # Setup for PvP or NPC combat based on the opponent
         if opponent == "spiritual guardians" or opponent == "unknown":
             # Start a PvP battle against the bot
-            await self.setup_pvp_combat(update, context, "Bot")
+            await self.setup_pvp_combat(update, context, "Bot", battle_context)
         else:
             # PvP combat setup (for player vs player)
-            await self.setup_pvp_combat(update, context, opponent)        
+            await self.setup_pvp_combat(update, context, opponent, battle_context)       
 
-    async def setup_pvp_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
+    async def generate_pvp_context(self, current_scene, quest_goal):
+        prompt = f"""
+        Based on the current scene and quest goal, generate a brief context (1-2 sentences) for why a PvP battle is starting:
+        Current scene: {current_scene}
+        Quest goal: {quest_goal}
+        The context should explain the sudden appearance of an opponent and why combat is necessary.
+        It should fit thematically with the Zen quest and provide a clear reason for the conflict.
+        """
+        return await self.generate_response(prompt, elaborate=False)     
+
+
+    async def setup_pvp_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent, battle_context):
         user_id = update.effective_user.id
         opponent_id = 7283636452  # Bot's ID for PvP simulation
 
@@ -692,7 +706,7 @@ class ZenQuest:
                 context.user_data['challenger_energy'] = 50
                 context.user_data['opponent_energy'] = 50
 
-                await update.message.reply_text(f"You enter into combat with {opponent}. Prepare for a spiritual battle!")
+                await update.message.reply_text(f"{battle_context}\n\nYou enter into combat with {opponent}. Prepare for a spiritual battle!")
                 await send_game_rules(context, user_id, opponent_id)
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
@@ -703,6 +717,34 @@ class ZenQuest:
                 if db.is_connected():
                     cursor.close()
                     db.close()
+
+    async def end_pvp_battle(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool):
+        self.in_combat[user_id] = False
+        
+        # Generate battle conclusion
+        conclusion = await self.generate_pvp_conclusion(victory, self.current_scene[user_id], self.quest_goal[user_id])
+        
+        await update.message.reply_text(conclusion)
+
+        if victory:
+            self.player_karma[user_id] = min(100, self.player_karma.get(user_id, 0) + 10)
+            await update.message.reply_text("Your victory has increased your karma. The quest continues.")
+        else:
+            self.player_karma[user_id] = max(0, self.player_karma.get(user_id, 0) - 10)
+            await self.end_quest(update, context, victory=False, reason="Your defeat in battle has ended your journey prematurely.")
+
+    async def generate_pvp_conclusion(self, victory: bool, current_scene, quest_goal):
+        prompt = f"""
+        Generate a brief conclusion (3-4 sentences) for a {'victorious' if victory else 'lost'} PvP battle:
+        Current scene: {current_scene}
+        Quest goal: {quest_goal}
+        Include:
+        1. The immediate outcome of the battle
+        2. How it affects the player's spiritual journey
+        3. A hint at the consequences for the quest
+        4. A Zen-like insight gained from the experience
+        """
+        return await self.generate_response(prompt, elaborate=False)
 
 
     async def apply_karma_consequence(self, update: Update, context: ContextTypes.DEFAULT_TYPE, reason: str):
@@ -1904,32 +1946,18 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         context.user_data[f'{player_key}_next_turn_synergy'] = {}
 
         if opponent_hp <= 0 or user_hp <= 0:
-                winner_id = user_id if opponent_hp <= 0 else opponent_id
-                cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
-                db.commit()
-                winner_name = "Bot" if winner_id == 7283636452 else update.effective_user.first_name if bot_mode else "You"
-                final_move_message = f"The battle ended with {winner_name} using {action}, dealing {damage} damage."
-                await send_message(update, f"{final_move_message}\n{winner_name} {'have' if winner_name == 'You' else 'has'} won the battle!")
-
-                if zen_quest.quest_active.get(user_id, False):
-                    zen_quest.in_combat[user_id] = False
-                    if winner_id == user_id:
-                        # Player wins
-                        karma_gain = random.randint(5, 15)
-                        zen_quest.player_karma[user_id] = min(100, zen_quest.player_karma.get(user_id, 0) + karma_gain)
-                        await send_message(update, f"You've gained {karma_gain} karma from your victory!")
-                        next_scene = await zen_quest.progress_story(
-                            zen_quest.current_scene[user_id],
-                            "victory in combat",
-                            zen_quest.quest_state[user_id],
-                            zen_quest.quest_goal[user_id]
-                        )
-                        zen_quest.current_scene[user_id] = next_scene
-                        await zen_quest.send_scene(update, context)
-                    else:
-                        # Player loses
-                        await zen_quest.end_quest(update, context, victory=False, reason="You have been defeated in combat.")
-                return
+            winner_id = user_id if opponent_hp <= 0 else opponent_id
+            cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
+            db.commit()
+            
+            victory = winner_id == user_id
+            try:
+                await zen_quest.end_pvp_battle(update, context, user_id, victory)
+            except Exception as e:
+                logger.error(f"Error in end_pvp_battle: {e}")
+                await send_message(update, "An error occurred while ending the battle. Your quest status may be affected.")
+            
+            return
 
         next_turn = opponent_id if user_id == battle['challenger_id'] else battle['challenger_id']
         cursor.execute(f"""
@@ -2105,7 +2133,8 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle_data['id']))
             db.commit()
             
-            await update.message.reply_text("You have surrendered the battle. Your opponent is victorious.")
+            # End the PvP battle with a loss
+            await zen_quest.end_pvp_battle(update, context, user_id, victory=False)
         
         except mysql.connector.Error as e:
             logger.error(f"Database error in surrender: {e}")
@@ -2117,6 +2146,7 @@ async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.close()
     else:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+
 
 
 def check_rate_limit(user_id):
