@@ -622,7 +622,10 @@ class ZenQuest:
             return
 
         if self.in_combat.get(user_id, False):
-            await update.message.reply_text("You are currently in combat. Please use the provided buttons to make your move.")
+            if user_input == '/surrender':
+                await self.surrender(update, context)
+            else:
+                await update.message.reply_text("You are currently in combat. Please use the provided buttons to make your move or use /surrender to give up.")
             return
 
         # Check for self-damaging actions
@@ -937,7 +940,7 @@ class ZenQuest:
             await add_zen_points(context, user_id, zen_points)
 
         # Clear quest data for this user
-        for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal']:
+        for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal', 'in_combat']:
             getattr(self, attr).pop(user_id, None)
 
         # End any ongoing PvP battles
@@ -1035,6 +1038,9 @@ class ZenQuest:
     
     # Global instance of ZenQuest
 zen_quest = ZenQuest()
+
+async def handle_surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await zen_quest.surrender(update, context)
 
 async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -2199,40 +2205,47 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.close()
 
 
-async def surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def surrender(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    if not self.in_combat.get(user_id, False):
+        await update.message.reply_text("You are not currently in combat.")
+        return
+
     db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor(dictionary=True)
-            
-            cursor.execute("""
-                SELECT id, challenger_id, opponent_id FROM pvp_battles 
-                WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
-            """, (user_id, user_id))
-            battle_data = cursor.fetchone()
-
-            if not battle_data:
-                await update.message.reply_text("No active battles found to surrender.")
-                return
-
-            winner_id = battle_data['opponent_id'] if user_id == battle_data['challenger_id'] else battle_data['challenger_id']
-            
-            cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle_data['id']))
-            db.commit()
-            
-            await zen_quest.end_pvp_battle(context, user_id, victory=False, battle_id=battle_data['id'])
-        
-        except mysql.connector.Error as e:
-            logger.error(f"Database error in surrender: {e}")
-            await update.message.reply_text("An error occurred while surrendering. Please try again later.")
-        
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
+    if not db:
         await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+        return
+
+    try:
+        cursor = db.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT id, challenger_id, opponent_id FROM pvp_battles 
+            WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
+        """, (user_id, user_id))
+        battle_data = cursor.fetchone()
+
+        if not battle_data:
+            await update.message.reply_text("No active battles found to surrender.")
+            self.in_combat[user_id] = False  # Reset combat state
+            return
+
+        winner_id = battle_data['opponent_id'] if user_id == battle_data['challenger_id'] else battle_data['challenger_id']
+        
+        cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle_data['id']))
+        db.commit()
+        
+        await update.message.reply_text("You have chosen to surrender. The battle ends.")
+        await self.end_pvp_battle(context, user_id, victory=False, battle_id=battle_data['id'])
+    
+    except mysql.connector.Error as e:
+        logger.error(f"Database error in surrender: {e}")
+        await update.message.reply_text("An error occurred while surrendering. Please try again later.")
+    
+    finally:
+        if db and db.is_connected():
+            cursor.close()
+            db.close()
 
 
 def check_rate_limit(user_id):
