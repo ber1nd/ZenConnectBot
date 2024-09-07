@@ -656,6 +656,12 @@ class ZenQuest:
         if await self.check_quest_failure(user_id):
             await self.end_quest(update, context, victory=False, reason="Your actions have led you astray from the path of enlightenment.")
             return
+        
+    async def send_split_message(self, update: Update, message: str):
+        max_length = 4000  # Telegram's message limit is 4096 characters, but we'll use 4000 to be safe
+        messages = [message[i:i+max_length] for i in range(0, len(message), max_length)]
+        for msg in messages:
+            await update.message.reply_text(msg)
 
     async def send_split_message_context(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, message: str):
         max_length = 4000  # Telegram's message limit is 4096 characters, but we'll use 4000 to be safe
