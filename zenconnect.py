@@ -756,9 +756,13 @@ class ZenQuest:
         # Evaluate the action and its consequences
         evaluation = await self.evaluate_action_and_consequences(user_input, current_scene)
         
-        # Apply karma changes and consequences
-        karma_change = -10 if evaluation['is_immoral'] else 0
-        self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
+        # Apply karma changes based on the action's morality
+        if evaluation['is_immoral']:
+            karma_change = -20  # Significant karma loss for immoral actions
+        else:
+            karma_change = 5  # Small karma gain for moral or neutral actions
+
+        self.player_karma[user_id] = max(0, min(100, self.player_karma.get(user_id, 100) + karma_change))
         
         if evaluation.get('explanation'):
             await update.message.reply_text(evaluation['explanation'])
@@ -766,6 +770,8 @@ class ZenQuest:
         if evaluation['is_immoral']:
             if evaluation['consequence'].get('description'):
                 await update.message.reply_text(evaluation['consequence']['description'])
+            
+            await update.message.reply_text(f"Your karma has decreased by {abs(karma_change)}. Current karma: {self.player_karma[user_id]}")
             
             if evaluation['consequence']['type'] == 'quest_fail':
                 await self.end_quest(update, context, victory=False, reason=evaluation['consequence'].get('description', "Your journey has come to an end."))
@@ -775,6 +781,8 @@ class ZenQuest:
                 return
             elif evaluation['consequence']['type'] == 'affliction':
                 await self.apply_affliction(update, context, evaluation['consequence'].get('description', "You've been afflicted by your actions."))
+        else:
+            await update.message.reply_text(f"Your karma has increased by {karma_change}. Current karma: {self.player_karma[user_id]}")
         
         # Continue the quest
         await self.progress_story(update, context, user_input)
@@ -1095,10 +1103,13 @@ class ZenQuest:
         return await self.generate_response(prompt, elaborate=False)        
 
     async def check_quest_failure(self, user_id):
-        if self.player_karma[user_id] < 10 and random.random() < 0.4:  # 40% failure chance at very low karma
-            return True
-        elif self.current_stage[user_id] > 30 and random.random() < 0.1:  # 10% failure chance after stage 30
-            return True
+        karma = self.player_karma.get(user_id, 100)
+        if karma <= 20:
+            return True  # Automatic failure at very low karma
+        elif karma <= 50:
+            return random.random() < 0.3  # 30% chance of failure at low karma
+        elif self.current_stage[user_id] > 30 and karma < 70:
+            return random.random() < 0.1  # 10% chance of failure at later stages with moderate karma
         return False
 
     async def setup_npc_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
@@ -1201,7 +1212,7 @@ class ZenQuest:
         Goal: {self.quest_goal.get(user_id, 'Unknown')}
         Current Stage: {self.current_stage.get(user_id, 0)}
         HP: {self.player_hp.get(user_id, 100)}
-        Karma: {self.player_karma.get(user_id, 0)}
+        Karma: {self.player_karma.get(user_id, 100)}
         Quest State: {self.quest_state.get(user_id, 'Unknown')}
         In Combat: {'Yes' if self.in_combat.get(user_id, False) else 'No'}
         """
