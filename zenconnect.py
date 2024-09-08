@@ -1174,12 +1174,14 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         opponent_id = None
         if opponent_username == 'bot':
             opponent_id = 7283636452  # Bot's ID
+            context.user_data['opponent_name'] = "Bot"
         else:
-            cursor.execute("SELECT user_id FROM users WHERE username = %s", (opponent_username,))
+            cursor.execute("SELECT user_id, first_name FROM users WHERE username = %s", (opponent_username,))
             result = cursor.fetchone()
             cursor.fetchall()  # Consume any remaining results
             if result:
                 opponent_id = result['user_id']
+                context.user_data['opponent_name'] = result['first_name'] or "Opponent"
             else:
                 await update.message.reply_text(f"Could not find user with username @{opponent_username}. Please make sure they have interacted with the bot.")
                 return
@@ -1217,6 +1219,9 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
             VALUES (%s, %s, %s, %s, 'pending')
         """, (user_id, opponent_id, update.effective_chat.id, user_id))
         db.commit()
+
+        # Store challenger's name
+        context.user_data['challenger_name'] = update.effective_user.first_name or "Challenger"
 
         # Send game rules to both players
         await send_game_rules(context, user_id, opponent_id)
@@ -1342,28 +1347,25 @@ async def generate_opponent_name(current_scene, default_name):
     """
     return await generate_response(prompt, elaborate=False)
 
-async def create_battle_view(challenger_name, challenger_hp, challenger_energy, opponent_name, opponent_hp, opponent_energy, current_scene):
+async def create_battle_view(player_name, player_hp, player_energy, opponent_name, opponent_hp, opponent_energy, current_scene):
     def create_bar(value, max_value, fill_char='█', empty_char='░'):
         bar_length = 10
         filled = int((value / max_value) * bar_length)
         return f"{fill_char * filled}{empty_char * (bar_length - filled)}"
 
-    c_hp_bar = create_bar(challenger_hp, 100)
-    c_energy_bar = create_bar(challenger_energy, 100)
+    p_hp_bar = create_bar(player_hp, 100)
+    p_energy_bar = create_bar(player_energy, 100)
     o_hp_bar = create_bar(opponent_hp, 100)
     o_energy_bar = create_bar(opponent_energy, 100)
 
-    # Generate a dynamic opponent name based on the current scene
-    dynamic_opponent_name = await generate_opponent_name(current_scene, opponent_name)
-
     battle_view = f"""
-⚪ {challenger_name}
+⚪ {player_name}
 ━━━━━━━━━━━━━━━━━
-💚 HP  [{c_hp_bar}] {challenger_hp}
-💠 Chi [{c_energy_bar}] {challenger_energy}
+💚 HP  [{p_hp_bar}] {player_hp}
+💠 Chi [{p_energy_bar}] {player_energy}
 ━━━━━━━━━━━━━━━━━
            ☯
-⚪ {dynamic_opponent_name}
+⚪ {opponent_name}
 ━━━━━━━━━━━━━━━━━
 💚 HP  [{o_hp_bar}] {opponent_hp}
 💠 Chi [{o_energy_bar}] {opponent_energy}
@@ -2031,7 +2033,10 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         opponent_energy = context.user_data.get(f'{opponent_key}_energy', 50)
 
         opponent_id = battle[f'{opponent_key}_id']
-        opponent_name = "Bot" if opponent_id == 7283636452 else update.effective_user.first_name if bot_mode else "Opponent"
+        
+        # Determine player and opponent names consistently
+        player_name = "Bot" if bot_mode else update.effective_user.first_name
+        opponent_name = "Bot" if opponent_id == 7283636452 else context.user_data.get(f'{opponent_key}_name', "Opponent")
 
         result = await perform_action(
             action, user_hp, opponent_hp, user_energy, context.user_data.get(f'{player_key}_next_turn_synergy', {}),
@@ -2077,7 +2082,7 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         current_scene = zen_quest.current_scene.get(user_id, "A mysterious battlefield")
 
         battle_view = await create_battle_view(
-            "Bot" if bot_mode else update.effective_user.first_name,
+            player_name,
             user_hp,
             user_energy,
             opponent_name,
