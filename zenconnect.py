@@ -579,13 +579,6 @@ class ZenQuest:
             next_scene = await self.generate_next_scene(user_id, user_input)
             self.current_scene[user_id] = next_scene
 
-            if "QUEST_COMPLETE" in next_scene or "QUEST_FAIL" in next_scene:
-                # Instead of ending the quest immediately, present a final choice
-                final_choice = await self.generate_final_choice(user_id, next_scene)
-                await self.send_split_message(update, final_choice)
-                self.quest_state[user_id] = "final_choice"
-                return
-
             if "COMBAT_START" in next_scene:
                 await self.initiate_combat(update, context, opponent="enemy")
                 return
@@ -603,22 +596,10 @@ class ZenQuest:
                 await self.update_quest_state(user_id)
                 await self.send_scene(update, context)
 
-            # Update karma based on actions and progress
-            karma_change = random.randint(-5, 5)
-            self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
-
             # Check for quest failure based on karma
             if await self.check_quest_failure(user_id):
                 await self.end_quest(update, context, victory=False, reason="Your actions have led you astray from the path of enlightenment.")
                 return
-
-            # Randomly introduce failure chances
-            if random.random() < 0.05:
-                event = await self.generate_random_event(self.current_scene[user_id], self.quest_goal[user_id])
-                await self.send_split_message(update, event)
-                if "QUEST_FAIL" in event:
-                    await self.end_quest(update, context, victory=False, reason="An unexpected turn of events has ended your journey.")
-                    return
 
         except Exception as e:
             logger.error(f"Error progressing story: {e}", exc_info=True)
@@ -767,13 +748,21 @@ class ZenQuest:
             return
 
         current_scene = self.current_scene.get(user_id, "")
-        choices = self.extract_choices(current_scene)
-
-        # Use evaluate_action_and_consequences for all actions
-        evaluation = await self.evaluate_action_and_consequences(user_input, current_scene)
+        
+        # Evaluate the action and its consequences
+        evaluation = await self.evaluate_action_and_consequences(user_input, self.current_scene.get(user_id, ""))
+    
+        if evaluation['consequence']['type'] == 'quest_end':
+            await self.end_quest_with_support(update, context, evaluation['explanation'], evaluation['consequence']['description'])
+            return
+        
+        # Apply karma changes and consequences
+        karma_change = -10 if evaluation['is_immoral'] else 0
+        self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
+        
+        await update.message.reply_text(evaluation['explanation'])
         
         if evaluation['is_immoral']:
-            await update.message.reply_text(evaluation['explanation'])
             await update.message.reply_text(evaluation['consequence']['description'])
             
             if evaluation['consequence']['type'] == 'quest_fail':
@@ -785,14 +774,38 @@ class ZenQuest:
             elif evaluation['consequence']['type'] == 'affliction':
                 await self.apply_affliction(update, context, evaluation['consequence']['description'])
         
-        # Process user input
-        if user_input in ['1', '2'] and choices:
-            chosen_action = choices[int(user_input) - 1]
-        else:
-            # Use AI to interpret free-form input
-            chosen_action = await self.interpret_free_form_input(user_input, current_scene, choices)
+        # Continue the quest
+        await self.progress_story(update, context, user_input)
 
-        await self.progress_story(update, context, chosen_action)
+    async def end_quest_with_support(self, update: Update, context: ContextTypes.DEFAULT_TYPE, explanation: str, reason: str):
+        user_id = update.effective_user.id
+        
+        self.quest_active[user_id] = False
+        self.in_combat[user_id] = False
+
+        support_message = (
+            "Remember, this is just a game. If you're struggling with thoughts of self-harm in real life, "
+            "please reach out for help. You can contact a mental health professional or a suicide prevention "
+            "hotline for support. Your life matters."
+        )
+
+        message = f"{explanation}\n\n{reason}\n\n{support_message}"
+        
+        await update.message.reply_text(message)
+
+        # Clear quest data for this user
+        for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal', 'in_combat']:
+            getattr(self, attr).pop(user_id, None)
+
+        # End any ongoing PvP battles
+        with self.get_db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute("""
+                UPDATE pvp_battles 
+                SET status = 'completed', winner_id = NULL 
+                WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
+            """, (user_id, user_id))
+            db.commit()
 
     async def interpret_free_form_input(self, user_input: str, current_scene: str, suggested_choices: list):
         prompt = f"""
@@ -947,23 +960,35 @@ class ZenQuest:
 
 
     async def evaluate_action_and_consequences(self, action: str, current_scene: str):
+        # Check for suicide-related keywords first
+        suicide_keywords = ["suicide", "kill myself", "end my life", "take my own life"]
+        if any(keyword in action.lower() for keyword in suicide_keywords):
+            return {
+                'is_immoral': True,
+                'explanation': "Your attempt to harm yourself is a cry for help that echoes through the quest.",
+                'consequence': {
+                    'type': 'quest_end',
+                    'description': "The quest cannot continue. Your journey takes an unexpected turn toward healing and self-discovery."
+                }
+            }
         prompt = f"""
         Evaluate the following action in the context of Zen teachings and the current scene:
         Action: "{action}"
         Current scene: {current_scene}
 
-        1. Is this action against Zen principles or morally wrong? (Yes/No)
+        1. Is this action against Zen principles, morally wrong, or harmful? (Yes/No)
         2. Briefly explain the moral implications of this action. (1-2 sentences)
-        3. If the action is immoral or unethical, generate a consequence:
+        3. If the action is immoral, unethical, or harmful, generate a consequence:
         a) Describe the immediate result (2-3 sentences)
         b) Explain how it affects the player's spiritual journey
         c) Suggest one of the following outcomes:
-            - 'quest_fail': for actions that completely violate Zen principles
-            - 'combat': for actions that lead to confrontation
+            - 'quest_fail': for actions that completely violate Zen principles or cause irreversible harm
+            - 'combat': for actions that lead to confrontation or violence
             - 'affliction': for actions that result in a karmic curse or spiritual hindrance
         4. If the action is not immoral, briefly describe its impact on the quest. (1-2 sentences)
 
         Ensure the response fits within the mystical and spiritual theme of the quest.
+        Be especially attentive to actions involving harm, violence, or self-harm.
         """
 
         response = await self.generate_response(prompt, elaborate=True)
@@ -989,6 +1014,7 @@ class ZenQuest:
                 'description': consequence_description
             }
         }
+
     async def apply_affliction(self, update: Update, context: ContextTypes.DEFAULT_TYPE, affliction_description: str):
         user_id = update.effective_user.id
         
