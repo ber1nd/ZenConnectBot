@@ -33,18 +33,29 @@ rate_limit_dict = defaultdict(list)
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN")
 
 def get_db_connection():
-    try:
-        connection = mysql.connector.connect(
-            host=os.getenv("MYSQLHOST"),
-            user=os.getenv("MYSQLUSER"),
-            password=os.getenv("MYSQLPASSWORD"),
-            database=os.getenv("MYSQL_DATABASE"),
-            port=int(os.getenv("MYSQLPORT", 3306))
-        )
-        return connection
-    except Error as e:
-        logger.error(f"Error connecting to MySQL database: {e}")
-        return None
+    max_retries = 3
+    retry_delay = 1  # seconds
+
+    for attempt in range(max_retries):
+        try:
+            connection = mysql.connector.connect(
+                host=os.getenv("MYSQLHOST"),
+                user=os.getenv("MYSQLUSER"),
+                password=os.getenv("MYSQLPASSWORD"),
+                database=os.getenv("MYSQL_DATABASE"),
+                port=int(os.getenv("MYSQLPORT", 3306))
+            )
+            logger.info("Database connection established successfully.")
+            return connection
+        except mysql.connector.Error as e:
+            logger.error(f"Attempt {attempt + 1} failed: Error connecting to MySQL database: {e}")
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                logger.error("Max retries reached. Unable to establish database connection.")
+                return None
 
 def with_database_connection(func):
     @functools.wraps(func)
@@ -545,6 +556,19 @@ class ZenQuest:
         """
         return await self.generate_response(prompt, elaborate=True)
     
+    async def handle_continue_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        user_input = update.message.text.lower()
+
+        if self.quest_state.get(user_id) != "awaiting_continue":
+            return
+
+        if user_input == "yes":
+            self.quest_state[user_id] = "continuing"
+            await self.send_scene(update, context)
+        else:
+            await self.end_quest(update, context, victory=False, reason="You chose to end your journey.")
+    
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         user_id = update.effective_user.id
 
@@ -563,7 +587,8 @@ class ZenQuest:
                 self.player_karma[user_id] -= 20
 
                 if consequence['type'] == 'quest_fail':
-                    await self.end_quest(update, context, victory=False, reason=consequence['description'])
+                    await update.message.reply_text(f"{consequence['description']}\n\nDo you wish to continue? (yes/no)")
+                    self.quest_state[user_id] = "awaiting_continue"
                     return
                 elif consequence['type'] == 'combat':
                     await self.initiate_combat(update, context, opponent="spiritual guardians")
@@ -584,7 +609,8 @@ class ZenQuest:
             elif "QUEST_COMPLETE" in next_scene:
                 await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
             elif "QUEST_FAIL" in next_scene:
-                await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
+                await update.message.reply_text(f"{next_scene}\n\nDo you wish to continue? (yes/no)")
+                self.quest_state[user_id] = "awaiting_continue"
             else:
                 self.current_stage[user_id] += 1
                 await self.update_quest_state(user_id)
@@ -597,13 +623,20 @@ class ZenQuest:
 
     async def generate_next_scene(self, user_id: int, user_input: str):
         player_karma = self.player_karma.get(user_id, 100)
-        pvp_chance = 0.3 if player_karma < 30 else 0.1
+        pvp_chance = 0.05 if player_karma < 30 else 0.02  # Reduced from 0.3 and 0.1
+
+        event_type = random.choice([
+            "normal", "normal", "normal",  # Higher chance for normal events
+            "challenge", "reward", "meditation", "npc_encounter", "moral_dilemma",
+            "spiritual_trial", "natural_obstacle", "mystical_phenomenon"
+        ])
 
         if random.random() < pvp_chance:
             return "PVP_COMBAT_START"
 
-        if random.random() < 0.1:
-            return "PVP_COMBAT_START"
+        combat_chance = 0.1 if player_karma < 50 else 0.05
+        if random.random() < combat_chance:
+            return "COMBAT_START"
 
         prompt = f"""
         Previous scene: {self.current_scene[user_id]}
@@ -611,37 +644,37 @@ class ZenQuest:
         Current quest state: {self.quest_state[user_id]}
         Quest goal: {self.quest_goal[user_id]}
         Player karma: {player_karma}
+        Event type: {event_type}
 
-        Generate the next scene of the Zen-themed quest. Include:
-        1. A brief, vivid description of the new environment or changes (1-2 sentences)
-        2. The outcome of the user's action and its impact (1 sentence)
-        3. A new challenge or encounter related to Zen principles (1 sentence)
+        Generate the next scene of the Zen-themed quest based on the event type:
+        - Normal: Standard quest progression
+        - Challenge: A difficult obstacle or test of skills
+        - Reward: Discovery of a helpful item, knowledge, or ally
+        - Meditation: An opportunity for insight and character growth
+        - NPC Encounter: Meeting a character who may help or hinder the quest
+        - Moral Dilemma: A situation that tests the player's ethical choices
+        - Spiritual Trial: A metaphysical challenge testing the player's understanding of Zen principles
+        - Natural Obstacle: Environmental challenges that require creative solutions
+        - Mystical Phenomenon: Unexplainable events that add wonder and mystery to the journey
+
+        Include:
+        1. A vivid description of the new situation or environment (1-2 sentences)
+        2. The outcome of the user's previous action and its impact (1 sentence)
+        3. A new element related to the event type (1-2 sentences)
         4. Two distinct, non-repeated choices for the player (1 short sentence each)
         5. A brief Zen-like insight relevant to the situation (1 short sentence)
 
-        Possible elements to include:
-        - Discovery of quest-relevant items or clues
-        - Encounters with mentors, adversaries, or spiritual entities
-        - Natural or metaphysical obstacles
-        - Opportunities for meditation or applying Zen teachings
-        - Moral dilemmas testing adherence to Zen principles
+        Ensure the scene:
+        - Progresses the quest towards its goal
+        - Maintains a balance between physical adventure and spiritual growth
+        - Presents realistic situations for a human in a mystical setting
+        - Incorporates Zen teachings or principles subtly
 
-        If appropriate, introduce:
-        - A combat situation (indicate with 'COMBAT_START')
-        - A PvP combat situation (indicate with 'PVP_COMBAT_START')
-        - A successful quest completion (indicate with 'QUEST_COMPLETE')
-        - An unsuccessful quest ending (indicate with 'QUEST_FAIL')
+        If appropriate, consider:
+        - Introducing a combat situation (indicate with 'COMBAT_START')
+        - Ending the quest successfully (indicate with 'QUEST_COMPLETE')
+        - Ending the quest unsuccessfully (indicate with 'QUEST_FAIL')
 
-        Consider initiating combat if:
-        - The player's karma is low (current karma: {player_karma})
-        - The user's actions have been consistently aggressive or confrontational
-        - The quest narrative has built up tension or conflict
-        - There's a thematic opportunity for a spiritual or physical challenge
-        - The user hasn't experienced combat in a while and it fits the story
-
-        Ensure all situations and actions are realistic for a human character in a mystical setting.
-        The quest should progress towards its goal or end if the player's choices lead to a significant milestone or failure.
-        Maintain a balance between physical adventure and spiritual growth.
         Keep the total response under 100 words.
         """
 
@@ -1147,7 +1180,7 @@ def setup_zenquest_handlers(application):
 
 
 @with_database_connection
-async def add_zen_points(update_or_context, context_or_user_id, points):
+async def add_zen_points(update_or_context, context_or_user_id, points, db):
     if isinstance(update_or_context, Update):
         # Original case with update object
         update = update_or_context
@@ -1158,44 +1191,32 @@ async def add_zen_points(update_or_context, context_or_user_id, points):
         context = update_or_context
         user_id = context_or_user_id
 
-    db = get_db_connection()
-    if db:
-        try:
-            cursor = db.cursor()
-            cursor.execute("SELECT zen_points FROM users WHERE user_id = %s", (user_id,))
-            result = cursor.fetchone()
-            
-            if result:
-                current_points = result[0]
-                new_points = max(0, current_points + points)  # Ensure points don't go below 0
-                cursor.execute("UPDATE users SET zen_points = %s WHERE user_id = %s", (new_points, user_id))
-            else:
-                new_points = max(0, points)  # Ensure points don't go below 0
-                cursor.execute("INSERT INTO users (user_id, zen_points) VALUES (%s, %s)", (user_id, new_points))
-            
-            db.commit()
-            
-            if isinstance(update_or_context, Update):
-                await update.message.reply_text(f"Your new Zen points balance: {new_points}")
-            else:
-                await context.bot.send_message(chat_id=user_id, text=f"Your new Zen points balance: {new_points}")
+    try:
+        cursor = db.cursor()
+        cursor.execute("SELECT zen_points FROM users WHERE user_id = %s", (user_id,))
+        result = cursor.fetchone()
         
-        except mysql.connector.Error as e:
-            logger.error(f"Database error in add_zen_points: {e}")
-            if isinstance(update_or_context, Update):
-                await update.message.reply_text("An error occurred while updating your Zen points. Please try again later.")
-            else:
-                await context.bot.send_message(chat_id=user_id, text="An error occurred while updating your Zen points. Please try again later.")
-        
-        finally:
-            if db.is_connected():
-                cursor.close()
-                db.close()
-    else:
-        if isinstance(update_or_context, Update):
-            await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+        if result:
+            current_points = result[0]
+            new_points = max(0, current_points + points)  # Ensure points don't go below 0
+            cursor.execute("UPDATE users SET zen_points = %s WHERE user_id = %s", (new_points, user_id))
         else:
-            await context.bot.send_message(chat_id=user_id, text="I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
+            new_points = max(0, points)  # Ensure points don't go below 0
+            cursor.execute("INSERT INTO users (user_id, zen_points) VALUES (%s, %s)", (user_id, new_points))
+        
+        db.commit()
+        
+        if isinstance(update_or_context, Update):
+            await update.message.reply_text(f"Your new Zen points balance: {new_points}")
+        else:
+            await context.bot.send_message(chat_id=user_id, text=f"Your new Zen points balance: {new_points}")
+    
+    except mysql.connector.Error as e:
+        logger.error(f"Database error in add_zen_points: {e}")
+        if isinstance(update_or_context, Update):
+            await update.message.reply_text("An error occurred while updating your Zen points. Please try again later.")
+        else:
+            await context.bot.send_message(chat_id=user_id, text="An error occurred while updating your Zen points. Please try again later.")
 
 # PvP Functionality
 
