@@ -623,6 +623,11 @@ class ZenQuest:
 
     async def generate_next_scene(self, user_id: int, user_input: str):
         player_karma = self.player_karma.get(user_id, 100)
+        quest_state = self.quest_state.get(user_id, "beginning")
+        
+        if quest_state == "final_challenge":
+            return await self.generate_final_challenge(user_id)
+        
         pvp_chance = 0.05 if player_karma < 30 else 0.02  # Reduced from 0.3 and 0.1
 
         event_type = random.choice([
@@ -685,12 +690,69 @@ class ZenQuest:
             return "An error occurred while generating the next scene. Please try again."
 
         return next_scene
+    
+    async def generate_final_challenge(self, user_id: int):
+        quest_goal = self.quest_goal.get(user_id, "")
+        player_karma = self.player_karma.get(user_id, 100)
+
+        prompt = f"""
+        Create the final challenge scene for this Zen quest (max 150 words):
+        Quest goal: {quest_goal}
+        Player's karma: {player_karma}
+
+        Include:
+        1. A description of reaching the final destination or confronting the ultimate challenge
+        2. Two choices that will determine the quest's outcome (success or failure)
+        3. Hint at the consequences of each choice
+        4. A reflection on the journey so far
+
+        Ensure the scene:
+        - Ties back to the original quest goal
+        - Presents a meaningful moral or spiritual dilemma
+        - Offers a chance for redemption if the player's karma is low
+        - Challenges the player's understanding of Zen principles
+
+        End the scene with 'FINAL_CHOICE' to indicate this is the last decision.
+        """
+
+        final_scene = await self.generate_response(prompt, elaborate=True)
+        return final_scene + "\nFINAL_CHOICE"
+
+    async def handle_final_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE, choice: str):
+        user_id = update.effective_user.id
+        quest_goal = self.quest_goal.get(user_id, "")
+        player_karma = self.player_karma.get(user_id, 100)
+
+        prompt = f"""
+        Determine the outcome of the Zen quest based on the player's final choice:
+        Quest goal: {quest_goal}
+        Player's karma: {player_karma}
+        Player's choice: {choice}
+
+        Provide:
+        1. A brief description of the immediate result of the choice (2-3 sentences)
+        2. The overall outcome of the quest (success or failure)
+        3. A short reflection on the player's journey and growth
+
+        End with either 'QUEST_COMPLETE' for success or 'QUEST_FAIL' for failure.
+        """
+
+        outcome = await self.generate_response(prompt, elaborate=True)
+        
+        if "QUEST_COMPLETE" in outcome:
+            await self.end_quest(update, context, victory=True, reason=outcome)
+        else:
+            await self.end_quest(update, context, victory=False, reason=outcome)
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         user_input = update.message.text.lower()
 
-        if not self.quest_active.get(user_id, False) or update.message.chat.type != 'private':
+        if not self.quest_active.get(user_id, False):
+            return
+
+        if self.quest_state.get(user_id) == "final_challenge":
+            await self.handle_final_choice(update, context, user_input)
             return
 
         if self.in_combat.get(user_id, False):
@@ -986,11 +1048,20 @@ class ZenQuest:
         return description, choices
 
     async def update_quest_state(self, user_id):
-        total_stages = random.randint(20, 40)  # Random quest length between 20 and 40 stages
-        if self.current_stage[user_id] >= total_stages * 0.8:
+        total_stages = random.randint(20, 40)  # Keep the random quest length
+        current_stage = self.current_stage.get(user_id, 0)
+        player_karma = self.player_karma.get(user_id, 100)
+
+        if current_stage >= total_stages - 1:
+            self.quest_state[user_id] = "final_challenge"
+        elif current_stage >= total_stages * 0.8:
             self.quest_state[user_id] = "nearing_end"
-        elif self.current_stage[user_id] > 0:
+        elif current_stage > 0:
             self.quest_state[user_id] = "middle"
+
+        # Check for quest failure based on karma
+        if player_karma <= 10:
+            await self.end_quest(user_id=user_id, victory=False, reason="Your karma has fallen too low, and you've strayed far from the path of enlightenment.")
 
     async def generate_random_event(self, current_scene, quest_goal):
         prompt = f"""
