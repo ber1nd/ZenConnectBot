@@ -573,11 +573,6 @@ class ZenQuest:
         user_id = update.effective_user.id
 
         try:
-            # Check if the user is already in combat
-            if self.in_combat.get(user_id, False):
-                await update.message.reply_text("You are currently in combat. Please use the provided buttons to make your move or use /surrender to give up.")
-                return
-
             morality_check = await self.check_action_morality(user_input)
             
             if morality_check['is_immoral']:
@@ -586,40 +581,43 @@ class ZenQuest:
                 
                 self.player_karma[user_id] -= 20
 
-                if consequence['type'] == 'quest_fail':
-                    await update.message.reply_text(f"{consequence['description']}\n\nDo you wish to continue? (yes/no)")
-                    self.quest_state[user_id] = "awaiting_continue"
-                    return
-                elif consequence['type'] == 'combat':
+                if consequence['type'] == 'combat':
                     await self.initiate_combat(update, context, opponent="spiritual guardians")
                     return
                 elif consequence['type'] == 'affliction':
                     await self.apply_affliction(update, context, consequence['description'])
 
-            # Generate the next scene
             next_scene = await self.generate_next_scene(user_id, user_input)
             self.current_scene[user_id] = next_scene
 
             if "COMBAT_START" in next_scene:
                 await self.initiate_combat(update, context, opponent="enemy")
-                return  # Don't proceed further after initiating combat
+                return
             elif "PVP_COMBAT_START" in next_scene:
                 await self.setup_pvp_combat(update, context, "opponent")
-                return  # Don't proceed further after initiating PvP combat
+                return
             elif "QUEST_COMPLETE" in next_scene:
                 await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+                return
             elif "QUEST_FAIL" in next_scene:
-                await update.message.reply_text(f"{next_scene}\n\nDo you wish to continue? (yes/no)")
-                self.quest_state[user_id] = "awaiting_continue"
+                await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
+                return
             else:
                 self.current_stage[user_id] += 1
                 await self.update_quest_state(user_id)
                 await self.send_scene(update, context)
 
+            # Update karma based on actions and progress
+            self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + random.randint(-5, 5)))
+
+            # Check for quest failure based on karma
+            if await self.check_quest_failure(user_id):
+                await self.end_quest(update, context, victory=False, reason="Your actions have led you astray from the path of enlightenment.")
+                return
+
         except Exception as e:
             logger.error(f"Error progressing story: {e}", exc_info=True)
             await update.message.reply_text("An error occurred while processing your action. Please try again.")
-            # Don't reset the quest, just inform the user to try again
 
     async def generate_next_scene(self, user_id: int, user_input: str):
         player_karma = self.player_karma.get(user_id, 100)
@@ -627,47 +625,19 @@ class ZenQuest:
         
         if quest_state == "final_challenge":
             return await self.generate_final_challenge(user_id)
-        
-        pvp_chance = 0.05 if player_karma < 30 else 0.02  # Reduced from 0.3 and 0.1
-
-        event_type = random.choice([
-            "normal", "normal", "normal",  # Higher chance for normal events
-            "challenge", "reward", "meditation", "npc_encounter", "moral_dilemma",
-            "spiritual_trial", "natural_obstacle", "mystical_phenomenon"
-        ])
-
-        if random.random() < pvp_chance:
-            return "PVP_COMBAT_START"
-
-        combat_chance = 0.1 if player_karma < 50 else 0.05
-        if random.random() < combat_chance:
-            return "COMBAT_START"
 
         prompt = f"""
         Previous scene: {self.current_scene[user_id]}
         User's action: "{user_input}"
-        Current quest state: {self.quest_state[user_id]}
+        Current quest state: {quest_state}
         Quest goal: {self.quest_goal[user_id]}
         Player karma: {player_karma}
-        Event type: {event_type}
 
-        Generate the next scene of the Zen-themed quest based on the event type:
-        - Normal: Standard quest progression
-        - Challenge: A difficult obstacle or test of skills
-        - Reward: Discovery of a helpful item, knowledge, or ally
-        - Meditation: An opportunity for insight and character growth
-        - NPC Encounter: Meeting a character who may help or hinder the quest
-        - Moral Dilemma: A situation that tests the player's ethical choices
-        - Spiritual Trial: A metaphysical challenge testing the player's understanding of Zen principles
-        - Natural Obstacle: Environmental challenges that require creative solutions
-        - Mystical Phenomenon: Unexplainable events that add wonder and mystery to the journey
-
-        Include:
-        1. A vivid description of the new situation or environment (1-2 sentences)
-        2. The outcome of the user's previous action and its impact (1 sentence)
-        3. A new element related to the event type (1-2 sentences)
-        4. Two distinct, non-repeated choices for the player (1 short sentence each)
-        5. A brief Zen-like insight relevant to the situation (1 short sentence)
+        Generate the next scene of the Zen-themed quest:
+        1. A vivid description of the new situation (2-3 sentences)
+        2. The outcome of the user's previous action (1 sentence)
+        3. Two distinct, non-repeated choices for the player (1 short sentence each)
+        4. A brief Zen-like insight relevant to the situation (1 short sentence)
 
         Ensure the scene:
         - Progresses the quest towards its goal
@@ -675,21 +645,16 @@ class ZenQuest:
         - Presents realistic situations for a human in a mystical setting
         - Incorporates Zen teachings or principles subtly
 
-        If appropriate, consider:
-        - Introducing a combat situation (indicate with 'COMBAT_START')
-        - Ending the quest successfully (indicate with 'QUEST_COMPLETE')
-        - Ending the quest unsuccessfully (indicate with 'QUEST_FAIL')
+        If appropriate, consider including one of these markers at the end of the scene:
+        - COMBAT_START: for initiating combat
+        - PVP_COMBAT_START: for initiating PvP combat
+        - QUEST_COMPLETE: for successful quest completion
+        - QUEST_FAIL: for quest failure
 
-        Keep the total response under 100 words.
+        Keep the total response under 150 words.
         """
 
-        try:
-            next_scene = await generate_response(prompt, elaborate=True)
-        except Exception as e:
-            logger.error(f"Error generating next scene: {e}")
-            return "An error occurred while generating the next scene. Please try again."
-
-        return next_scene
+        return await self.generate_response(prompt, elaborate=True)
     
     async def generate_final_challenge(self, user_id: int):
         quest_goal = self.quest_goal.get(user_id, "")
@@ -759,6 +724,9 @@ class ZenQuest:
             await self.handle_combat_input(update, context)
             return
 
+        current_scene = self.current_scene.get(user_id, "")
+        choices = self.extract_choices(current_scene)
+
         # Check for self-damaging actions
         if any(word in user_input for word in ["hurt myself", "self-harm", "suicide", "kill myself"]):
             await update.message.reply_text("Your inner voice of wisdom prevents you from harming yourself. Choose a different action.")
@@ -772,24 +740,39 @@ class ZenQuest:
             await self.handle_failure_action(update, context)
             return
 
-        # Progress the story
-        await self.progress_story(update, context, user_input)
+        # Process user input
+        if user_input in ['1', '2'] and choices:
+            chosen_action = choices[int(user_input) - 1]
+        else:
+            # Use AI to interpret free-form input
+            chosen_action = await self.interpret_free_form_input(user_input, current_scene, choices)
 
-        # Randomly introduce failure chances
-        if random.random() < 0.05:
-            event = await self.generate_random_event(self.current_scene[user_id], self.quest_goal[user_id])
-            await self.send_split_message(update, event)
-            if "QUEST_FAIL" in event:
-                await self.end_quest(update, context, victory=False, reason="An unexpected turn of events has ended your journey.")
-                return
+        await self.progress_story(update, context, chosen_action)
 
-        # Update karma based on actions and progress
-        self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + random.randint(-5, 5)))
+    async def interpret_free_form_input(self, user_input: str, current_scene: str, suggested_choices: list):
+        prompt = f"""
+        Current scene: {current_scene}
 
-        # Check for quest failure based on karma
-        if await self.check_quest_failure(user_id):
-            await self.end_quest(update, context, victory=False, reason="Your actions have led you astray from the path of enlightenment.")
-            return
+        Suggested choices:
+        1. {suggested_choices[0] if suggested_choices else 'N/A'}
+        2. {suggested_choices[1] if suggested_choices else 'N/A'}
+
+        User's input: "{user_input}"
+
+        Based on the current scene and the user's input, interpret the action the user is trying to take.
+        If the user's input closely matches one of the suggested choices, use that.
+        Otherwise, provide a brief (1-2 sentences) interpretation of the user's intended action that fits within the context of the scene.
+
+        Interpretation:
+        """
+
+        interpretation = await self.generate_response(prompt, elaborate=False)
+        return interpretation.strip()
+
+    def extract_choices(self, scene):
+        lines = scene.split('\n')
+        choices = [line.strip()[3:] for line in lines if line.strip().startswith(('1.', '2.'))]
+        return choices if len(choices) == 2 else None
         
     async def send_split_message(self, update: Update, message: str):
         max_length = 4000  # Telegram's message limit is 4096 characters, but we'll use 4000 to be safe
@@ -1091,9 +1074,8 @@ class ZenQuest:
         # Add combat options and mechanics for NPC fights
 
 
-    async def end_quest(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, user_id: int = None, victory: bool = False, reason: str = ""):
-        if update:
-            user_id = update.effective_user.id
+    async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
+        user_id = update.effective_user.id
         
         self.quest_active[user_id] = False
         self.in_combat[user_id] = False
@@ -1101,20 +1083,12 @@ class ZenQuest:
         conclusion = await self.generate_quest_conclusion(victory, self.current_stage.get(user_id, 0))
         message = f"{reason}\n\n{conclusion}"
         
-        if update:
-            await update.message.reply_text(message)
-        elif context:
-            await context.bot.send_message(chat_id=user_id, text=message)
+        await update.message.reply_text(message)
 
         zen_points = random.randint(30, 50) if victory else -random.randint(10, 20)
         zen_message = f"You have {'earned' if victory else 'lost'} {abs(zen_points)} Zen points!"
-        
-        if update:
-            await update.message.reply_text(zen_message)
-            await add_zen_points(update, context, zen_points)
-        elif context:
-            await context.bot.send_message(chat_id=user_id, text=zen_message)
-            await add_zen_points(context, user_id, zen_points)
+        await update.message.reply_text(zen_message)
+        await add_zen_points(update, context, zen_points)
 
         # Clear quest data for this user
         for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal', 'in_combat']:
@@ -1129,7 +1103,7 @@ class ZenQuest:
                     UPDATE pvp_battles 
                     SET status = 'completed', winner_id = %s 
                     WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
-                """, (7283636452 if not victory else user_id, user_id, user_id))
+                """, (user_id if victory else None, user_id, user_id))
                 db.commit()
             finally:
                 if db.is_connected():
