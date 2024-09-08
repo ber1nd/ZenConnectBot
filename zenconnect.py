@@ -754,16 +754,19 @@ class ZenQuest:
 
         if victory:
             self.player_karma[user_id] = min(100, self.player_karma.get(user_id, 0) + 10)
-            await context.bot.send_message(chat_id=user_id, text="Your victory has increased your karma. The quest continues.")
-            
-            # Progress the story
-            next_scene = await self.generate_next_scene(user_id, "victory in combat")
-            self.current_scene[user_id] = next_scene
-            await self.send_scene(context=context, user_id=user_id)
+            karma_message = "Your victory has increased your karma."
         else:
             self.player_karma[user_id] = max(0, self.player_karma.get(user_id, 0) - 10)
-            await self.end_quest(context=context, user_id=user_id, victory=False, reason="Your defeat in battle has ended your journey prematurely.")
+            karma_message = "Your defeat has decreased your karma."
 
+        # Generate the next scene based on the battle outcome
+        battle_outcome = "victory in combat" if victory else "defeat in combat"
+        next_scene = await self.generate_next_scene(user_id, battle_outcome)
+        self.current_scene[user_id] = next_scene
+
+        # Send the karma update and new scene to the user
+        await context.bot.send_message(chat_id=user_id, text=f"{karma_message} The quest continues.")
+        await self.send_scene(context=context, user_id=user_id)
 
     async def generate_pvp_conclusion(self, victory: bool, current_scene, quest_goal):
         prompt = f"""
