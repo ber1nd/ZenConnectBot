@@ -463,6 +463,29 @@ class ZenQuest:
             "consume poison", "jump off cliff", "attack ally", "steal from temple"
         ]
     
+    async def generate_opponent(self, user_id):
+        current_scene = self.current_scene.get(user_id, "A mysterious location")
+        quest_goal = self.quest_goal.get(user_id, "An unknown quest")
+        
+        prompt = f"""
+        Based on the current scene and quest goal, generate a brief (1-2 words) description of an opponent the player might face:
+        Current scene: {current_scene}
+        Quest goal: {quest_goal}
+        
+        Possible categories:
+        - Wild animal (e.g., Wolf, Bear, Tiger)
+        - Mythical creature (e.g., Dragon, Phoenix, Unicorn)
+        - Spiritual entity (e.g., Ghost, Spirit, Demon)
+        - Human adversary (e.g., Bandit, Warrior, Sorcerer)
+        - Natural force (e.g., Storm, Earthquake, Wildfire)
+        
+        Provide a specific opponent name that fits one of these categories and the current quest context.
+        """
+        
+        opponent = await self.generate_response(prompt, elaborate=False)
+        self.current_opponent[user_id] = opponent.strip()
+        return self.current_opponent[user_id]
+
     async def generate_response(self, prompt, elaborate=False):
         return await generate_response(prompt, elaborate)
 
@@ -517,6 +540,11 @@ class ZenQuest:
         user_id = update.effective_user.id
 
         try:
+            # Check if the user is already in combat
+            if self.in_combat.get(user_id, False):
+                await update.message.reply_text("You are currently in combat. Please use the provided buttons to make your move or use /surrender to give up.")
+                return
+
             morality_check = await self.check_action_morality(user_input)
             
             if morality_check['is_immoral']:
@@ -540,8 +568,10 @@ class ZenQuest:
 
             if "COMBAT_START" in next_scene:
                 await self.initiate_combat(update, context, opponent="enemy")
+                return  # Don't proceed further after initiating combat
             elif "PVP_COMBAT_START" in next_scene:
                 await self.setup_pvp_combat(update, context, "opponent")
+                return  # Don't proceed further after initiating PvP combat
             elif "QUEST_COMPLETE" in next_scene:
                 await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
             elif "QUEST_FAIL" in next_scene:
@@ -553,8 +583,8 @@ class ZenQuest:
 
         except Exception as e:
             logger.error(f"Error progressing story: {e}", exc_info=True)
-            await update.message.reply_text("An error occurred while processing your action. Your quest has been reset. Please start a new quest with /zenquest.")
-            self.quest_active[user_id] = False
+            await update.message.reply_text("An error occurred while processing your action. Please try again.")
+            # Don't reset the quest, just inform the user to try again
 
     async def generate_next_scene(self, user_id: int, user_input: str):
         player_karma = self.player_karma.get(user_id, 100)
@@ -622,10 +652,8 @@ class ZenQuest:
             return
 
         if self.in_combat.get(user_id, False):
-            if user_input == '/surrender':
-                await self.surrender(update, context)
-            else:
-                await update.message.reply_text("You are currently in combat. Please use the provided buttons to make your move or use /surrender to give up.")
+            # Handle combat input separately
+            await self.handle_combat_input(update, context)
             return
 
         # Check for self-damaging actions
@@ -1199,7 +1227,9 @@ async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
         opponent_id = None
         if opponent_username == 'bot':
             opponent_id = 7283636452  # Bot's ID
-            context.user_data['opponent_name'] = "Bot"
+            ai_enemy_name = await zen_quest.generate_opponent(user_id)
+            context.user_data['ai_enemy_name'] = ai_enemy_name
+            context.user_data['opponent_name'] = ai_enemy_name
         else:
             cursor.execute("SELECT user_id, first_name FROM users WHERE username = %s", (opponent_username,))
             result = cursor.fetchone()
@@ -2060,8 +2090,12 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
         opponent_id = battle[f'{opponent_key}_id']
         
         # Determine player and opponent names consistently
-        player_name = "Bot" if bot_mode else update.effective_user.first_name
-        opponent_name = "Bot" if opponent_id == 7283636452 else context.user_data.get(f'{opponent_key}_name', "Opponent")
+        if bot_mode:
+            player_name = context.user_data.get('ai_enemy_name', "Zen Opponent")
+            opponent_name = update.effective_user.first_name or "Player"
+        else:
+            player_name = update.effective_user.first_name or "Player"
+            opponent_name = context.user_data.get('ai_enemy_name', "Zen Opponent") if opponent_id == 7283636452 else context.user_data.get(f'{opponent_key}_name', "Opponent")
 
         result = await perform_action(
             action, user_hp, opponent_hp, user_energy, context.user_data.get(f'{player_key}_next_turn_synergy', {}),
@@ -2188,7 +2222,8 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bot_energy = context.user_data.get('challenger_energy' if battle['challenger_id'] == 7283636452 else 'opponent_energy', 50)
 
             prompt = f"""
-            You are a Zen warrior AI engaged in a strategic duel. Your goal is to win decisively by reducing your opponent's HP to 0 while keeping your HP above 0.
+            You are a Zen warrior AI engaged in a strategic duel as {context.user_data.get('ai_enemy_name', "Zen Opponent")}. 
+            Your goal is to win decisively by reducing your opponent's HP to 0 while keeping your HP above 0.
 
             Current situation:
             - Your HP: {bot_hp}/100
