@@ -463,6 +463,7 @@ class ZenQuest:
         self.in_combat = {}
         self.quest_state = {}
         self.quest_goal = {}
+        self.player_afflictions = {}
         self.player_karma = {}
         self.unfeasible_actions = [
             "fly", "teleport", "time travel", "breathe underwater", "become invisible",
@@ -833,30 +834,24 @@ class ZenQuest:
         user_id = update.effective_user.id
         opponent_id = 7283636452  # Bot's ID for PvP simulation
 
-        db = get_db_connection()
-        if db:
-            try:
-                cursor = db.cursor(dictionary=True)
-                cursor.execute("""
-                    INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
-                    VALUES (%s, %s, %s, %s, 'in_progress')
-                """, (user_id, opponent_id, update.effective_chat.id, user_id))
-                db.commit()
+        with self.get_db_connection() as db:
+            cursor = db.cursor(dictionary=True)
+            cursor.execute("""
+                INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status)
+                VALUES (%s, %s, %s, %s, 'in_progress')
+            """, (user_id, opponent_id, update.effective_chat.id, user_id))
+            db.commit()
 
-                context.user_data['challenger_energy'] = 50
-                context.user_data['opponent_energy'] = 50
+        context.user_data['challenger_energy'] = 50
+        context.user_data['opponent_energy'] = 50
 
-                await update.message.reply_text(f"{battle_context}\n\nYou enter into combat with {opponent}. Prepare for a spiritual battle!")
-                await send_game_rules(context, user_id, opponent_id)
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="Choose your move:",
-                    reply_markup=generate_pvp_move_buttons(user_id)
-                )
-            finally:
-                if db.is_connected():
-                    cursor.close()
-                    db.close()
+        await update.message.reply_text(f"{battle_context}\n\nYou enter into combat with {opponent}. Prepare for a spiritual battle!")
+        await send_game_rules(context, user_id, opponent_id)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="Choose your move:",
+            reply_markup=generate_pvp_move_buttons(user_id)
+        )
 
     async def end_pvp_battle(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, battle_id: int):
         self.in_combat[user_id] = False
@@ -864,40 +859,35 @@ class ZenQuest:
         # Generate battle conclusion
         conclusion = await self.generate_pvp_conclusion(victory, self.current_scene.get(user_id, ""), self.quest_goal.get(user_id, ""))
         
-        # Fetch the battle data to get the group_id and opponent_id
-        db = get_db_connection()
-        if db:
-            try:
-                cursor = db.cursor(dictionary=True)
-                cursor.execute("SELECT group_id, challenger_id, opponent_id FROM pvp_battles WHERE id = %s", (battle_id,))
-                battle_data = cursor.fetchone()
-                if battle_data:
-                    group_id = battle_data['group_id']
-                    opponent_id = battle_data['opponent_id'] if battle_data['challenger_id'] == user_id else battle_data['challenger_id']
-                    
-                    # Send conclusion to the group chat
-                    await context.bot.send_message(chat_id=group_id, text=conclusion)
-                    
-                    # If the opponent is not the bot, send them a message too
-                    if opponent_id != 7283636452:
-                        await context.bot.send_message(chat_id=opponent_id, text=conclusion)
-                else:
-                    logger.error(f"No battle data found for battle_id: {battle_id}")
-                    # Send conclusion to user if group_id is not found
-                    await context.bot.send_message(chat_id=user_id, text=conclusion)
-            except Exception as e:
-                logger.error(f"Database error in end_pvp_battle: {e}")
-                # Send conclusion to user if there's a database error
+        # Fetch the battle data and update status
+        with self.get_db_connection() as db:
+            cursor = db.cursor(dictionary=True)
+            cursor.execute("SELECT group_id, challenger_id, opponent_id FROM pvp_battles WHERE id = %s", (battle_id,))
+            battle_data = cursor.fetchone()
+            
+            if battle_data:
+                group_id = battle_data['group_id']
+                opponent_id = battle_data['opponent_id'] if battle_data['challenger_id'] == user_id else battle_data['challenger_id']
+                
+                # Send conclusion to the group chat
+                await context.bot.send_message(chat_id=group_id, text=conclusion)
+                
+                # If the opponent is not the bot, send them a message too
+                if opponent_id != 7283636452:
+                    await context.bot.send_message(chat_id=opponent_id, text=conclusion)
+                
+                # Update PvP battle status
+                cursor.execute("""
+                    UPDATE pvp_battles 
+                    SET status = 'completed', winner_id = %s 
+                    WHERE id = %s
+                """, (user_id if victory else None, battle_id))
+                db.commit()
+            else:
+                logger.error(f"No battle data found for battle_id: {battle_id}")
                 await context.bot.send_message(chat_id=user_id, text=conclusion)
-            finally:
-                if db.is_connected():
-                    cursor.close()
-                    db.close()
-        else:
-            # Send conclusion to user if database connection fails
-            await context.bot.send_message(chat_id=user_id, text=conclusion)
 
-        # Update karma only for human players
+        # Update karma and continue quest (only for human players)
         if user_id != 7283636452:
             if victory:
                 self.player_karma[user_id] = min(100, self.player_karma.get(user_id, 0) + 10)
@@ -914,24 +904,6 @@ class ZenQuest:
             # Send the karma update and new scene to the user
             await context.bot.send_message(chat_id=user_id, text=f"{karma_message} The quest continues.")
             await self.send_scene(context=context, user_id=user_id)
-
-        # Update PvP battle status in the database
-        db = get_db_connection()
-        if db:
-            try:
-                cursor = db.cursor()
-                cursor.execute("""
-                    UPDATE pvp_battles 
-                    SET status = 'completed', winner_id = %s 
-                    WHERE id = %s
-                """, (user_id if victory else None, battle_id))
-                db.commit()
-            except Exception as e:
-                logger.error(f"Database error updating PvP battle status: {e}")
-            finally:
-                if db.is_connected():
-                    cursor.close()
-                    db.close()
 
     async def generate_pvp_conclusion(self, victory: bool, current_scene, quest_goal):
         prompt = f"""
@@ -1123,20 +1095,14 @@ class ZenQuest:
             getattr(self, attr).pop(user_id, None)
 
         # End any ongoing PvP battles
-        db = get_db_connection()
-        if db:
-            try:
-                cursor = db.cursor()
-                cursor.execute("""
-                    UPDATE pvp_battles 
-                    SET status = 'completed', winner_id = %s 
-                    WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
-                """, (user_id if victory else None, user_id, user_id))
-                db.commit()
-            finally:
-                if db.is_connected():
-                    cursor.close()
-                    db.close()
+        with self.get_db_connection() as db:
+            cursor = db.cursor()
+            cursor.execute("""
+                UPDATE pvp_battles 
+                SET status = 'completed', winner_id = %s 
+                WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
+            """, (user_id if victory else None, user_id, user_id))
+            db.commit()
 
     def remove_technical_markers(self, text: str) -> str:
         """Remove technical markers from the text."""
