@@ -1104,7 +1104,7 @@ class ZenQuest:
             """, (user_id if victory else None, user_id, user_id))
             db.commit()
 
-    def remove_technical_markers(self, text: str) -> str:
+    def remove_technical_markers(text: str) -> str:
         """Remove technical markers from the text."""
         markers = ["QUEST_COMPLETE", "QUEST_FAIL", "COMBAT_START", "PVP_COMBAT_START"]
         for marker in markers:
