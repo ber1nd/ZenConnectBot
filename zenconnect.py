@@ -1080,7 +1080,14 @@ class ZenQuest:
         self.quest_active[user_id] = False
         self.in_combat[user_id] = False
 
+        # Remove technical markers from the reason
+        reason = self.remove_technical_markers(reason)
+
         conclusion = await self.generate_quest_conclusion(victory, self.current_stage.get(user_id, 0))
+        
+        # Ensure the conclusion doesn't contain technical markers
+        conclusion = self.remove_technical_markers(conclusion)
+
         message = f"{reason}\n\n{conclusion}"
         
         await update.message.reply_text(message)
@@ -1110,6 +1117,13 @@ class ZenQuest:
                     cursor.close()
                     db.close()
 
+    def remove_technical_markers(self, text: str) -> str:
+        """Remove technical markers from the text."""
+        markers = ["QUEST_COMPLETE", "QUEST_FAIL", "COMBAT_START", "PVP_COMBAT_START"]
+        for marker in markers:
+            text = text.replace(marker, "").strip()
+        return text
+
     async def generate_quest_conclusion(self, victory: bool, stage: int):
         prompt = f"""
         Generate a brief, zen-like conclusion for a {'successful' if victory else 'failed'} quest that ended at stage {stage}.
@@ -1118,8 +1132,10 @@ class ZenQuest:
         2. A subtle zen teaching or insight gained
         3. {'Encouragement for future quests' if victory else 'Gentle encouragement to try again'}
         Keep it concise, around 3-4 sentences.
+        Do not include any technical markers or labels in the conclusion.
         """
-        return await generate_response(prompt)
+        conclusion = await self.generate_response(prompt)
+        return self.remove_technical_markers(conclusion)  # Extra safeguard
 
     async def interrupt_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
