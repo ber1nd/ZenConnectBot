@@ -734,9 +734,13 @@ class ZenQuest:
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
-        user_input = update.message.text.lower()
+        user_input = update.message.text.lower() if update.message.text else ""
 
         if not self.quest_active.get(user_id, False):
+            return
+
+        if not user_input:
+            await update.message.reply_text("I couldn't understand that. Could you please try again?")
             return
 
         if self.quest_state.get(user_id) == "final_choice":
@@ -750,29 +754,27 @@ class ZenQuest:
         current_scene = self.current_scene.get(user_id, "")
         
         # Evaluate the action and its consequences
-        evaluation = await self.evaluate_action_and_consequences(user_input, self.current_scene.get(user_id, ""))
-    
-        if evaluation['consequence']['type'] == 'quest_end':
-            await self.end_quest_with_support(update, context, evaluation['explanation'], evaluation['consequence']['description'])
-            return
+        evaluation = await self.evaluate_action_and_consequences(user_input, current_scene)
         
         # Apply karma changes and consequences
         karma_change = -10 if evaluation['is_immoral'] else 0
         self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
         
-        await update.message.reply_text(evaluation['explanation'])
+        if evaluation.get('explanation'):
+            await update.message.reply_text(evaluation['explanation'])
         
         if evaluation['is_immoral']:
-            await update.message.reply_text(evaluation['consequence']['description'])
+            if evaluation['consequence'].get('description'):
+                await update.message.reply_text(evaluation['consequence']['description'])
             
             if evaluation['consequence']['type'] == 'quest_fail':
-                await self.end_quest(update, context, victory=False, reason=evaluation['consequence']['description'])
+                await self.end_quest(update, context, victory=False, reason=evaluation['consequence'].get('description', "Your journey has come to an end."))
                 return
             elif evaluation['consequence']['type'] == 'combat':
                 await self.initiate_combat(update, context, opponent="spiritual guardians")
                 return
             elif evaluation['consequence']['type'] == 'affliction':
-                await self.apply_affliction(update, context, evaluation['consequence']['description'])
+                await self.apply_affliction(update, context, evaluation['consequence'].get('description', "You've been afflicted by your actions."))
         
         # Continue the quest
         await self.progress_story(update, context, user_input)
@@ -960,17 +962,6 @@ class ZenQuest:
 
 
     async def evaluate_action_and_consequences(self, action: str, current_scene: str):
-        # Check for suicide-related keywords first
-        suicide_keywords = ["suicide", "kill myself", "end my life", "take my own life"]
-        if any(keyword in action.lower() for keyword in suicide_keywords):
-            return {
-                'is_immoral': True,
-                'explanation': "Your attempt to harm yourself is a cry for help that echoes through the quest.",
-                'consequence': {
-                    'type': 'quest_end',
-                    'description': "The quest cannot continue. Your journey takes an unexpected turn toward healing and self-discovery."
-                }
-            }
         prompt = f"""
         Evaluate the following action in the context of Zen teachings and the current scene:
         Action: "{action}"
@@ -996,14 +987,14 @@ class ZenQuest:
         # Parse the response
         lines = response.split('\n')
         is_immoral = lines[0].lower().startswith('yes')
-        explanation = lines[1]
+        explanation = lines[1] if len(lines) > 1 else "Your action has consequences."
         
         if is_immoral:
-            consequence_description = '\n'.join(lines[2:])
+            consequence_description = '\n'.join(lines[2:]) if len(lines) > 2 else "Your action has negative consequences."
             consequence_type = 'quest_fail' if 'quest_fail' in consequence_description.lower() else \
                             'combat' if 'combat' in consequence_description.lower() else 'affliction'
         else:
-            consequence_description = lines[2] if len(lines) > 2 else "The action proceeds without significant moral implications."
+            consequence_description = lines[2] if len(lines) > 2 else "Your action moves the quest forward."
             consequence_type = 'neutral'
 
         return {
