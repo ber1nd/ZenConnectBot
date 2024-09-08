@@ -745,13 +745,21 @@ class ZenQuest:
                     await context.bot.send_message(chat_id=group_id, text=conclusion)
                 else:
                     logger.error(f"No battle data found for battle_id: {battle_id}")
+                    # Send conclusion to user if group_id is not found
+                    await context.bot.send_message(chat_id=user_id, text=conclusion)
             except Exception as e:
                 logger.error(f"Database error in end_pvp_battle: {e}")
+                # Send conclusion to user if there's a database error
+                await context.bot.send_message(chat_id=user_id, text=conclusion)
             finally:
                 if db.is_connected():
                     cursor.close()
                     db.close()
+        else:
+            # Send conclusion to user if database connection fails
+            await context.bot.send_message(chat_id=user_id, text=conclusion)
 
+        # Update karma
         if victory:
             self.player_karma[user_id] = min(100, self.player_karma.get(user_id, 0) + 10)
             karma_message = "Your victory has increased your karma."
@@ -768,6 +776,23 @@ class ZenQuest:
         await context.bot.send_message(chat_id=user_id, text=f"{karma_message} The quest continues.")
         await self.send_scene(context=context, user_id=user_id)
 
+        # Update PvP battle status in the database
+        db = get_db_connection()
+        if db:
+            try:
+                cursor = db.cursor()
+                cursor.execute("""
+                    UPDATE pvp_battles 
+                    SET status = 'completed', winner_id = %s 
+                    WHERE id = %s
+                """, (user_id if victory else None, battle_id))
+                db.commit()
+            except Exception as e:
+                logger.error(f"Database error updating PvP battle status: {e}")
+            finally:
+                if db.is_connected():
+                    cursor.close()
+                    db.close()
     async def generate_pvp_conclusion(self, victory: bool, current_scene, quest_goal):
         prompt = f"""
         Generate a brief conclusion (3-4 sentences) for a {'victorious' if victory else 'lost'} PvP battle:
