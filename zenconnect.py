@@ -463,6 +463,15 @@ class ZenQuest:
             "consume poison", "jump off cliff", "attack ally", "steal from temple"
         ]
     
+    async def handle_combat_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        user_input = update.message.text.lower()
+
+        if user_input == '/surrender':
+            await self.surrender(update, context)
+        else:
+            await update.message.reply_text("You are currently in combat. Please use the provided buttons to make your move or use /surrender to give up.")
+
     async def generate_opponent(self, user_id):
         current_scene = self.current_scene.get(user_id, "A mysterious location")
         quest_goal = self.quest_goal.get(user_id, "An unknown quest")
@@ -652,7 +661,6 @@ class ZenQuest:
             return
 
         if self.in_combat.get(user_id, False):
-            # Handle combat input separately
             await self.handle_combat_input(update, context)
             return
 
@@ -761,16 +769,23 @@ class ZenQuest:
         # Generate battle conclusion
         conclusion = await self.generate_pvp_conclusion(victory, self.current_scene.get(user_id, ""), self.quest_goal.get(user_id, ""))
         
-        # Fetch the battle data to get the group_id
+        # Fetch the battle data to get the group_id and opponent_id
         db = get_db_connection()
         if db:
             try:
                 cursor = db.cursor(dictionary=True)
-                cursor.execute("SELECT group_id FROM pvp_battles WHERE id = %s", (battle_id,))
+                cursor.execute("SELECT group_id, challenger_id, opponent_id FROM pvp_battles WHERE id = %s", (battle_id,))
                 battle_data = cursor.fetchone()
                 if battle_data:
                     group_id = battle_data['group_id']
+                    opponent_id = battle_data['opponent_id'] if battle_data['challenger_id'] == user_id else battle_data['challenger_id']
+                    
+                    # Send conclusion to the group chat
                     await context.bot.send_message(chat_id=group_id, text=conclusion)
+                    
+                    # If the opponent is not the bot, send them a message too
+                    if opponent_id != 7283636452:
+                        await context.bot.send_message(chat_id=opponent_id, text=conclusion)
                 else:
                     logger.error(f"No battle data found for battle_id: {battle_id}")
                     # Send conclusion to user if group_id is not found
@@ -787,22 +802,23 @@ class ZenQuest:
             # Send conclusion to user if database connection fails
             await context.bot.send_message(chat_id=user_id, text=conclusion)
 
-        # Update karma
-        if victory:
-            self.player_karma[user_id] = min(100, self.player_karma.get(user_id, 0) + 10)
-            karma_message = "Your victory has increased your karma."
-        else:
-            self.player_karma[user_id] = max(0, self.player_karma.get(user_id, 0) - 10)
-            karma_message = "Your defeat has decreased your karma."
+        # Update karma only for human players
+        if user_id != 7283636452:
+            if victory:
+                self.player_karma[user_id] = min(100, self.player_karma.get(user_id, 0) + 10)
+                karma_message = "Your victory has increased your karma."
+            else:
+                self.player_karma[user_id] = max(0, self.player_karma.get(user_id, 0) - 10)
+                karma_message = "Your defeat has decreased your karma."
 
-        # Generate the next scene based on the battle outcome
-        battle_outcome = "victory in combat" if victory else "defeat in combat"
-        next_scene = await self.generate_next_scene(user_id, battle_outcome)
-        self.current_scene[user_id] = next_scene
+            # Generate the next scene based on the battle outcome
+            battle_outcome = "victory in combat" if victory else "defeat in combat"
+            next_scene = await self.generate_next_scene(user_id, battle_outcome)
+            self.current_scene[user_id] = next_scene
 
-        # Send the karma update and new scene to the user
-        await context.bot.send_message(chat_id=user_id, text=f"{karma_message} The quest continues.")
-        await self.send_scene(context=context, user_id=user_id)
+            # Send the karma update and new scene to the user
+            await context.bot.send_message(chat_id=user_id, text=f"{karma_message} The quest continues.")
+            await self.send_scene(context=context, user_id=user_id)
 
         # Update PvP battle status in the database
         db = get_db_connection()
@@ -821,6 +837,7 @@ class ZenQuest:
                 if db.is_connected():
                     cursor.close()
                     db.close()
+
     async def generate_pvp_conclusion(self, victory: bool, current_scene, quest_goal):
         prompt = f"""
         Generate a brief conclusion (3-4 sentences) for a {'victorious' if victory else 'lost'} PvP battle:
