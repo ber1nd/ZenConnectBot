@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import os
 import asyncio
 import sys
@@ -568,25 +569,12 @@ class ZenQuest:
             await self.send_scene(update, context)
         else:
             await self.end_quest(update, context, victory=False, reason="You chose to end your journey.")
-    
+
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         user_id = update.effective_user.id
 
         try:
-            morality_check = await self.check_action_morality(user_input)
-            
-            if morality_check['is_immoral']:
-                consequence = await self.generate_severe_consequence(morality_check['reason'], self.current_scene[user_id])
-                await update.message.reply_text(consequence['description'])
-                
-                self.player_karma[user_id] -= 20
-
-                if consequence['type'] == 'combat':
-                    await self.initiate_combat(update, context, opponent="spiritual guardians")
-                    return
-                elif consequence['type'] == 'affliction':
-                    await self.apply_affliction(update, context, consequence['description'])
-
+            # Generate the next scene
             next_scene = await self.generate_next_scene(user_id, user_input)
             self.current_scene[user_id] = next_scene
 
@@ -608,12 +596,21 @@ class ZenQuest:
                 await self.send_scene(update, context)
 
             # Update karma based on actions and progress
-            self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + random.randint(-5, 5)))
+            karma_change = random.randint(-5, 5)
+            self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
 
             # Check for quest failure based on karma
             if await self.check_quest_failure(user_id):
                 await self.end_quest(update, context, victory=False, reason="Your actions have led you astray from the path of enlightenment.")
                 return
+
+            # Randomly introduce failure chances
+            if random.random() < 0.05:
+                event = await self.generate_random_event(self.current_scene[user_id], self.quest_goal[user_id])
+                await self.send_split_message(update, event)
+                if "QUEST_FAIL" in event:
+                    await self.end_quest(update, context, victory=False, reason="An unexpected turn of events has ended your journey.")
+                    return
 
         except Exception as e:
             logger.error(f"Error progressing story: {e}", exc_info=True)
@@ -622,6 +619,7 @@ class ZenQuest:
     async def generate_next_scene(self, user_id: int, user_input: str):
         player_karma = self.player_karma.get(user_id, 100)
         quest_state = self.quest_state.get(user_id, "beginning")
+        afflictions = self.player_afflictions.get(user_id, [])
         
         if quest_state == "final_challenge":
             return await self.generate_final_challenge(user_id)
@@ -632,12 +630,14 @@ class ZenQuest:
         Current quest state: {quest_state}
         Quest goal: {self.quest_goal[user_id]}
         Player karma: {player_karma}
+        Active afflictions: {', '.join([aff['affliction'] for aff in afflictions])}
 
         Generate the next scene of the Zen-themed quest:
         1. A vivid description of the new situation (2-3 sentences)
         2. The outcome of the user's previous action (1 sentence)
         3. Two distinct, non-repeated choices for the player (1 short sentence each)
         4. A brief Zen-like insight relevant to the situation (1 short sentence)
+        5. If applicable, incorporate the effects of any active afflictions
 
         Ensure the scene:
         - Progresses the quest towards its goal
@@ -655,6 +655,20 @@ class ZenQuest:
         """
 
         return await self.generate_response(prompt, elaborate=True)
+
+    # Update other methods to consistently use self.generate_response
+    async def generate_response(self, prompt, elaborate=False):
+        return await generate_response(prompt, elaborate)
+
+    # Optimize database connections using context manager
+    @contextmanager
+    def get_db_connection(self):
+        db = get_db_connection()
+        try:
+            yield db
+        finally:
+            if db and db.is_connected():
+                db.close()
     
     async def generate_final_challenge(self, user_id: int):
         quest_goal = self.quest_goal.get(user_id, "")
@@ -727,19 +741,22 @@ class ZenQuest:
         current_scene = self.current_scene.get(user_id, "")
         choices = self.extract_choices(current_scene)
 
-        # Check for self-damaging actions
-        if any(word in user_input for word in ["hurt myself", "self-harm", "suicide", "kill myself"]):
-            await update.message.reply_text("Your inner voice of wisdom prevents you from harming yourself. Choose a different action.")
-            return
-
-        # Handle unfeasible actions and failure actions
-        if self.is_action_unfeasible(user_input):
-            await self.handle_unfeasible_action(update, context)
-            return
-        elif self.is_action_failure(user_input):
-            await self.handle_failure_action(update, context)
-            return
-
+        # Use evaluate_action_and_consequences for all actions
+        evaluation = await self.evaluate_action_and_consequences(user_input, current_scene)
+        
+        if evaluation['is_immoral']:
+            await update.message.reply_text(evaluation['explanation'])
+            await update.message.reply_text(evaluation['consequence']['description'])
+            
+            if evaluation['consequence']['type'] == 'quest_fail':
+                await self.end_quest(update, context, victory=False, reason=evaluation['consequence']['description'])
+                return
+            elif evaluation['consequence']['type'] == 'combat':
+                await self.initiate_combat(update, context, opponent="spiritual guardians")
+                return
+            elif evaluation['consequence']['type'] == 'affliction':
+                await self.apply_affliction(update, context, evaluation['consequence']['description'])
+        
         # Process user input
         if user_input in ['1', '2'] and choices:
             chosen_action = choices[int(user_input) - 1]
@@ -930,73 +947,77 @@ class ZenQuest:
         return await self.generate_response(prompt, elaborate=False)
 
 
-    async def apply_karma_consequence(self, update: Update, context: ContextTypes.DEFAULT_TYPE, reason: str):
-        user_id = update.effective_user.id
-        current_scene = self.current_scene.get(user_id, "")
-
-        # Determine the consequence based on the player's location
-        if "village" in current_scene.lower():
-            consequence = "You have been caught by the village guards and thrown into jail for your misdeeds."
-            self.quest_state[user_id] = "jailed"
-        elif "forest" in current_scene.lower():
-            consequence = "Angry spirits attack you as punishment for your reckless actions."
-            await self.initiate_combat(update, context, opponent="spirits")
-            return  # Exit early as combat is initiated
-        else:
-            consequence = "You feel the weight of your actions, and your karma worsens."
-
-        # Send the consequence message and end the quest if necessary
-        await self.send_split_message(update, consequence)
-    
-        # If jailed, end the quest or handle accordingly
-        if self.quest_state[user_id] == "jailed":
-            await self.end_quest(update, context, victory=False, reason=consequence)
-    
-            await self.end_quest(update, context, victory=False, reason="You lost the PvP battle.")
-
-    async def check_action_morality(self, action):
+    async def evaluate_action_and_consequences(self, action: str, current_scene: str):
         prompt = f"""
-        Evaluate the following action in the context of Zen teachings and general morality:
-        "{action}"
-        Is this action against Zen principles or morally wrong? Respond with 'Yes' or 'No' and provide a brief explanation.
-        Consider not just violence, but also actions that promote greed, hatred, or delusion.
-        """
-        response = await generate_response(prompt)
-        is_immoral = response.lower().startswith("yes")
-        reason = response.split(":", 1)[1].strip() if ":" in response else response
-        return {"is_immoral": is_immoral, "reason": reason}
-
-    async def generate_severe_consequence(self, reason, current_scene):
-        prompt = f"""
-        The player has committed a severely immoral or unethical act: {reason}
+        Evaluate the following action in the context of Zen teachings, general morality, and the current scene:
+        Action: "{action}"
         Current scene: {current_scene}
 
-        Generate a severe consequence for this action. It should be one of:
-        1. Immediate quest failure due to a complete violation of Zen principles
-        2. Confrontation with powerful spiritual guardians leading to combat
-        3. A karmic curse or spiritual affliction that greatly hinders the player's progress
+        1. Is this action against Zen principles or morally wrong? (Yes/No)
+        2. Briefly explain the moral implications of this action. (1-2 sentences)
+        3. If the action is immoral or unethical, generate a consequence:
+           a) Describe the immediate result (2-3 sentences)
+           b) Explain how it affects the player's spiritual journey
+           c) Suggest one of the following outcomes:
+              - 'quest_fail': for actions that completely violate Zen principles
+              - 'combat': for actions that lead to confrontation with spiritual guardians
+              - 'affliction': for actions that result in a karmic curse or spiritual hindrance
+        4. If the action is not immoral, briefly describe its impact on the quest. (1-2 sentences)
 
-        Provide a vivid description of the consequence (3-4 sentences) and specify the type ('quest_fail', 'combat', or 'affliction').
-        The consequence should be severe and directly tied to the player's action, emphasizing the importance of moral choices in the quest.
-        It should also fit within the mystical and spiritual theme of the quest.
+        Ensure the response fits within the mystical and spiritual theme of the quest.
         """
-        response = await generate_response(prompt)
-        if "quest_fail" in response.lower():
-            type = "quest_fail"
-        elif "combat" in response.lower():
-            type = "combat"
-        else:
-            type = "affliction"
-        return {"type": type, "description": response}
 
-    async def apply_affliction(self, update: Update, context: ContextTypes.DEFAULT_TYPE, affliction_description):
+        response = await self.generate_response(prompt, elaborate=True)
+        
+        # Parse the response
+        lines = response.split('\n')
+        is_immoral = lines[0].lower().startswith('yes')
+        explanation = lines[1]
+        
+        if is_immoral:
+            consequence_description = '\n'.join(lines[2:])
+            consequence_type = 'quest_fail' if 'quest_fail' in consequence_description.lower() else \
+                               'combat' if 'combat' in consequence_description.lower() else 'affliction'
+        else:
+            consequence_description = lines[2] if len(lines) > 2 else "The action proceeds without significant moral implications."
+            consequence_type = 'neutral'
+
+        return {
+            'is_immoral': is_immoral,
+            'explanation': explanation,
+            'consequence': {
+                'type': consequence_type,
+                'description': consequence_description
+            }
+        }
+
+    async def apply_affliction(self, update: Update, context: ContextTypes.DEFAULT_TYPE, affliction_description: str):
         user_id = update.effective_user.id
-        self.player_karma[user_id] -= 10
-    
+        
         # Generate a shorter, non-repetitive affliction message
-        short_affliction = await generate_response(f"Summarize this affliction in one brief sentence: {affliction_description}")
-    
-        await self.send_split_message(update, f"You have been afflicted: {short_affliction}")
+        short_affliction = await self.generate_response(f"Summarize this affliction in one brief, impactful sentence: {affliction_description}")
+        
+        # Apply karma penalty
+        karma_loss = random.randint(5, 15)  # Random karma loss between 5 and 15
+        self.player_karma[user_id] = max(0, self.player_karma[user_id] - karma_loss)
+        
+        # Generate affliction effects
+        effects_prompt = f"""
+        Based on the affliction: "{short_affliction}"
+        Generate 1-2 specific effects this affliction has on the player's quest. These could include:
+        - Temporary stat reductions
+        - Challenges in future interactions
+        - Hints at future obstacles related to this affliction
+        Keep each effect brief (1 sentence each).
+        """
+        affliction_effects = await self.generate_response(effects_prompt)
+        
+        message = f"You have been afflicted: {short_affliction}\n\nEffects:\n{affliction_effects}\n\nYour karma has decreased by {karma_loss}."
+        await self.send_split_message(update, message)
+        
+        # Store affliction for future reference
+        self.player_afflictions = self.player_afflictions.get(user_id, [])
+        self.player_afflictions[user_id].append({"affliction": short_affliction, "effects": affliction_effects})
     # Implement additional affliction effects here
 
     async def send_scene(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, user_id: int = None):
