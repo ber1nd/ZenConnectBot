@@ -611,7 +611,9 @@ class ZenQuest:
                 await self.end_quest(update, context, victory=False, reason="Your journey has come to an unfortunate end.")
                 return
             else:
-                self.current_stage[user_id] += 1
+                self.current_stage[user_id] = self.current_stage.get(user_id, 0) + 1
+                progress_message = f"Stage {self.current_stage[user_id]} of your journey:"
+                await update.message.reply_text(progress_message)
                 await self.update_quest_state(user_id)
                 await self.send_scene(update, context)
 
@@ -648,15 +650,16 @@ class ZenQuest:
         player_karma = self.player_karma.get(user_id, 100)
         quest_state = self.quest_state.get(user_id, "beginning")
         afflictions = self.player_afflictions.get(user_id, [])
+        current_scene = self.current_scene.get(user_id, "You find yourself in a mysterious place.")
         
         if quest_state == "final_challenge":
             return await self.generate_final_challenge(user_id)
 
         prompt = f"""
-        Previous scene: {self.current_scene[user_id]}
+        Previous scene: {current_scene}
         User's action: "{user_input}"
         Current quest state: {quest_state}
-        Quest goal: {self.quest_goal[user_id]}
+        Quest goal: {self.quest_goal.get(user_id, 'Unknown')}
         Player karma: {player_karma}
         Active afflictions: {', '.join([aff['affliction'] for aff in afflictions])}
 
@@ -1310,7 +1313,7 @@ def setup_zenquest_handlers(application):
 
 
 @with_database_connection
-async def add_zen_points(update_or_context, context_or_user_id, points, db):
+async def add_zen_points(update_or_context, context_or_user_id, points, db=None):
     if isinstance(update_or_context, Update):
         # Original case with update object
         update = update_or_context
