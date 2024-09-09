@@ -673,11 +673,11 @@ class ZenQuest:
         - Presents realistic situations for a human in a mystical setting
         - Incorporates Zen teachings or principles subtly
 
-        If appropriate, consider including one of these markers at the end of the scene:
-        - COMBAT_START: for initiating combat
-        - PVP_COMBAT_START: for initiating PvP combat
+        If the player's actions or the current situation warrants it, consider including one of these outcomes:
+        - COMBAT_START: for initiating combat with an NPC
+        - PVP_COMBAT_START: for initiating a meaningful PvP encounter that fits the narrative
         - QUEST_COMPLETE: for successful quest completion
-        - QUEST_FAIL: for quest failure
+        - QUEST_FAIL: for quest failure due to player actions or decisions
 
         Keep the total response under 150 words.
         """
@@ -758,6 +758,9 @@ class ZenQuest:
             await update.message.reply_text("I couldn't understand that. Could you please try again?")
             return
 
+        # Remove the explicit "Yes" and "No" checks
+        await self.progress_story(update, context, user_input)
+
         if self.quest_state.get(user_id) == "final_challenge":
             await self.handle_final_choice(update, context, user_input)
             return
@@ -809,8 +812,14 @@ class ZenQuest:
     async def update_karma(self, user_id, action):
         if action.lower() in ['help', 'save', 'protect', 'heal']:
             self.player_karma[user_id] = min(100, self.player_karma.get(user_id, 0) + 5)
-        elif action.lower() in ['harm', 'steal', 'lie', 'betray']:
-            self.player_karma[user_id] = max(0, self.player_karma.get(user_id, 0) - 10)
+        elif action.lower() in ['harm', 'steal', 'lie', 'betray', 'kill', 'attack']:
+            self.player_karma[user_id] = max(0, self.player_karma.get(user_id, 0) - 15)
+        
+        # Increase difficulty based on low karma
+        if self.player_karma[user_id] < 50:
+            self.difficulty_modifier = 1.5
+        else:
+            self.difficulty_modifier = 1.0
 
     async def end_quest_with_support(self, update: Update, context: ContextTypes.DEFAULT_TYPE, explanation: str, reason: str):
         user_id = update.effective_user.id
@@ -1013,6 +1022,7 @@ class ZenQuest:
 
         Ensure the response fits within the mystical and spiritual theme of the quest.
         Be especially attentive to actions involving harm, violence, or self-harm.
+        Make the consequences more severe for repeated negative actions or actions that go against the quest's goals.
         """
 
         response = await self.generate_response(prompt, elaborate=True)
@@ -1038,7 +1048,7 @@ class ZenQuest:
                 'description': consequence_description
             }
         }
-
+    
     async def apply_affliction(self, update: Update, context: ContextTypes.DEFAULT_TYPE, affliction_description: str):
         user_id = update.effective_user.id
         
@@ -1146,18 +1156,11 @@ class ZenQuest:
     async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
         user_id = update.effective_user.id
         
-        
         self.quest_active[user_id] = False
         self.in_combat[user_id] = False
 
-        # Remove technical markers from the reason
-        reason = self.remove_technical_markers(reason)
-
         conclusion = await self.generate_quest_conclusion(victory, self.current_stage.get(user_id, 0))
         
-        # Ensure the conclusion doesn't contain technical markers
-        conclusion = self.remove_technical_markers(conclusion)
-
         message = f"{reason}\n\n{conclusion}"
         
         await update.message.reply_text(message)
@@ -1165,7 +1168,9 @@ class ZenQuest:
         zen_points = random.randint(30, 50) if victory else -random.randint(10, 20)
         zen_message = f"You have {'earned' if victory else 'lost'} {abs(zen_points)} Zen points!"
         await update.message.reply_text(zen_message)
-        await add_zen_points(update, context, zen_points, db)
+        
+        with self.get_db_connection() as db:
+            await add_zen_points(update, context, zen_points, db)
 
         # Clear quest data for this user
         for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal', 'in_combat']:
