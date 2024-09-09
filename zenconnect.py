@@ -466,6 +466,8 @@ class ZenQuest:
         self.quest_state = {}
         self.quest_goal = {}
         self.player_afflictions = {}
+        self.current_choices = {}  # Add this line
+        self.max_stages = random.randint(20, 40)  # Add this line
         self.player_karma = {}
         self.unfeasible_actions = [
             "fly", "teleport", "time travel", "breathe underwater", "become invisible",
@@ -539,6 +541,7 @@ class ZenQuest:
             self.quest_state[user_id] = "beginning"
             self.in_combat[user_id] = False
             self.player_karma[user_id] = 100
+            self.max_stages = random.randint(20, 40)
 
             self.quest_goal[user_id] = await self.generate_quest_goal()
             self.current_scene[user_id] = await self.generate_initial_scene(self.quest_goal[user_id])
@@ -586,19 +589,21 @@ class ZenQuest:
         else:
             await self.end_quest(update, context, victory=False, reason="You chose to end your journey.")
 
+    def filter_unwanted_responses(self, response):
+        # Remove single-word responses like "No." or "Yes."
+        lines = response.split('\n')
+        filtered_lines = [line for line in lines if len(line.split()) > 1]
+        return '\n'.join(filtered_lines)
+
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         user_id = update.effective_user.id
 
         if not user_input:
             return
 
-        if self.quest_state.get(user_id) == "final_challenge":
-            await self.handle_final_choice(update, context, user_input)
-            return
-
         try:
-            # Generate the next scene
             next_scene = await self.generate_next_scene(user_id, user_input)
+            next_scene = self.filter_unwanted_responses(next_scene)
             self.current_scene[user_id] = next_scene
 
             if "COMBAT_START" in next_scene:
@@ -607,7 +612,7 @@ class ZenQuest:
             elif "PVP_COMBAT_START" in next_scene:
                 await self.setup_pvp_combat(update, context, "opponent")
                 return
-            elif "QUEST_COMPLETE" in next_scene:
+            elif "QUEST_COMPLETE" in next_scene or self.current_stage.get(user_id, 0) >= self.max_stages or self.quest_state.get(user_id) == "final_challenge":
                 await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
                 return
             elif "QUEST_FAIL" in next_scene:
@@ -619,11 +624,6 @@ class ZenQuest:
                 await update.message.reply_text(progress_message)
                 await self.update_quest_state(user_id)
                 await self.send_scene(update, context)
-
-            # Check for quest failure based on karma
-            if await self.check_quest_failure(user_id):
-                await self.end_quest(update, context, victory=False, reason="Your actions have led you astray from the path of enlightenment.")
-                return
 
         except Exception as e:
             logger.error(f"Error progressing story: {e}", exc_info=True)
@@ -689,7 +689,12 @@ class ZenQuest:
         Always wait for the user's choice before progressing the story.
         """
 
-        return await self.generate_response(prompt, elaborate=True)
+        response = await self.generate_response(prompt, elaborate=True)
+        
+        # Filter out unwanted responses
+        response = self.filter_unwanted_responses(response)
+        
+        return response
 
     # Update other methods to consistently use self.generate_response
     async def generate_response(self, prompt, elaborate=False):
@@ -761,12 +766,9 @@ class ZenQuest:
         if not user_input or not self.quest_active.get(user_id, False):
             return
 
-        # Convert to lowercase after checking for empty input
         user_input = user_input.lower()
 
-        # Remove the explicit "Yes" and "No" checks
-        await self.progress_story(update, context, user_input)
-
+        # Handle special quest states first
         if self.quest_state.get(user_id) == "final_challenge":
             await self.handle_final_choice(update, context, user_input)
             return
@@ -777,6 +779,12 @@ class ZenQuest:
 
         if self.quest_state.get(user_id) == "riddle":
             await self.handle_riddle(update, context, self.current_riddle[user_id])
+            return
+
+        # Check if the input matches the provided choices
+        choices = self.current_choices.get(user_id, [])
+        if choices and user_input not in ['1', '2'] and user_input not in [choice.lower() for choice in choices]:
+            await update.message.reply_text("Please choose one of the provided options.")
             return
 
         if not self.is_action_realistic(user_input):
@@ -809,7 +817,7 @@ class ZenQuest:
             elif evaluation['consequence']['type'] == 'affliction':
                 await self.apply_affliction(update, context, evaluation['consequence'].get('description', "You've been afflicted by your actions."))
         
-        # Continue the quest
+        # Progress the story
         await self.progress_story(update, context, user_input)
 
     def is_action_realistic(self, action):
@@ -1096,6 +1104,7 @@ class ZenQuest:
         scene = self.current_scene[user_id]
         description, choices = self.process_scene(scene)
         
+        self.current_choices[user_id] = choices  # Store current choices
 
         if update:
             await self.send_split_message(update, description)
@@ -1176,22 +1185,29 @@ class ZenQuest:
         zen_message = f"You have {'earned' if victory else 'lost'} {abs(zen_points)} Zen points!"
         await update.message.reply_text(zen_message)
         
-        with self.get_db_connection() as db:
-            await add_zen_points(update, context, zen_points, db)
+        try:
+            with self.get_db_connection() as db:
+                await add_zen_points(update, context, zen_points, db)
+        except Exception as e:
+            logger.error(f"Error adding Zen points: {e}")
+            await update.message.reply_text("There was an error updating your Zen points. Please try again later.")
 
         # Clear quest data for this user
-        for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal', 'in_combat']:
+        for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal', 'in_combat', 'current_choices']:
             getattr(self, attr).pop(user_id, None)
 
         # End any ongoing PvP battles
-        with self.get_db_connection() as db:
-            cursor = db.cursor()
-            cursor.execute("""
-                UPDATE pvp_battles 
-                SET status = 'completed', winner_id = %s 
-                WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
-            """, (user_id if victory else None, user_id, user_id))
-            db.commit()
+        try:
+            with self.get_db_connection() as db:
+                cursor = db.cursor()
+                cursor.execute("""
+                    UPDATE pvp_battles 
+                    SET status = 'completed', winner_id = %s 
+                    WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
+                """, (user_id if victory else None, user_id, user_id))
+                db.commit()
+        except Exception as e:
+            logger.error(f"Error ending PvP battles: {e}")
 
     def remove_technical_markers(self, text: str) -> str:
         """Remove technical markers from the text."""
@@ -1318,7 +1334,7 @@ def setup_zenquest_handlers(application):
 
 
 @with_database_connection
-async def add_zen_points(update_or_context, context_or_user_id, points, db=None):
+async def add_zen_points(update_or_context, context_or_user_id, points, db):
     if isinstance(update_or_context, Update):
         # Original case with update object
         update = update_or_context
