@@ -755,8 +755,7 @@ class ZenQuest:
             return
 
         if not user_input:
-            await update.message.reply_text("I couldn't understand that. Could you please try again?")
-            return
+            return 
 
         # Remove the explicit "Yes" and "No" checks
         await self.progress_story(update, context, user_input)
