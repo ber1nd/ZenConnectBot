@@ -589,6 +589,9 @@ class ZenQuest:
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         user_id = update.effective_user.id
 
+        if not user_input:
+            return
+
         if self.quest_state.get(user_id) == "final_challenge":
             await self.handle_final_choice(update, context, user_input)
             return
@@ -682,7 +685,8 @@ class ZenQuest:
         - QUEST_COMPLETE: for successful quest completion
         - QUEST_FAIL: for quest failure due to player actions or decisions
 
-        Keep the total response under 150 words.
+        Keep the total response under 150 words. Important: Do not include "Yes" or "No" responses in your generated scene.
+        Always wait for the user's choice before progressing the story.
         """
 
         return await self.generate_response(prompt, elaborate=True)
@@ -752,13 +756,13 @@ class ZenQuest:
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
-        user_input = update.message.text.lower() if update.message.text else ""
+        user_input = update.message.text
 
-        if not self.quest_active.get(user_id, False):
+        if not user_input or not self.quest_active.get(user_id, False):
             return
 
-        if not user_input:
-            return 
+        # Convert to lowercase after checking for empty input
+        user_input = user_input.lower()
 
         # Remove the explicit "Yes" and "No" checks
         await self.progress_story(update, context, user_input)
@@ -1091,6 +1095,7 @@ class ZenQuest:
 
         scene = self.current_scene[user_id]
         description, choices = self.process_scene(scene)
+        
 
         if update:
             await self.send_split_message(update, description)
