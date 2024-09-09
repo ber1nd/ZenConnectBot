@@ -456,6 +456,8 @@ async def generate_response(prompt, elaborate=False):
 class ZenQuest:
     def __init__(self):
         self.quest_active = {}
+        self.current_riddle = {}
+        self.current_opponent = {}
         self.player_hp = {}
         self.current_stage = {}
         self.story = {}
@@ -476,6 +478,18 @@ class ZenQuest:
             "consume poison", "jump off cliff", "attack ally", "steal from temple"
         ]
     
+    
+    async def handle_riddle(self, update: Update, context: ContextTypes.DEFAULT_TYPE, riddle):
+        user_id = update.effective_user.id
+        user_answer = update.message.text.lower()
+
+        if riddle['answer'].lower() in user_answer:
+            await update.message.reply_text("Your wisdom shines through. The riddle is solved.")
+            await self.progress_story(update, context, "solved riddle")
+        else:
+            await update.message.reply_text("The answer eludes you. Reflect on the riddle and try again.")
+
+    
     async def handle_combat_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         user_input = update.message.text.lower()
@@ -486,6 +500,7 @@ class ZenQuest:
             await update.message.reply_text("You are currently in combat. Please use the provided buttons to make your move or use /surrender to give up.")
 
     async def generate_opponent(self, user_id):
+        self.current_opponent = getattr(self, 'current_opponent', {})
         current_scene = self.current_scene.get(user_id, "A mysterious location")
         quest_goal = self.quest_goal.get(user_id, "An unknown quest")
         
@@ -573,6 +588,10 @@ class ZenQuest:
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         user_id = update.effective_user.id
+
+        if self.quest_state.get(user_id) == "final_challenge":
+            await self.handle_final_choice(update, context, user_input)
+            return
 
         try:
             # Generate the next scene
@@ -699,12 +718,10 @@ class ZenQuest:
         - Presents a meaningful moral or spiritual dilemma
         - Offers a chance for redemption if the player's karma is low
         - Challenges the player's understanding of Zen principles
-
-        End the scene with 'FINAL_CHOICE' to indicate this is the last decision.
         """
 
         final_scene = await self.generate_response(prompt, elaborate=True)
-        return final_scene + "\nFINAL_CHOICE"
+        return final_scene  # Remove the "FINAL_CHOICE" marker
 
     async def handle_final_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE, choice: str):
         user_id = update.effective_user.id
@@ -721,13 +738,11 @@ class ZenQuest:
         1. A brief description of the immediate result of the choice (2-3 sentences)
         2. The overall outcome of the quest (success or failure)
         3. A short reflection on the player's journey and growth
-
-        End with either 'QUEST_COMPLETE' for success or 'QUEST_FAIL' for failure.
         """
 
         outcome = await self.generate_response(prompt, elaborate=True)
         
-        if "QUEST_COMPLETE" in outcome:
+        if "success" in outcome.lower():
             await self.end_quest(update, context, victory=True, reason=outcome)
         else:
             await self.end_quest(update, context, victory=False, reason=outcome)
@@ -743,12 +758,20 @@ class ZenQuest:
             await update.message.reply_text("I couldn't understand that. Could you please try again?")
             return
 
-        if self.quest_state.get(user_id) == "final_choice":
+        if self.quest_state.get(user_id) == "final_challenge":
             await self.handle_final_choice(update, context, user_input)
             return
 
         if self.in_combat.get(user_id, False):
             await self.handle_combat_input(update, context)
+            return
+
+        if self.quest_state.get(user_id) == "riddle":
+            await self.handle_riddle(update, context, self.current_riddle[user_id])
+            return
+
+        if not self.is_action_realistic(user_input):
+            await update.message.reply_text("That action is beyond human capabilities. Choose a more realistic path.")
             return
 
         current_scene = self.current_scene.get(user_id, "")
@@ -757,12 +780,7 @@ class ZenQuest:
         evaluation = await self.evaluate_action_and_consequences(user_input, current_scene)
         
         # Apply karma changes based on the action's morality
-        if evaluation['is_immoral']:
-            karma_change = -20  # Significant karma loss for immoral actions
-        else:
-            karma_change = 5  # Small karma gain for moral or neutral actions
-
-        self.player_karma[user_id] = max(0, min(100, self.player_karma.get(user_id, 100) + karma_change))
+        await self.update_karma(user_id, user_input)
         
         if evaluation.get('explanation'):
             await update.message.reply_text(evaluation['explanation'])
@@ -771,7 +789,7 @@ class ZenQuest:
             if evaluation['consequence'].get('description'):
                 await update.message.reply_text(evaluation['consequence']['description'])
             
-            await update.message.reply_text(f"Your karma has decreased by {abs(karma_change)}. Current karma: {self.player_karma[user_id]}")
+            await update.message.reply_text(f"Your karma has decreased. Current karma: {self.player_karma[user_id]}")
             
             if evaluation['consequence']['type'] == 'quest_fail':
                 await self.end_quest(update, context, victory=False, reason=evaluation['consequence'].get('description', "Your journey has come to an end."))
@@ -781,11 +799,18 @@ class ZenQuest:
                 return
             elif evaluation['consequence']['type'] == 'affliction':
                 await self.apply_affliction(update, context, evaluation['consequence'].get('description', "You've been afflicted by your actions."))
-        else:
-            await update.message.reply_text(f"Your karma has increased by {karma_change}. Current karma: {self.player_karma[user_id]}")
         
         # Continue the quest
         await self.progress_story(update, context, user_input)
+
+    def is_action_realistic(self, action):
+        return not any(unrealistic in action.lower() for unrealistic in self.unfeasible_actions)
+
+    async def update_karma(self, user_id, action):
+        if action.lower() in ['help', 'save', 'protect', 'heal']:
+            self.player_karma[user_id] = min(100, self.player_karma.get(user_id, 0) + 5)
+        elif action.lower() in ['harm', 'steal', 'lie', 'betray']:
+            self.player_karma[user_id] = max(0, self.player_karma.get(user_id, 0) - 10)
 
     async def end_quest_with_support(self, update: Update, context: ContextTypes.DEFAULT_TYPE, explanation: str, reason: str):
         user_id = update.effective_user.id
@@ -867,7 +892,7 @@ class ZenQuest:
             await self.setup_pvp_combat(update, context, "Bot", battle_context)
         else:
             # PvP combat setup (for player vs player)
-            await self.setup_pvp_combat(update, context, opponent, battle_context)       
+            await self.setup_pvp_combat(update, context, opponent, battle_context)    
 
     async def generate_pvp_context(self, current_scene, quest_goal):
         prompt = f"""
@@ -877,7 +902,7 @@ class ZenQuest:
         The context should explain the sudden appearance of an opponent and why combat is necessary.
         It should fit thematically with the Zen quest and provide a clear reason for the conflict.
         """
-        return await self.generate_response(prompt, elaborate=False)     
+        return await self.generate_response(prompt, elaborate=False)       
 
 
     async def setup_pvp_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent, battle_context):
@@ -1121,6 +1146,7 @@ class ZenQuest:
     async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
         user_id = update.effective_user.id
         
+        
         self.quest_active[user_id] = False
         self.in_combat[user_id] = False
 
@@ -1139,7 +1165,7 @@ class ZenQuest:
         zen_points = random.randint(30, 50) if victory else -random.randint(10, 20)
         zen_message = f"You have {'earned' if victory else 'lost'} {abs(zen_points)} Zen points!"
         await update.message.reply_text(zen_message)
-        await add_zen_points(update, context, zen_points)
+        await add_zen_points(update, context, zen_points, db)
 
         # Clear quest data for this user
         for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal', 'in_combat']:
@@ -1155,7 +1181,7 @@ class ZenQuest:
             """, (user_id if victory else None, user_id, user_id))
             db.commit()
 
-    def remove_technical_markers(text: str) -> str:
+    def remove_technical_markers(self, text: str) -> str:
         """Remove technical markers from the text."""
         markers = ["QUEST_COMPLETE", "QUEST_FAIL", "COMBAT_START", "PVP_COMBAT_START"]
         for marker in markers:
@@ -1192,6 +1218,7 @@ class ZenQuest:
 
     def is_action_failure(self, action):
         return any(failure in action.lower() for failure in self.failure_actions)
+    
 
     async def handle_unfeasible_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("That action is not possible in this realm. Please choose a different path.")
