@@ -1673,6 +1673,26 @@ class ZenQuest:
         if not self.quest_active.get(user_id, False) or update.message.chat.type != 'private':
             return
 
+        # Double-check combat state
+        if self.in_combat.get(user_id, False):
+            db = get_db_connection()
+            if db:
+                try:
+                    cursor = db.cursor(dictionary=True)
+                    cursor.execute("""
+                        SELECT * FROM pvp_battles 
+                        WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
+                    """, (user_id, user_id))
+                    active_battle = cursor.fetchone()
+                    if not active_battle:
+                        self.in_combat[user_id] = False
+                except Exception as e:
+                    logger.error(f"Error checking combat state: {e}")
+                finally:
+                    if db.is_connected():
+                        cursor.close()
+                        db.close()
+
         if self.in_combat.get(user_id, False):
             if user_input == '/surrender':
                 await self.surrender(update, context)
@@ -2067,7 +2087,9 @@ class ZenQuest:
             self.player_hp[user_id] = battle['challenger_hp']
 
             conclusion = await self.generate_combat_conclusion(victory)
-            await update.callback_query.message.edit_text(conclusion)
+            
+            # Use send_message instead of edit_message_text to ensure the message is sent
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=conclusion)
 
             # Generate next scene without combat
             next_scene_prompt = f"""
@@ -2087,6 +2109,14 @@ class ZenQuest:
 
             # Send the updated scene to the user
             await self.send_scene(update, context)
+
+            # Clear any remaining combat-related data
+            if 'battle_id' in context.user_data:
+                del context.user_data['battle_id']
+            if 'challenger_energy' in context.user_data:
+                del context.user_data['challenger_energy']
+            if 'opponent_energy' in context.user_data:
+                del context.user_data['opponent_energy']
 
         except Exception as e:
             logger.error(f"Error in end_combat: {e}")
