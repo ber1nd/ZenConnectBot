@@ -1721,6 +1721,12 @@ class ZenQuest:
             next_scene = await self.generate_next_scene(user_id, user_input)
             self.current_scene[user_id] = next_scene
 
+            # Update HP based on the scene
+            hp_change = 0
+            if "HP_CHANGE:" in next_scene:
+                hp_change = int(next_scene.split("HP_CHANGE:")[1].split()[0])
+                self.player_hp[user_id] = max(0, min(100, self.player_hp[user_id] + hp_change))
+
             if "COMBAT_START" in next_scene:
                 await self.initiate_combat(update, context, opponent="enemy")
                 return
@@ -2064,8 +2070,16 @@ class ZenQuest:
             await update.callback_query.message.edit_text(conclusion)
 
             # Generate next scene without combat
-            next_scene = await self.generate_next_scene(user_id, f"after {'winning' if victory else 'losing'} combat")
-            self.current_scene[user_id] = next_scene.replace("COMBAT_START", "")  # Remove any combat triggers
+            next_scene_prompt = f"""
+            Generate a brief scene (3-4 sentences) that follows a {'victorious' if victory else 'lost'} combat in the Zen quest.
+            The scene should:
+            1. Describe the immediate aftermath of the battle
+            2. Provide a moment of reflection or insight
+            3. Present a new challenge or direction for the quest that doesn't involve immediate combat
+            4. Include three distinct, non-combat choices for the player's next action
+            """
+            next_scene = await generate_response(next_scene_prompt)
+            self.current_scene[user_id] = next_scene
 
             # Update quest progress
             self.current_stage[user_id] += 1
@@ -2114,7 +2128,26 @@ class ZenQuest:
             if battle:
                 winner_id = battle['opponent_id'] if user_id == battle['challenger_id'] else battle['challenger_id']
                 await self.end_combat(update, context, winner_id, battle['id'])
-                await update.message.reply_text("You have chosen to surrender. The battle ends.")
+                
+                # Apply severe consequences
+                self.player_karma[user_id] = max(0, self.player_karma[user_id] - 30)  # Significant karma loss
+                self.player_hp[user_id] = max(0, self.player_hp[user_id] - 50)  # Severe HP loss
+                
+                consequence_prompt = f"""
+                The player has surrendered in combat during their Zen quest.
+                Generate a description (2-3 sentences) of the severe consequences of this action. Include:
+                1. The immediate impact on their quest
+                2. The spiritual toll of giving up
+                3. A hint at how this might affect their journey moving forward
+                """
+                consequence = await generate_response(consequence_prompt)
+                
+                await update.message.reply_text(f"You have chosen to surrender. {consequence}")
+                
+                if self.player_hp[user_id] <= 0 or self.player_karma[user_id] <= 10:
+                    await self.end_quest(update, context, victory=False, reason="Your surrender has led to a premature end of your journey.")
+                else:
+                    await self.send_scene(update, context)
             else:
                 await update.message.reply_text("No active battles found to surrender.")
                 self.in_combat[user_id] = False
@@ -2443,46 +2476,6 @@ class ZenQuest:
 # Global instance of ZenQuest
 zen_quest = ZenQuest()
 
-
-async def surrender(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        if not self.in_combat.get(user_id, False):
-            await update.message.reply_text("You are not currently in combat.")
-            return
-
-        db = get_db_connection()
-        if db:
-            try:
-                cursor = db.cursor(dictionary=True)
-                
-                cursor.execute("""
-                    SELECT id, challenger_id, opponent_id FROM pvp_battles 
-                    WHERE (challenger_id = %s OR opponent_id = %s) AND status = 'in_progress'
-                """, (user_id, user_id))
-                battle_data = cursor.fetchone()
-
-                if battle_data:
-                    winner_id = battle_data['opponent_id'] if user_id == battle_data['challenger_id'] else battle_data['challenger_id']
-                    
-                    cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle_data['id']))
-                    db.commit()
-                    
-                    await update.message.reply_text("You have chosen to surrender. The battle ends.")
-                    await self.end_pvp_battle(context, user_id, victory=False, battle_id=battle_data['id'])
-                else:
-                    await update.message.reply_text("No active battles found to surrender.")
-                    self.in_combat[user_id] = False  # Reset combat state
-            
-            except mysql.connector.Error as e:
-                logger.error(f"Database error in surrender: {e}")
-                await update.message.reply_text("An error occurred while surrendering. Please try again later.")
-            
-            finally:
-                if db.is_connected():
-                    cursor.close()
-                    db.close()
-        else:
-            await update.message.reply_text("I'm sorry, I'm having trouble accessing my memory right now. Please try again later.")
 
 
 def check_rate_limit(user_id):
