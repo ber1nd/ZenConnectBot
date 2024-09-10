@@ -2088,7 +2088,6 @@ class ZenQuest:
 
             conclusion = await self.generate_combat_conclusion(victory)
             
-            # Use send_message instead of edit_message_text to ensure the message is sent
             await context.bot.send_message(chat_id=update.effective_chat.id, text=conclusion)
 
             # Generate next scene without combat
@@ -2157,7 +2156,6 @@ class ZenQuest:
 
             if battle:
                 winner_id = battle['opponent_id'] if user_id == battle['challenger_id'] else battle['challenger_id']
-                await self.end_combat(update, context, winner_id, battle['id'])
                 
                 # Apply severe consequences
                 self.player_karma[user_id] = max(0, self.player_karma[user_id] - 30)  # Significant karma loss
@@ -2172,12 +2170,14 @@ class ZenQuest:
                 """
                 consequence = await generate_response(consequence_prompt)
                 
+                # End combat without sending a separate message
+                await self.end_combat(update, context, winner_id, battle['id'])
+                
+                # Send a single message with the surrender consequences
                 await update.message.reply_text(f"You have chosen to surrender. {consequence}")
                 
                 if self.player_hp[user_id] <= 0 or self.player_karma[user_id] <= 10:
                     await self.end_quest(update, context, victory=False, reason="Your surrender has led to a premature end of your journey.")
-                else:
-                    await self.send_scene(update, context)
             else:
                 await update.message.reply_text("No active battles found to surrender.")
                 self.in_combat[user_id] = False
