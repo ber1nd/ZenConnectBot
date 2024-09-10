@@ -1695,6 +1695,80 @@ class ZenQuest:
         # Progress the story
         await self.progress_story(update, context, user_input)
 
+    async def end_pvp_battle(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, battle_id: int):
+        self.in_combat[user_id] = False
+        
+        # Generate battle conclusion
+        conclusion = await self.generate_combat_conclusion(victory)
+        
+        # Fetch the battle data to get the group_id and opponent_id
+        db = get_db_connection()
+        if db:
+            try:
+                cursor = db.cursor(dictionary=True)
+                cursor.execute("SELECT group_id, challenger_id, opponent_id FROM pvp_battles WHERE id = %s", (battle_id,))
+                battle_data = cursor.fetchone()
+                if battle_data:
+                    group_id = battle_data['group_id']
+                    opponent_id = battle_data['opponent_id'] if battle_data['challenger_id'] == user_id else battle_data['challenger_id']
+                    
+                    # Send conclusion to the group chat
+                    await context.bot.send_message(chat_id=group_id, text=conclusion)
+                    
+                    # If the opponent is not the bot, send them a message too
+                    if opponent_id != 7283636452:
+                        await context.bot.send_message(chat_id=opponent_id, text=conclusion)
+                else:
+                    logger.error(f"No battle data found for battle_id: {battle_id}")
+                    # Send conclusion to user if group_id is not found
+                    await context.bot.send_message(chat_id=user_id, text=conclusion)
+            except Exception as e:
+                logger.error(f"Database error in end_pvp_battle: {e}")
+                # Send conclusion to user if there's a database error
+                await context.bot.send_message(chat_id=user_id, text=conclusion)
+            finally:
+                if db.is_connected():
+                    cursor.close()
+                    db.close()
+        else:
+            # Send conclusion to user if database connection fails
+            await context.bot.send_message(chat_id=user_id, text=conclusion)
+
+        # Update karma
+        if victory:
+            self.player_karma[user_id] = min(100, self.player_karma.get(user_id, 0) + 10)
+            karma_message = "Your victory has increased your karma."
+        else:
+            self.player_karma[user_id] = max(0, self.player_karma.get(user_id, 0) - 10)
+            karma_message = "Your defeat has decreased your karma."
+
+        # Generate the next scene based on the battle outcome
+        battle_outcome = "victory in combat" if victory else "defeat in combat"
+        next_scene = await self.generate_next_scene(user_id, battle_outcome)
+        self.current_scene[user_id] = next_scene
+
+        # Send the karma update and new scene to the user
+        await context.bot.send_message(chat_id=user_id, text=f"{karma_message} The quest continues.")
+        await self.send_scene(context=context, user_id=user_id)
+
+        # Update PvP battle status in the database
+        db = get_db_connection()
+        if db:
+            try:
+                cursor = db.cursor()
+                cursor.execute("""
+                    UPDATE pvp_battles 
+                    SET status = 'completed', winner_id = %s 
+                    WHERE id = %s
+                """, (user_id if victory else None, battle_id))
+                db.commit()
+            except Exception as e:
+                logger.error(f"Database error updating PvP battle status: {e}")
+            finally:
+                if db.is_connected():
+                    cursor.close()
+                    db.close()
+
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         user_id = update.effective_user.id
 
@@ -2030,6 +2104,10 @@ class ZenQuest:
                 logger.error(f"No battle found with id {battle_id}")
                 return
 
+            user_id = battle['challenger_id']
+            victory = winner_id == user_id
+
+            # Update battle status in the database
             cursor.execute("""
                 UPDATE pvp_battles 
                 SET status = 'completed', winner_id = %s 
@@ -2037,31 +2115,29 @@ class ZenQuest:
             """, (winner_id, battle_id))
             db.commit()
 
-            user_id = battle['challenger_id']
+            # Update quest state
             self.in_combat[user_id] = False
             self.player_hp[user_id] = battle['challenger_hp']
 
-            victory = winner_id == user_id
+            # Generate and send combat conclusion
             conclusion = await self.generate_combat_conclusion(victory)
-
             await update.callback_query.message.edit_text(conclusion)
 
-            if victory:
-                self.player_karma[user_id] = min(100, self.player_karma[user_id] + 10)
-                await update.callback_query.message.reply_text("Your victory has increased your karma.")
-            else:
-                self.player_karma[user_id] = max(0, self.player_karma[user_id] - 10)
-                await update.callback_query.message.reply_text("Your defeat has decreased your karma.")
+            # Update karma
+            karma_change = 10 if victory else -10
+            self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
+            karma_message = "Your victory has increased your karma." if victory else "Your defeat has decreased your karma."
+            await update.callback_query.message.reply_text(karma_message)
 
             # Continue the quest
-            next_scene = await self.generate_next_scene(user_id, "after combat")
+            next_scene = await self.generate_next_scene(user_id, f"after {'winning' if victory else 'losing'} combat")
             self.current_scene[user_id] = next_scene
             await self.send_scene(update, context)
 
         except Exception as e:
             logger.error(f"Error in end_combat: {e}")
         finally:
-            if db.is_connected():
+            if db and db.is_connected():
                 cursor.close()
                 db.close()
 
@@ -2096,24 +2172,11 @@ class ZenQuest:
 
             if battle:
                 winner_id = battle['opponent_id'] if user_id == battle['challenger_id'] else battle['challenger_id']
-                cursor.execute("""
-                    UPDATE pvp_battles 
-                    SET status = 'completed', winner_id = %s 
-                    WHERE id = %s
-                """, (winner_id, battle['id']))
-                db.commit()
-
-                self.in_combat[user_id] = False
-                self.player_karma[user_id] = max(0, self.player_karma[user_id] - 5)  # Small karma loss for surrendering
-
+                
+                # Use end_combat instead of end_pvp_battle
+                await self.end_combat(update, context, winner_id, battle['id'])
+                
                 await update.message.reply_text("You have chosen to surrender. The battle ends.")
-                conclusion = await self.generate_combat_conclusion(victory=False)
-                await update.message.reply_text(conclusion)
-
-                # Continue the quest
-                next_scene = await self.generate_next_scene(user_id, "after surrendering in combat")
-                self.current_scene[user_id] = next_scene
-                await self.send_scene(update, context)
             else:
                 await update.message.reply_text("No active battles found to surrender.")
                 self.in_combat[user_id] = False  # Reset combat state
@@ -2122,7 +2185,7 @@ class ZenQuest:
             logger.error(f"Database error in surrender: {e}")
             await update.message.reply_text("An error occurred while surrendering. Please try again later.")
         finally:
-            if db.is_connected():
+            if db and db.is_connected():
                 cursor.close()
                 db.close()
 
