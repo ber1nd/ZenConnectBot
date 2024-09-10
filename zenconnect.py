@@ -1774,9 +1774,10 @@ class ZenQuest:
         1. A vivid description of the new situation or environment (2-3 sentences)
         2. The outcome of the user's previous action and its impact (1-2 sentences)
         3. A new challenge, obstacle, or decision point (1-2 sentences)
-        4. Three distinct, non-trivial choices for the player (1 sentence each)
+        4. Three distinct, non-trivial choices for the player (1 sentence each). At least one choice should lead to potential quest failure or significant setback.
         5. A brief Zen-like insight relevant to the situation (1 sentence)
         6. If applicable, include "HP_CHANGE: X" where X is the amount of HP gained or lost
+        7. If the event type is "combat", one of the choices should explicitly lead to combat using the phrase "COMBAT_START"
 
         Ensure the scene:
         - Progresses the quest towards its goal, reflecting the current progress
@@ -1785,7 +1786,7 @@ class ZenQuest:
         - Incorporates Zen teachings or principles subtly
         - Includes more challenging scenarios and consequences
 
-        If the event type is "combat" or "quest_fail", incorporate appropriate indicators in the scene.
+        If the event type is "quest_fail", incorporate an appropriate indicator in the scene.
         If the progress is over 90%, start building towards a climactic final challenge.
 
         Keep the total response under 200 words.
@@ -1951,30 +1952,16 @@ class ZenQuest:
             - Zen Strike: A powerful move that deals significant damage. Costs 40 energy.
             - Mind Trap: Reduces the effectiveness of the opponent's next move by 50%. Costs 20 energy.
 
-            Strategy to win:
-            - If your energy is low (below 20), prioritize "Focus" or "Defend" to recover energy.
-            - Avoid attempting an action if you don't have enough energy to perform it.
-            - Manage your energy carefully; don't allow it to drop too low unless you can deliver a finishing blow.
-            - If you used "Focus" in the previous move, consider following up with "Strike" or "Zen Strike" for enhanced damage.
-            - Use "Mind Trap" to weaken the opponent, particularly if they have high energy or if you want to set up a safer "Zen Strike."
-            - Prioritize "Zen Strike" if the opponent's HP is low enough for a potential finishing blow.
+            Choose the most strategic action based on the current situation and your previous move.
+            Respond with only the name of the chosen action.
             """
 
             ai_response = await generate_response(prompt)
             logger.info(f"AI response for bot move: {ai_response}")
 
-            if "zen strike" in ai_response.lower() and ai_energy >= 40:
-                action = "zenstrike"
-            elif "strike" in ai_response.lower() and ai_energy >= 12:
-                action = "strike"
-            elif "mind trap" in ai_response.lower() and ai_energy >= 20:
-                action = "mindtrap"
-            elif "focus" in ai_response.lower():
-                action = "focus"
-            else:
-                action = "defend"
-
-            logger.info(f"Bot chose action: {action} based on AI response")
+            action = ai_response.lower().strip()
+            if action not in ["strike", "defend", "focus", "zenstrike", "mindtrap"]:
+                action = "defend"  # Default to defend if invalid action
 
             result = await perform_action(action, ai_hp, player_hp, ai_energy, 
                                           context.user_data.get('opponent_next_turn_synergy', {}),
@@ -2004,7 +1991,7 @@ class ZenQuest:
         except Exception as e:
             logger.error(f"Error in ai_combat_move: {e}")
         finally:
-            if db.is_connected():
+            if db and db.is_connected():
                 cursor.close()
                 db.close()
 
@@ -2290,11 +2277,14 @@ class ZenQuest:
 
     async def generate_pvp_context(self, current_scene, quest_goal):
         prompt = f"""
-        Based on the current scene and quest goal, generate a brief context (1-2 sentences) for why a combat situation is starting:
+        Based on the current scene and quest goal, generate a brief context (2-3 sentences) for why a combat situation is starting:
         Current scene: {current_scene}
         Quest goal: {quest_goal}
-        The context should explain the sudden appearance of an opponent and why combat is necessary.
-        It should fit thematically with the Zen quest and provide a clear reason for the conflict.
+        The context should:
+        1. Explain the sudden appearance of an opponent
+        2. Provide a clear reason for the conflict
+        3. Fit thematically with the Zen quest
+        4. Suggest how the outcome might affect the quest's progression
         """
         return await generate_response(prompt, elaborate=False)
 
@@ -2302,7 +2292,7 @@ class ZenQuest:
         prompt = f"""
         Evaluate the following action in the context of Zen teachings and general morality:
         "{action}"
-        Is this action against Zen principles or morally wrong? Respond with 'Yes' or 'No' and provide a brief explanation.
+        Is this action against Zen principles or morally wrong? Respond with 'Yes' or 'No' and provide a brief explanation (1-2 sentences).
         Consider not just violence, but also actions that promote greed, hatred, or delusion.
         """
         response = await generate_response(prompt)
