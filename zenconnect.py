@@ -1827,11 +1827,10 @@ class ZenQuest:
         player_karma = self.player_karma.get(user_id, 100)
         current_stage = self.current_stage.get(user_id, 0)
 
-        event_type = random.choice([
-            "normal", "normal", "normal",  # Higher chance for normal events
-            "challenge", "reward", "meditation", "npc_encounter", "moral_dilemma",
-            "spiritual_trial", "natural_obstacle", "mystical_phenomenon"
-        ])
+        event_type = random.choices([
+            "normal", "challenge", "reward", "meditation", "npc_encounter", "moral_dilemma",
+            "spiritual_trial", "natural_obstacle", "mystical_phenomenon", "combat", "quest_fail"
+        ], weights=[40, 15, 5, 5, 5, 10, 5, 5, 5, 3, 2], k=1)[0]
 
         prompt = f"""
         Previous scene: {self.current_scene[user_id]}
@@ -1854,18 +1853,15 @@ class ZenQuest:
         - Presents a real possibility of failure or setback
         - Maintains a balance between physical adventure and spiritual growth
         - Incorporates Zen teachings or principles subtly
+        - Includes more challenging scenarios and consequences
 
-        If appropriate, consider:
-        - Introducing a combat situation (indicate with 'COMBAT_START')
-        - Presenting a riddle or puzzle (indicate with 'RIDDLE_START')
-        - Ending the quest successfully (indicate with 'QUEST_COMPLETE')
-        - Ending the quest unsuccessfully (indicate with 'QUEST_FAIL')
+        If the event type is "combat" or "quest_fail", incorporate appropriate indicators in the scene.
 
         Keep the total response under 150 words.
         """
 
         try:
-            next_scene = await generate_response(prompt, elaborate=True)
+            next_scene = await self.generate_response(prompt, elaborate=True)
         except Exception as e:
             logger.error(f"Error generating next scene: {e}")
             return "An error occurred while generating the next scene. Please try again."
@@ -2423,31 +2419,50 @@ class ZenQuest:
     async def apply_affliction(self, update: Update, context: ContextTypes.DEFAULT_TYPE, affliction_description):
         user_id = update.effective_user.id
         self.player_karma[user_id] -= 10
-    
-        # Generate a shorter, non-repetitive affliction message
-        short_affliction = await generate_response(f"Summarize this affliction in one brief sentence: {affliction_description}")
-    
-        await self.send_split_message(update, f"You have been afflicted: {short_affliction}")
+        
+        consequence_prompt = f"""
+        The player has been afflicted: {affliction_description}
+        Current Karma: {self.player_karma[user_id]}
 
-    async def send_split_message(self, update: Update, message: str):
+        Describe the immediate consequences and how it affects the current scene in 2-3 sentences. 
+        Integrate the affliction smoothly into the narrative, maintaining the tone and context of the quest.
+        """
+        
+        integrated_consequence = await self.generate_response(consequence_prompt)
+        
+        self.current_scene[user_id] += f"\n\n{integrated_consequence}"
+        
+        await self.send_scene(update, context)
+
+    async def send_split_message_context(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, message: str):
         max_length = 4000  # Telegram's message limit is 4096 characters, but we'll use 4000 to be safe
         messages = [message[i:i+max_length] for i in range(0, len(message), max_length)]
         for msg in messages:
-            await update.message.reply_text(msg)
+            await context.bot.send_message(chat_id=user_id, text=msg)
 
-    async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
+    async def send_scene(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, user_id: int = None):
+        if update:
+            user_id = update.effective_user.id
         
         if not self.current_scene.get(user_id):
-            await update.message.reply_text("An error occurred. The quest cannot continue.")
+            message = "An error occurred. The quest cannot continue."
+            if update:
+                await update.message.reply_text(message)
+            elif context:
+                await context.bot.send_message(chat_id=user_id, text=message)
             return
 
         scene = self.current_scene[user_id]
         description, choices = self.process_scene(scene)
 
-        await self.send_split_message(update, description)
-        if choices:
-            await self.send_split_message(update, f"Your choices:\n{choices}")
+        if update:
+            await self.send_split_message(update, description)
+            if choices:
+                await self.send_split_message(update, f"Your choices:\n{choices}")
+        elif context:
+            await self.send_split_message_context(context, user_id, description)
+            if choices:
+                await self.send_split_message_context(context, user_id, f"Your choices:\n{choices}")
 
     def process_scene(self, scene):
         parts = scene.split("Your choices:")
