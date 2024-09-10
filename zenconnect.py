@@ -1844,6 +1844,40 @@ class ZenQuest:
         else:
             await update.message.reply_text("Unable to connect to the database. Please try again later.")
 
+    async def end_pvp_battle(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, battle_id: int):
+        try:
+            karma_change = 10 if victory else -5
+            self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
+            
+            battle_outcome = "victory" if victory else "defeat"
+            prompt = f"""
+            The player has just experienced a {battle_outcome} in a spiritual combat during their Zen quest.
+            Generate a brief (2-3 sentences) description of:
+            1. The immediate aftermath of the battle
+            2. How this {battle_outcome} affects the player's spiritual journey
+            3. A Zen-like insight gained from this experience
+            """
+            battle_conclusion = await self.generate_response(prompt)
+            
+            self.current_scene[user_id] += f"\n\n{battle_conclusion}"
+            
+            # Update quest progress
+            self.current_stage[user_id] += 1
+            await self.update_quest_state(user_id)
+            
+            # Send the updated scene to the user
+            await self.send_scene(context=context, user_id=user_id)
+            
+            # Log the battle outcome
+            logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
+        
+        except Exception as e:
+            logger.error(f"Error in end_pvp_battle: {e}", exc_info=True)
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="An error occurred while concluding the battle. Your quest will continue, but some details may be inconsistent."
+            )
+
     async def handle_combat_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         
@@ -2026,14 +2060,8 @@ class ZenQuest:
             conclusion = await self.generate_combat_conclusion(victory)
             await update.callback_query.message.edit_text(conclusion)
 
-            karma_change = 10 if victory else -10
-            self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
-            karma_message = "Your victory has increased your karma." if victory else "Your defeat has decreased your karma."
-            await update.callback_query.message.reply_text(karma_message)
-
-            next_scene = await self.generate_next_scene(user_id, f"after {'winning' if victory else 'losing'} combat")
-            self.current_scene[user_id] = next_scene
-            await self.send_scene(update, context)
+            # Call the new end_pvp_battle method
+            await self.end_pvp_battle(context, user_id, victory, battle_id)
 
         except Exception as e:
             logger.error(f"Error in end_combat: {e}")
@@ -2041,6 +2069,7 @@ class ZenQuest:
             if db and db.is_connected():
                 cursor.close()
                 db.close()
+
 
     async def generate_combat_conclusion(self, victory: bool):
         prompt = f"""
