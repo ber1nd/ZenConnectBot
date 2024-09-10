@@ -1744,8 +1744,15 @@ class ZenQuest:
             # Update HP based on the scene
             hp_change = 0
             if "HP_CHANGE:" in next_scene:
-                hp_change = int(next_scene.split("HP_CHANGE:")[1].split()[0])
-                self.player_hp[user_id] = max(0, min(100, self.player_hp[user_id] + hp_change))
+                try:
+                    hp_change_str = next_scene.split("HP_CHANGE:")[1].split()[0]
+                    hp_change = int(hp_change_str.replace('+', '').replace('-', ''))
+                    if hp_change_str.startswith('-'):
+                        hp_change = -hp_change
+                except (ValueError, IndexError):
+                    logger.warning(f"Invalid HP_CHANGE format in scene: {next_scene}")
+
+            self.player_hp[user_id] = max(0, min(100, self.player_hp[user_id] + hp_change))
 
             if "COMBAT_START" in next_scene:
                 await self.initiate_combat(update, context, opponent="enemy")
@@ -1805,7 +1812,7 @@ class ZenQuest:
         3. A new challenge, obstacle, or decision point (1-2 sentences)
         4. Three distinct, non-trivial choices for the player (1 sentence each). At least one choice should lead to potential quest failure or significant setback.
         5. A brief Zen-like insight relevant to the situation (1 sentence)
-        6. If applicable, include "HP_CHANGE: X" where X is the amount of HP gained or lost
+        6. If applicable, include "HP_CHANGE: X" where X is the amount of HP gained or lost (integer only, no symbols)
         7. If the event type is "combat", one of the choices should explicitly lead to combat using the phrase "COMBAT_START"
 
         Ensure the scene:
@@ -1819,10 +1826,28 @@ class ZenQuest:
         If the progress is over 90%, start building towards a climactic final challenge.
 
         Keep the total response under 200 words.
+
+        IMPORTANT: If you include an HP_CHANGE, it must follow this exact format:
+        HP_CHANGE: X (where X is a positive or negative integer without any symbols)
+        For example: HP_CHANGE: 5 or HP_CHANGE: -3
         """
 
         try:
             next_scene = await generate_response(prompt, elaborate=True)
+            
+            # Ensure correct HP_CHANGE format
+            if "HP_CHANGE:" in next_scene:
+                hp_change_parts = next_scene.split("HP_CHANGE:")
+                before_hp_change = hp_change_parts[0]
+                after_hp_change = hp_change_parts[1]
+                hp_change_value = after_hp_change.split()[0]
+                try:
+                    int(hp_change_value)  # This will raise a ValueError if it's not a valid integer
+                    formatted_hp_change = f"HP_CHANGE: {hp_change_value}"
+                except ValueError:
+                    formatted_hp_change = "HP_CHANGE: 0"  # Default to no change if invalid
+                next_scene = before_hp_change + formatted_hp_change + " ".join(after_hp_change.split()[1:])
+            
         except Exception as e:
             logger.error(f"Error generating next scene: {e}")
             return "An error occurred while generating the next scene. Please try again."
