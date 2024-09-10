@@ -1900,8 +1900,9 @@ class ZenQuest:
 
     async def end_pvp_battle(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, battle_id: int):
         try:
-            karma_change = 10 if victory else -5
-            self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
+            if user_id != 7283636452:  # Only update karma for real players, not the bot
+                karma_change = 10 if victory else -5
+                self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
             
             battle_outcome = "victory" if victory else "defeat"
             prompt = f"""
@@ -1913,24 +1914,26 @@ class ZenQuest:
             """
             battle_conclusion = await self.generate_response(prompt)
             
-            self.current_scene[user_id] += f"\n\n{battle_conclusion}"
-            
-            # Update quest progress
-            self.current_stage[user_id] += 1
-            await self.update_quest_state(user_id)
-            
-            # Send the updated scene to the user
-            await self.send_scene(context=context, user_id=user_id)
+            if user_id != 7283636452:  # Only update scene for real players, not the bot
+                self.current_scene[user_id] += f"\n\n{battle_conclusion}"
+                
+                # Update quest progress
+                self.current_stage[user_id] += 1
+                await self.update_quest_state(user_id)
+                
+                # Send the updated scene to the user
+                await self.send_scene(context=context, user_id=user_id)
             
             # Log the battle outcome
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
         
         except Exception as e:
             logger.error(f"Error in end_pvp_battle: {e}", exc_info=True)
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="An error occurred while concluding the battle. Your quest will continue, but some details may be inconsistent."
-            )
+            if user_id != 7283636452:  # Only send error message to real players, not the bot
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text="An error occurred while concluding the battle. Your quest will continue, but some details may be inconsistent."
+                )
 
     async def handle_combat_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -2069,7 +2072,7 @@ class ZenQuest:
 
                 if new_player_hp <= 0 or new_ai_hp <= 0:
                     winner_id = battle['opponent_id'] if new_player_hp <= 0 else battle['challenger_id']
-                    await self.end_combat(update, context, winner_id, battle_id)
+                    await self.end_pvp_battle(context, battle['challenger_id'], winner_id == battle['challenger_id'], battle['id'])
                 else:
                     battle_state = f"Your HP: {new_player_hp}\nOpponent HP: {new_ai_hp}"
                     await update.callback_query.message.edit_text(
@@ -2124,7 +2127,7 @@ class ZenQuest:
             3. Present a new challenge or direction for the quest that doesn't involve immediate combat
             4. Include three distinct, non-combat choices for the player's next action
             """
-            next_scene = await generate_response(next_scene_prompt)
+            next_scene = await self.generate_next_scene(user_id, "combat ended")
             self.current_scene[user_id] = next_scene
 
             # Update quest progress
