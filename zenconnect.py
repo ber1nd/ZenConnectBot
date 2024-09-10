@@ -480,16 +480,36 @@ class ZenQuest:
             "consume poison", "jump off cliff", "attack ally", "steal from temple"
         ]
     
-    
+    def clean_response(self, response):
+        # Remove "No." or "Yes." at the beginning of the response
+        response = re.sub(r'^(No\.|Yes\.)\s*', '', response.strip())
+        # Capitalize the first letter
+        return response[0].upper() + response[1:] if response else ""
+
     async def handle_riddle(self, update: Update, context: ContextTypes.DEFAULT_TYPE, riddle):
         user_id = update.effective_user.id
         user_answer = update.message.text.lower()
 
+        # Generate a response based on the user's answer
+        prompt = f"""
+        Riddle: {riddle['question']}
+        Correct answer: {riddle['answer']}
+        User's answer: {user_answer}
+
+        Evaluate if the user's answer is correct or close enough. 
+        If correct, provide a brief congratulatory message.
+        If incorrect but close, offer an encouraging hint.
+        If completely off, give a gentle nudge to think differently.
+        Keep the response under 50 words and in the style of a wise Zen master.
+        """
+        
+        response = await self.generate_response(prompt, elaborate=False)
+        await update.message.reply_text(self.clean_response(response))
+
         if riddle['answer'].lower() in user_answer:
-            await update.message.reply_text("Your wisdom shines through. The riddle is solved.")
             await self.progress_story(update, context, "solved riddle")
         else:
-            await update.message.reply_text("The answer eludes you. Reflect on the riddle and try again.")
+            await update.message.reply_text("Reflect on the riddle and try again, or choose to move on with /continue.")
 
     
     async def handle_combat_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -603,7 +623,7 @@ class ZenQuest:
 
         try:
             next_scene = await self.generate_next_scene(user_id, user_input)
-            next_scene = self.filter_unwanted_responses(next_scene)
+            next_scene = self.clean_response(next_scene)  # Changed from clean_response to self.clean_response
             self.current_scene[user_id] = next_scene
 
             if "COMBAT_START" in next_scene:
@@ -658,6 +678,9 @@ class ZenQuest:
         if quest_state == "final_challenge":
             return await self.generate_final_challenge(user_id)
 
+        # Determine if this scene should include a PvP encounter
+        include_pvp = random.random() < 0.15  # 15% chance of PvP encounter
+
         prompt = f"""
         Previous scene: {current_scene}
         User's action: "{user_input}"
@@ -665,13 +688,15 @@ class ZenQuest:
         Quest goal: {self.quest_goal.get(user_id, 'Unknown')}
         Player karma: {player_karma}
         Active afflictions: {', '.join([aff['affliction'] for aff in afflictions])}
+        {"Include a PvP encounter in this scene." if include_pvp else ""}
 
         Generate the next scene of the Zen-themed quest:
         1. A vivid description of the new situation (2-3 sentences)
         2. The outcome of the user's previous action (1 sentence)
-        3. Two distinct, non-repeated choices for the player (1 short sentence each)
-        4. A brief Zen-like insight relevant to the situation (1 short sentence)
-        5. If applicable, incorporate the effects of any active afflictions
+        3. If appropriate, include a challenging riddle with 3-4 possible answers
+        4. Otherwise, provide three distinct, non-repeated choices for the player (1 short sentence each)
+        5. A brief Zen-like insight relevant to the situation (1 short sentence)
+        6. If applicable, incorporate the effects of any active afflictions
 
         Ensure the scene:
         - Progresses the quest towards its goal
@@ -685,31 +710,13 @@ class ZenQuest:
         - QUEST_COMPLETE: for successful quest completion
         - QUEST_FAIL: for quest failure due to player actions or decisions
 
-        Keep the total response under 150 words. Important: Do not include "Yes" or "No" responses in your generated scene.
+        Keep the total response under 200 words. Do not include "Yes" or "No" responses in your generated scene.
         Always wait for the user's choice before progressing the story.
         """
 
         response = await self.generate_response(prompt, elaborate=True)
-        
-        # Filter out unwanted responses
-        response = self.filter_unwanted_responses(response)
-        
-        return response
+        return self.filter_unwanted_responses(response)
 
-    # Update other methods to consistently use self.generate_response
-    async def generate_response(self, prompt, elaborate=False):
-        return await generate_response(prompt, elaborate)
-
-    # Optimize database connections using context manager
-    @contextmanager
-    def get_db_connection(self):
-        db = get_db_connection()
-        try:
-            yield db
-        finally:
-            if db and db.is_connected():
-                db.close()
-    
     async def generate_final_challenge(self, user_id: int):
         quest_goal = self.quest_goal.get(user_id, "")
         player_karma = self.player_karma.get(user_id, 100)
@@ -767,6 +774,7 @@ class ZenQuest:
             return
 
         user_input = user_input.lower()
+
 
         # Handle special quest states first
         if self.quest_state.get(user_id) == "final_challenge":
@@ -1296,7 +1304,7 @@ class ZenQuest:
 
         await update.message.reply_text(f"{meditation_result}\n\nYour karma and HP have slightly improved.")
     
-    # Global instance of ZenQuest
+# Global instance of ZenQuest
 zen_quest = ZenQuest()
 
 async def handle_surrender(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1396,7 +1404,7 @@ Welcome to Zen Warrior PvP, a battle of wisdom and strategy!
 - **Focus → Strike**: Increased damage and critical hit chance
 - **Focus  Zen Strike**: Significantly increased damage
 - **Strike → Focus**: Extra energy gain
-- **Defend → Mind Trap**: Reflect damage on the opponent's next attack
+- **Defend  Mind Trap**: Reflect damage on the opponent's next attack
 
 Remember, true mastery comes from understanding the flow of energy and the balance of actions. May your battles be enlightening!
     """
@@ -2630,4 +2638,5 @@ async def main():
 
 if __name__ == '__main__':
     setup_database()  # Ensure the database is set up before starting the bot
+    asyncio.run(main())
     asyncio.run(main())
