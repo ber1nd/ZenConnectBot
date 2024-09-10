@@ -435,6 +435,7 @@ async def delete_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def generate_response(prompt, elaborate=False):
+    
     try:
         max_tokens = 300 if elaborate else 150
         response = await client.chat.completions.create(
@@ -715,7 +716,9 @@ class ZenQuest:
         """
 
         response = await self.generate_response(prompt, elaborate=True)
-        return self.filter_unwanted_responses(response)
+        return self.clean_response(response) and self.filter_unwanted_responses(response)
+        
+        
 
     async def generate_final_challenge(self, user_id: int):
         quest_goal = self.quest_goal.get(user_id, "")
@@ -1235,7 +1238,7 @@ class ZenQuest:
         Do not include any technical markers or labels in the conclusion.
         """
         conclusion = await self.generate_response(prompt)
-        return self.remove_technical_markers(conclusion)  # Extra safeguard
+        return self.remove_technical_markers(conclusion) and self.clean_response(conclusion) # Extra safeguard
 
     async def interrupt_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
