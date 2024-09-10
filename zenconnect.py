@@ -1094,9 +1094,9 @@ def setup_handlers(application):
     application.add_handler(CommandHandler("checkpoints", check_points))
     application.add_handler(CommandHandler("startpvp", start_pvp))
     application.add_handler(CommandHandler("acceptpvp", accept_pvp))
-    application.add_handler(CommandHandler("surrender", surrender))
     application.add_handler(CommandHandler("interrupt", interrupt_quest_command))
     application.add_handler(CommandHandler("deletedata", delete_data))
+    application.add_handler(CommandHandler("surrender", zen_quest.surrender))
     application.add_handler(CommandHandler("getbotid", getbotid))
 
     application.add_handler(MessageHandler(
@@ -1674,7 +1674,10 @@ class ZenQuest:
             return
 
         if self.in_combat.get(user_id, False):
-            await self.handle_combat_input(update, context)
+            if user_input == '/surrender':
+                await self.surrender(update, context)
+            else:
+                await update.message.reply_text("You are currently in combat. Please use the provided buttons to make your move or use /surrender to give up.")
             return
 
         if user_id in self.riddles and self.riddles[user_id]['active']:
@@ -2060,8 +2063,16 @@ class ZenQuest:
             conclusion = await self.generate_combat_conclusion(victory)
             await update.callback_query.message.edit_text(conclusion)
 
-            # Call the new end_pvp_battle method
-            await self.end_pvp_battle(context, user_id, victory, battle_id)
+            # Generate next scene without combat
+            next_scene = await self.generate_next_scene(user_id, f"after {'winning' if victory else 'losing'} combat")
+            self.current_scene[user_id] = next_scene.replace("COMBAT_START", "")  # Remove any combat triggers
+
+            # Update quest progress
+            self.current_stage[user_id] += 1
+            await self.update_quest_state(user_id)
+
+            # Send the updated scene to the user
+            await self.send_scene(update, context)
 
         except Exception as e:
             logger.error(f"Error in end_combat: {e}")
