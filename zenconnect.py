@@ -819,22 +819,28 @@ class ZenQuest:
             return True
         return False
     
-    async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent="unknown"):
+    async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent="spiritual guardians"):
         user_id = update.effective_user.id
         self.in_combat[user_id] = True
         
-        # Setup for PvP or NPC combat based on the opponent
-        if opponent == "spiritual guardians" or opponent == "unknown":
-            # NPC combat setup
-            await self.setup_npc_combat(update, context, opponent)
-        else:
-            # PvP combat setup
-            await self.setup_pvp_combat(update, context, opponent)
+        # Generate a brief combat scene description
+        combat_scene = await self.generate_combat_scene(opponent)
+        await self.send_split_message(update, combat_scene)
 
-    async def setup_npc_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
-        # Implement NPC combat logic here
-        await update.message.reply_text(f"You enter into combat with {opponent}. Prepare for a spiritual battle!")
-        # Add combat options and mechanics for NPC fights
+        # Setup for PvP combat
+        await self.setup_pvp_combat(update, context, opponent)
+
+    async def generate_combat_scene(self, opponent):
+        prompt = f"""
+        Create a brief, vivid description of a combat scene in a Zen-themed quest.
+        The player is facing {opponent}.
+        Include:
+        1. The immediate surroundings (2-3 sentences)
+        2. The appearance or demeanor of the {opponent} (1-2 sentences)
+        3. A sense of the impending battle's spiritual significance (1 sentence)
+        Keep the total description under 100 words.
+        """
+        return await generate_response(prompt)
 
     async def setup_pvp_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent):
         user_id = update.effective_user.id
@@ -853,7 +859,7 @@ class ZenQuest:
                 context.user_data['challenger_energy'] = 50
                 context.user_data['opponent_energy'] = 50
 
-                await update.message.reply_text("Your actions have led to a confrontation. Prepare for battle!")
+                await update.message.reply_text("The battle begins! Choose your first move wisely.")
                 await send_game_rules(context, user_id, opponent_id)
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
@@ -2036,9 +2042,12 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             if zen_quest.quest_active.get(user_id, False):
                 zen_quest.in_combat[user_id] = False
                 if winner_id == user_id:
+                    victory_scene = await zen_quest.generate_victory_scene()
+                    await send_message(update, victory_scene)
                     await zen_quest.progress_story(update, context, "victory in combat")
-                    await send_message(update, "Your quest continues. What would you like to do next?")
                 else:
+                    defeat_scene = await zen_quest.generate_defeat_scene()
+                    await send_message(update, defeat_scene)
                     await zen_quest.end_quest(update, context, victory=False, reason="You have been defeated in combat.")
             return
 
