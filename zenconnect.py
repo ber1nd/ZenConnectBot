@@ -1933,6 +1933,9 @@ class ZenQuest:
                 self.current_stage[user_id] += 1
                 await self.update_quest_state(user_id)
 
+                # Send the updated scene to the user
+                await self.send_scene(context=context, user_id=user_id)
+
                 # Ensure combat state is cleared before progressing the story
                 self.in_combat[user_id] = False
                 logger.info(f"Combat state cleared for User {user_id}")
@@ -2515,12 +2518,6 @@ class ZenQuest:
         for msg in messages:
             await context.bot.send_message(chat_id=user_id, text=msg)
 
-    def process_scene(self, scene):
-        parts = scene.split("Your choices:")
-        description = parts[0].strip()
-        choices = parts[1].strip() if len(parts) > 1 else ""
-        return description, choices
-
     async def send_scene(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, user_id: int = None):
         if update:
             user_id = update.effective_user.id
@@ -2544,6 +2541,29 @@ class ZenQuest:
             await self.send_split_message_context(context, user_id, description)
             if choices:
                 await self.send_split_message_context(context, user_id, f"Your choices:\n{choices}")
+
+    def process_scene(self, scene):
+        parts = scene.split("Your choices:")
+        description = parts[0].strip()
+        choices = parts[1].strip() if len(parts) > 1 else ""
+        return description, choices
+
+    async def update_quest_state(self, user_id):
+        current_stage = self.current_stage.get(user_id, 0)
+        total_stages = self.total_stages.get(user_id, 1)
+        progress = current_stage / total_stages
+
+        if progress >= 0.9:
+            self.quest_state[user_id] = "final_challenge"
+        elif progress >= 0.7:
+            self.quest_state[user_id] = "nearing_end"
+        elif progress >= 0.3:
+            self.quest_state[user_id] = "middle"
+        else:
+            self.quest_state[user_id] = "beginning"
+
+    async def generate_response(self, prompt, elaborate=False):
+        return await generate_response(prompt, elaborate)
 
 # Global instance of ZenQuest
 zen_quest = ZenQuest()
