@@ -466,6 +466,7 @@ async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await zen_quest.start_quest(update, context)
 
+
 async def interrupt_quest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await zen_quest.interrupt_quest(update, context)
 
@@ -1616,7 +1617,6 @@ async def bot_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cursor.close()
                 db.close()
 
-
 class ZenQuest:
     def __init__(self):
         self.quest_active = {}
@@ -1640,43 +1640,7 @@ class ZenQuest:
             "destroy sacred artifact", "harm innocent", "break vow", "ignore warning",
             "consume poison", "jump off cliff", "attack ally", "steal from temple"
         ]
-    
-    async def check_action_morality(self, action):
-        prompt = f"""
-        Evaluate the following action in the context of Zen teachings and general morality:
-        "{action}"
-        Is this action against Zen principles or morally wrong? Respond with 'Yes' or 'No' and provide a brief explanation (1-2 sentences).
-        Consider not just violence, but also actions that promote greed, hatred, or delusion.
-        """
-        response = await generate_response(prompt)
-        is_immoral = response.lower().startswith("yes")
-        reason = response.split(":", 1)[1].strip() if ":" in response else response
-        return {"is_immoral": is_immoral, "reason": reason}
-    async def generate_initial_scene(self, quest_goal):
-        prompt = f"""
-        Create a concise opening scene (max 100 words) for this Zen quest:
-        {quest_goal}
 
-        Include:
-        1. Brief description of the starting location
-        2. Introduction to the quest's purpose
-        3. Three distinct, non-trivial choices for the player to begin their journey
-        4. A hint of challenges ahead
-        """
-        return await generate_response(prompt, elaborate=True)
-
-    async def generate_quest_goal(self):
-        prompt = """
-        Create a brief Zen-themed quest goal (max 50 words). Include:
-        1. A journey of self-discovery or helping others
-        2. Exploration of a mystical or natural location
-        3. A search for wisdom or a symbolic artifact
-        4. A hint at physical and spiritual challenges
-        """
-        # Assuming you have an async method to generate a response, like a GPT-based AI.
-        goal = await self.generate_response(prompt, elaborate=False)
-        return goal
-    
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         if update.message.chat.type != 'private':
@@ -1736,7 +1700,6 @@ class ZenQuest:
                 await update.message.reply_text("You are currently in combat. Please use the provided buttons to make your move or use /surrender to give up.")
             return
 
-        # Handle non-combat input
         if user_id in self.riddles and self.riddles[user_id]['active']:
             await self.handle_riddle_input(update, context, user_input)
             return
@@ -1820,7 +1783,6 @@ class ZenQuest:
 
             self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + random.randint(-3, 3)))
 
-            # End quest if HP is depleted or karma is too low
             if self.player_hp[user_id] <= 0:
                 await self.end_quest(update, context, victory=False, reason="Your life force has been depleted. Your journey ends here.")
                 return
@@ -1862,11 +1824,27 @@ class ZenQuest:
         5. A brief Zen-like insight relevant to the situation (1 sentence)
         6. If applicable, include "HP_CHANGE: X" where X is the amount of HP gained or lost (integer only, no symbols)
         7. If the event type is "combat", one of the choices should explicitly lead to combat using the phrase "COMBAT_START"
+
+        Ensure the scene:
+        - Progresses the quest towards its goal, reflecting the current progress
+        - Presents a real possibility of failure or setback
+        - Maintains a balance between physical adventure and spiritual growth
+        - Incorporates Zen teachings or principles subtly
+        - Includes more challenging scenarios and consequences
+
+        If the event type is "quest_fail", incorporate an appropriate indicator in the scene.
+        If the progress is over 90%, start building towards a climactic final challenge.
+
+        Keep the total response under 200 words.
+
+        IMPORTANT: If you include an HP_CHANGE, it must follow this exact format:
+        HP_CHANGE: X (where X is a positive or negative integer without any symbols)
+        For example: HP_CHANGE: 5 or HP_CHANGE: -3
         """
 
         try:
-            next_scene = await self.generate_response(prompt, elaborate=True)
-
+            next_scene = await generate_response(prompt, elaborate=True)
+            
             # Ensure correct HP_CHANGE format
             if "HP_CHANGE:" in next_scene:
                 hp_change_parts = next_scene.split("HP_CHANGE:")
@@ -1879,6 +1857,7 @@ class ZenQuest:
                 except ValueError:
                     formatted_hp_change = "HP_CHANGE: 0"  # Default to no change if invalid
                 next_scene = before_hp_change + formatted_hp_change + " ".join(after_hp_change.split()[1:])
+            
         except Exception as e:
             logger.error(f"Error generating next scene: {e}")
             return "An error occurred while generating the next scene. Please try again."
@@ -1887,9 +1866,9 @@ class ZenQuest:
 
     async def initiate_combat(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, opponent="unknown"):
         self.in_combat[user_id] = True
-
+        
         battle_context = await self.generate_pvp_context(self.current_scene[user_id], self.quest_goal[user_id])
-
+        
         db = get_db_connection()
         if db:
             try:
@@ -1957,14 +1936,15 @@ class ZenQuest:
                 self.in_combat[user_id] = False
                 logger.info(f"Combat state cleared for User {user_id}")
 
-                # If the player lost, end the quest
-                if not victory:
-                    await self.end_quest(None, context, victory=False, reason="You have been defeated in combat.", user_id=user_id)
-                else:
-                    # Continue the quest after a win
-                    await self.progress_story(None, context, "finished combat", user_id)
+                # Call progress_story to continue quest without sending a separate message
+                await self.progress_story(None, context, "finished combat", user_id)
 
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
+            
+            # Check if the bot won, and end the quest if it did
+            if not victory:
+                await self.end_quest(None, context, victory=False, reason="You were defeated in combat.")
+                return
 
         except AssertionError as ae:
             logger.error(f"AssertionError in end_pvp_battle: {ae}")
@@ -1982,6 +1962,241 @@ class ZenQuest:
             # Ensure combat state is cleared
             self.in_combat[user_id] = False
             logger.info(f"Combat state cleared for User {user_id}")
+
+    async def handle_combat_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        
+        if update.callback_query:
+            await self.process_combat_move(update, context)
+        elif update.message.text.lower() == '/surrender':
+            await self.surrender(update, context)
+        else:
+            await update.message.reply_text("You are currently in combat. Please use the provided buttons to make your move or use /surrender to give up.")
+
+    async def process_combat_move(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        user_id = query.from_user.id
+        move = query.data.split('_')[1]
+
+        db = get_db_connection()
+        if not db:
+            await query.answer("Unable to process move. Please try again.")
+            return
+
+        try:
+            cursor = db.cursor(dictionary=True)
+            battle_id = context.user_data.get('battle_id')
+            
+            cursor.execute("SELECT * FROM pvp_battles WHERE id = %s", (battle_id,))
+            battle = cursor.fetchone()
+
+            if not battle or battle['status'] != 'in_progress':
+                await query.answer("This battle has ended or doesn't exist.")
+                self.in_combat[user_id] = False
+                return
+
+            is_challenger = battle['challenger_id'] == user_id
+            player_key = 'challenger' if is_challenger else 'opponent'
+            opponent_key = 'opponent' if is_challenger else 'challenger'
+
+            result = await perform_action(move, battle[f'{player_key}_hp'], battle[f'{opponent_key}_hp'], 
+                                        context.user_data[f'{player_key}_energy'], 
+                                        context.user_data.get(f'{player_key}_next_turn_synergy', {}),
+                                        context, player_key, False, "Opponent")
+
+            if not result:
+                await query.answer("Invalid move or not enough energy.")
+                return
+
+            result_message, new_player_hp, new_opponent_hp, new_player_energy, damage, heal, energy_cost, energy_gain, synergy_effect = result
+
+            cursor.execute(f"""
+                UPDATE pvp_battles 
+                SET {player_key}_hp = %s, {opponent_key}_hp = %s, current_turn = %s 
+                WHERE id = %s
+            """, (new_player_hp, new_opponent_hp, battle[f'{opponent_key}_id'], battle_id))
+            db.commit()
+
+            context.user_data[f'{player_key}_energy'] = new_player_energy
+
+            if new_player_hp <= 0 or new_opponent_hp <= 0:
+                winner_id = user_id if new_opponent_hp <= 0 else battle[f'{opponent_key}_id']
+                await self.end_pvp_battle(context, user_id, new_opponent_hp <= 0, battle_id)
+            else:
+                battle_state = f"Your HP: {new_player_hp}, Energy: {new_player_energy}\nOpponent HP: {new_opponent_hp}"
+                await query.edit_message_text(f"{battle_state}\n\nChoose your next move:", reply_markup=generate_pvp_move_buttons(user_id))
+
+                if battle[f'{opponent_key}_id'] == 7283636452:
+                    await self.ai_combat_move(update, context, battle_id)
+
+        except Exception as e:
+            logger.error(f"Error in process_combat_move: {e}", exc_info=True)
+            await query.answer("An error occurred. Please try again.")
+        finally:
+            if db and db.is_connected():
+                cursor.close()
+                db.close()
+
+    async def ai_combat_move(self, update: Update, context: ContextTypes.DEFAULT_TYPE, battle_id: int):
+        db = get_db_connection()
+        if not db:
+            logger.error("Database connection failed in ai_combat_move")
+            return
+
+        try:
+            cursor = db.cursor(dictionary=True)
+            cursor.execute("SELECT * FROM pvp_battles WHERE id = %s", (battle_id,))
+            battle = cursor.fetchone()
+
+            if not battle or battle['status'] != 'in_progress':
+                logger.error(f"Invalid battle state in ai_combat_move: {battle}")
+                return
+
+            ai_hp = battle['opponent_hp']
+            player_hp = battle['challenger_hp']
+            ai_energy = context.user_data.get('opponent_energy', 50)
+
+            prompt = f"""
+            You are a Zen warrior AI engaged in a strategic duel. Your goal is to win decisively by reducing your opponent's HP to 0 while keeping your HP above 0.
+
+            Current situation:
+            - Your HP: {ai_hp}/100
+            - Opponent's HP: {player_hp}/100
+            - Your Energy: {ai_energy}/100
+            - Your Last Move: {context.user_data.get('opponent_previous_move', 'None')}
+
+            Available actions:
+            - Strike: Deal moderate damage to the opponent. Costs 12 energy.
+            - Defend: Heal yourself and gain energy. Costs 0 energy, gains 10 energy.
+            - Focus: Recover energy and increase your critical hit chances for the next turn. Gains 20-30 energy.
+            - Zen Strike: A powerful move that deals significant damage. Costs 40 energy.
+            - Mind Trap: Reduces the effectiveness of the opponent's next move by 50%. Costs 20 energy.
+
+            Choose the most strategic action based on the current situation and your previous move.
+            Respond with only the name of the chosen action.
+            """
+
+            ai_response = await generate_response(prompt)
+            logger.info(f"AI response for bot move: {ai_response}")
+
+            action = ai_response.lower().strip()
+            if action not in ["strike", "defend", "focus", "zenstrike", "mindtrap"]:
+                action = "defend"  # Default to defend if invalid action
+
+            result = await perform_action(action, ai_hp, player_hp, ai_energy, 
+                                        context.user_data.get('opponent_next_turn_synergy', {}),
+                                        context, 'opponent', True, "Player")
+
+            if result:
+                result_message, new_ai_hp, new_player_hp, new_ai_energy, damage, heal, energy_cost, energy_gain, synergy_effect = result
+
+                cursor.execute("""
+                    UPDATE pvp_battles 
+                    SET challenger_hp = %s, opponent_hp = %s, current_turn = %s 
+                    WHERE id = %s
+                """, (new_player_hp, new_ai_hp, battle['challenger_id'], battle_id))
+                db.commit()
+
+                context.user_data['opponent_energy'] = new_ai_energy
+
+                if new_player_hp <= 0 or new_ai_hp <= 0:
+                    winner_id = battle['opponent_id'] if new_player_hp <= 0 else battle['challenger_id']
+                    await self.end_pvp_battle(context, battle['challenger_id'], new_player_hp > 0, battle_id)
+                else:
+                    battle_state = f"Your HP: {new_player_hp}\nOpponent HP: {new_ai_hp}"
+                    await update.callback_query.message.edit_text(
+                        f"{battle_state}\n\nThe AI used {action}. Your turn! Choose your move:",
+                        reply_markup=generate_pvp_move_buttons(battle['challenger_id'])
+                    )
+        except Exception as e:
+            logger.error(f"Error in ai_combat_move: {e}", exc_info=True)
+        finally:
+            if db and db.is_connected():
+                cursor.close()
+                db.close()
+
+    async def end_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, winner_id: int, battle_id: int):
+        logger.info(f"Ending combat. Winner ID: {winner_id}, Battle ID: {battle_id}")
+        
+        db = get_db_connection()
+        if not db:
+            logger.error("Database connection failed in end_combat")
+            return
+
+        try:
+            cursor = db.cursor(dictionary=True)
+            cursor.execute("SELECT * FROM pvp_battles WHERE id = %s", (battle_id,))
+            battle = cursor.fetchone()
+
+            if not battle:
+                logger.error(f"No battle found with id {battle_id}")
+                return
+
+            user_id = battle['challenger_id']
+            victory = winner_id == user_id
+            logger.info(f"Battle found. User ID: {user_id}, Victory: {victory}")
+
+            cursor.execute("""
+                UPDATE pvp_battles 
+                SET status = 'completed', winner_id = %s 
+                WHERE id = %s
+            """, (winner_id, battle_id))
+            db.commit()
+
+            # Clear combat state
+            self.in_combat[user_id] = False
+            self.player_hp[user_id] = battle['challenger_hp']
+            logger.info(f"Combat state cleared for User {user_id}. HP: {self.player_hp[user_id]}")
+
+            # Generate battle conclusion
+            battle_outcome = "victory" if victory else "defeat"
+            battle_conclusion = await self.generate_combat_conclusion(victory)
+            logger.info(f"Combat conclusion generated for User {user_id}. Conclusion: {battle_conclusion}")
+            
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=battle_conclusion)
+
+            # Update karma and progress the story
+            karma_change = 10 if victory else -5
+            self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
+            self.current_stage[user_id] += 1
+            await self.update_quest_state(user_id)
+
+            # Update the current scene with the battle conclusion
+            self.current_scene[user_id] += f"\n\n{battle_conclusion}"
+
+            # Ensure the quest continues after combat
+            await self.progress_story(update, context, "finished combat", user_id)
+            logger.info(f"Quest continues after combat for User {user_id}")
+
+            # Clear any remaining combat-related data
+            for key in ['battle_id', 'challenger_energy', 'opponent_energy']:
+                context.user_data.pop(key, None)
+            logger.info(f"Cleared combat-related data for User {user_id}")
+
+        except Exception as e:
+            logger.error(f"Error in end_combat: {e}", exc_info=True)
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="An error occurred while ending the battle. Your quest will continue, but some details may be inconsistent."
+            )
+        finally:
+            if db and db.is_connected():
+                cursor.close()
+                db.close()
+
+        # Double-check that combat state is cleared
+        self.in_combat[user_id] = False
+        logger.info(f"Final check: Combat state cleared for User {user_id}")
+
+    async def generate_combat_conclusion(self, victory: bool):
+        prompt = f"""
+        Generate a brief conclusion (3-4 sentences) for a {'victorious' if victory else 'lost'} combat in a Zen-themed quest.
+        Include:
+        1. The immediate outcome of the battle
+        2. How it affects the player's spiritual journey
+        3. A Zen-like insight gained from the experience
+        """
+        return await generate_response(prompt, elaborate=False)
 
     async def surrender(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -2016,16 +2231,15 @@ class ZenQuest:
                 2. The spiritual toll of giving up
                 3. A hint at how this might affect their journey moving forward
                 """
-                consequence = await self.generate_response(consequence_prompt)
-
+                consequence = await generate_response(consequence_prompt)
+                
                 # End combat without sending a separate message
-                await self.end_pvp_battle(context, user_id, False, battle['id'])
-
+                await self.end_combat(update, context, winner_id, battle['id'])
+                
                 # Send a single message with the surrender consequences
                 await update.message.reply_text(f"You have chosen to surrender. {consequence}")
-
-                # If the player's HP or Karma drops too low, end the quest
-                if self.player_hp.get(user_id, 0) <= 0 or self.player_karma.get(user_id, 0) <= 10:
+                
+                if self.player_hp[user_id] <= 0 or self.player_karma[user_id] <= 10:
                     await self.end_quest(update, context, victory=False, reason="Your surrender has led to a premature end of your journey.")
             else:
                 await update.message.reply_text("No active battles found to surrender.")
@@ -2039,14 +2253,48 @@ class ZenQuest:
                 cursor.close()
                 db.close()
 
-    async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str, user_id: int = None):
-        if update:
-            user_id = update.effective_user.id
+    async def initiate_riddle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        riddle = await self.generate_riddle()
+        self.riddles[user_id] = {'riddle': riddle['riddle'], 'answer': riddle['answer'], 'active': True, 'attempts': 0}
+        await update.message.reply_text(f"Solve this riddle:\n\n{riddle['riddle']}\n\nYou have 3 attempts.")
+
+    async def handle_riddle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
+        user_id = update.effective_user.id
+        riddle_info = self.riddles[user_id]
+        riddle_info['attempts'] += 1
+
+        if user_input.lower() == riddle_info['answer'].lower():
+            await update.message.reply_text("Correct! You have solved the riddle.")
+            self.player_karma[user_id] = min(100, self.player_karma[user_id] + 5)
+            await self.progress_story(update, context, "solved the riddle")
+        elif riddle_info['attempts'] >= 3:
+            await update.message.reply_text(f"You've used all your attempts. The correct answer was: {riddle_info['answer']}")
+            self.player_karma[user_id] = max(0, self.player_karma[user_id] - 5)
+            await self.progress_story(update, context, "failed to solve the riddle")
+        else:
+            remaining_attempts = 3 - riddle_info['attempts']
+            await update.message.reply_text(f"That's not correct. You have {remaining_attempts} attempts left.")
+
+        riddle_info['active'] = riddle_info['attempts'] < 3
+
+    async def generate_riddle(self):
+        prompt = """
+        Generate a Zen-themed riddle with its answer. The riddle should be challenging but solvable.
+        Format:
+        Riddle: [Your riddle here]
+        Answer: [The answer to the riddle]
+        """
+        response = await generate_response(prompt)
+        riddle_parts = response.split("Answer:")
+        return {'riddle': riddle_parts[0].replace("Riddle:", "").strip(), 'answer': riddle_parts[1].strip()}
+
+    async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
+        user_id = update.effective_user.id if update else context._user_id
         
         self.quest_active[user_id] = False
         self.in_combat[user_id] = False
 
-        # Generate a Zen-like conclusion based on victory or defeat
         conclusion = await self.generate_quest_conclusion(victory, self.current_stage.get(user_id, 0))
         message = f"{reason}\n\n{conclusion}"
 
@@ -2055,18 +2303,13 @@ class ZenQuest:
         else:
             await context.bot.send_message(chat_id=user_id, text=message)
 
-        # Adjust Zen points depending on victory or defeat
         zen_points = random.randint(30, 50) if victory else -random.randint(10, 20)
         zen_message = f"You have {'earned' if victory else 'lost'} {abs(zen_points)} Zen points!"
         
-        if update:
-            await update.message.reply_text(zen_message)
-        else:
-            await context.bot.send_message(chat_id=user_id, text=zen_message)
-
+        await update.message.reply_text(zen_message)
         await add_zen_points(update, context, zen_points)
 
-        # Clean up the user's quest data
+        # Clear quest data for the user
         for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal', 'in_combat', 'riddles', 'total_stages']:
             getattr(self, attr).pop(user_id, None)
 
@@ -2075,31 +2318,37 @@ class ZenQuest:
         Generate a brief, zen-like conclusion for a {'successful' if victory else 'failed'} quest that ended at stage {stage}.
         Include:
         1. A reflection on the journey and {'growth' if victory else 'lessons from failure'}
-        2. A subtle Zen teaching or insight gained
+        2. A subtle zen teaching or insight gained
         3. {'Encouragement for future quests' if victory else 'Gentle encouragement to try again'}
         Keep it concise, around 3-4 sentences.
         """
-        return await self.generate_response(prompt)
+        return await generate_response(prompt)
 
-    # Method to check if an action is unfeasible in the current realm
+    async def interrupt_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if self.quest_active.get(user_id, False):
+            self.quest_active[user_id] = False
+            self.in_combat[user_id] = False
+            await update.message.reply_text("Your quest has been interrupted. You can start a new one with /zenquest.")
+            for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal', 'riddles', 'total_stages']:
+                getattr(self, attr).pop(user_id, None)
+        else:
+            await update.message.reply_text("You don't have an active quest to interrupt.")
+
     def is_action_unfeasible(self, action):
         return any(unfeasible in action.lower() for unfeasible in self.unfeasible_actions)
 
-    # Method to check if an action leads to quest failure
     def is_action_failure(self, action):
         return any(failure in action.lower() for failure in self.failure_actions)
 
-    # Handle an unfeasible action
     async def handle_unfeasible_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("That action is not possible in this realm. Please choose a different path.")
 
-    # Handle a failure action
     async def handle_failure_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         await update.message.reply_text("Your choice leads to an unfortunate end.")
         await self.end_quest(update, context, victory=False, reason="You have chosen a path that ends your journey prematurely.")
 
-    # Handle self-harm actions
     async def handle_self_harm(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         user_id = update.effective_user.id
         self.player_karma[user_id] = max(0, self.player_karma[user_id] - 30)
@@ -2120,44 +2369,160 @@ class ZenQuest:
         Keep the description serious but non-graphic, and end with a gentle reminder about the value of life and the potential for healing.
         """
         
-        consequence = await self.generate_response(consequence_prompt)
+        consequence = await generate_response(consequence_prompt)
         await update.message.reply_text(consequence)
-
-        # End the quest if HP drops to 0 or below
+        
         if self.player_hp[user_id] <= 0:
             await self.end_quest(update, context, victory=False, reason="Your actions have led to a tragic end. Remember, every life is precious.")
         else:
             await self.send_scene(update, context)
 
-    # Method to update the current quest state based on the player's progress
-    async def update_quest_state(self, user_id):
+    async def get_quest_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if not self.quest_active.get(user_id, False):
+            await update.message.reply_text("You are not currently on a quest. Use /zenquest to start a new journey.")
+            return
+
         current_stage = self.current_stage.get(user_id, 0)
         total_stages = self.total_stages.get(user_id, 1)
-        progress = current_stage / total_stages
+        progress = (current_stage / total_stages) * 100
 
-        if progress >= 0.9:
-            self.quest_state[user_id] = "final_challenge"
-        elif progress >= 0.7:
-            self.quest_state[user_id] = "nearing_end"
-        elif progress >= 0.3:
-            self.quest_state[user_id] = "middle"
+        status_message = f"""
+        Quest Status:
+        Goal: {self.quest_goal.get(user_id, 'Unknown')}
+        Progress: {progress:.1f}% complete
+        Current Stage: {current_stage}/{total_stages}
+        HP: {self.player_hp.get(user_id, 100)}
+        Karma: {self.player_karma.get(user_id, 0)}
+        Quest State: {self.quest_state.get(user_id, 'Unknown')}
+        In Combat: {'Yes' if self.in_combat.get(user_id, False) else 'No'}
+        """
+        await update.message.reply_text(status_message)
+
+    async def meditate(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if not self.quest_active.get(user_id, False):
+            await update.message.reply_text("You can only meditate during an active quest. Use /zenquest to start a journey.")
+            return
+
+        meditation_prompt = f"""
+        The player decides to meditate in their current situation:
+        Current scene: {self.current_scene.get(user_id, 'Unknown')}
+        Quest state: {self.quest_state.get(user_id, 'Unknown')}
+
+        Generate a brief meditation experience (2-3 sentences) that:
+        1. Provides a moment of insight or clarity
+        2. Slightly improves the player's spiritual state
+        3. Hints at a possible path forward in the quest
+        """
+        meditation_result = await generate_response(meditation_prompt)
+        
+        self.player_karma[user_id] = min(100, self.player_karma.get(user_id, 0) + 5)
+        self.player_hp[user_id] = min(100, self.player_hp.get(user_id, 100) + 10)
+
+        await update.message.reply_text(f"{meditation_result}\n\nYour karma and HP have slightly improved.")
+
+    async def generate_quest_goal(self):
+        prompt = """
+        Create a brief Zen-themed quest goal (max 50 words). Include:
+        1. A journey of self-discovery or helping others
+        2. Exploration of a mystical or natural location
+        3. A search for wisdom or a symbolic artifact
+        4. A hint at physical and spiritual challenges
+        """
+        return await generate_response(prompt, elaborate=False)
+
+    async def generate_initial_scene(self, quest_goal):
+        prompt = f"""
+        Create a concise opening scene (max 100 words) for this Zen quest:
+        {quest_goal}
+
+        Include:
+        1. Brief description of the starting location
+        2. Introduction to the quest's purpose
+        3. Three distinct, non-trivial choices for the player to begin their journey
+        4. A hint of challenges ahead
+        """
+        return await generate_response(prompt, elaborate=True)
+
+    async def generate_pvp_context(self, current_scene, quest_goal):
+        prompt = f"""
+        Based on the current scene and quest goal, generate a brief context (2-3 sentences) for why a combat situation is starting:
+        Current scene: {current_scene}
+        Quest goal: {quest_goal}
+        The context should:
+        1. Explain the sudden appearance of an opponent
+        2. Provide a clear reason for the conflict
+        3. Fit thematically with the Zen quest
+        4. Suggest how the outcome might affect the quest's progression
+        """
+        return await generate_response(prompt, elaborate=False)
+
+    async def check_action_morality(self, action):
+        prompt = f"""
+        Evaluate the following action in the context of Zen teachings and general morality:
+        "{action}"
+        Is this action against Zen principles or morally wrong? Respond with 'Yes' or 'No' and provide a brief explanation (1-2 sentences).
+        Consider not just violence, but also actions that promote greed, hatred, or delusion.
+        """
+        response = await generate_response(prompt)
+        is_immoral = response.lower().startswith("yes")
+        reason = response.split(":", 1)[1].strip() if ":" in response else response
+        return {"is_immoral": is_immoral, "reason": reason}
+
+    async def generate_severe_consequence(self, reason, current_scene):
+        prompt = f"""
+        The player has committed a severely immoral or unethical act: {reason}
+        Current scene: {current_scene}
+
+        Generate a severe consequence for this action. It should be one of:
+        1. Immediate quest failure due to a complete violation of Zen principles
+        2. Confrontation with powerful spiritual guardians leading to combat
+        3. A karmic curse or spiritual affliction that greatly hinders the player's progress
+
+        Provide a vivid description of the consequence (3-4 sentences) and specify the type ('quest_fail', 'combat', or 'affliction').
+        The consequence should be severe and directly tied to the player's action, emphasizing the importance of moral choices in the quest.
+        It should also fit within the mystical and spiritual theme of the quest.
+        """
+        response = await generate_response(prompt)
+        if "quest_fail" in response.lower():
+            type = "quest_fail"
+        elif "combat" in response.lower():
+            type = "combat"
         else:
-            self.quest_state[user_id] = "beginning"
+            type = "affliction"
+        return {"type": type, "description": response}
 
-    # Utility to split and send long messages
+    async def apply_affliction(self, update: Update, context: ContextTypes.DEFAULT_TYPE, affliction_description):
+        user_id = update.effective_user.id
+        self.player_karma[user_id] -= 10
+        
+        consequence_prompt = f"""
+        The player has been afflicted: {affliction_description}
+        Current Karma: {self.player_karma[user_id]}
+
+        Describe the immediate consequences and how it affects the current scene in 2-3 sentences. 
+        Integrate the affliction smoothly into the narrative, maintaining the tone and context of the quest.
+        """
+        
+        integrated_consequence = await generate_response(consequence_prompt)
+        
+        self.current_scene[user_id] += f"\n\n{integrated_consequence}"
+        
+        await self.send_scene(update, context)
+
     async def send_split_message(self, update: Update, message: str):
         max_length = 4000  # Telegram's message limit is 4096 characters, but we'll use 4000 to be safe
         messages = [message[i:i+max_length] for i in range(0, len(message), max_length)]
         for msg in messages:
             await update.message.reply_text(msg)
-            
+
     async def send_split_message_context(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, message: str):
         max_length = 4000  # Telegram's message limit is 4096 characters, but we'll use 4000 to be safe
         messages = [message[i:i+max_length] for i in range(0, len(message), max_length)]
         for msg in messages:
             await context.bot.send_message(chat_id=user_id, text=msg)
 
-    # Method to send the current scene to the user
     async def send_scene(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, user_id: int = None):
         if update:
             user_id = update.effective_user.id
@@ -2182,20 +2547,30 @@ class ZenQuest:
             if choices:
                 await self.send_split_message_context(context, user_id, f"Your choices:\n{choices}")
 
-    # Utility to process the scene into a description and choices
     def process_scene(self, scene):
         parts = scene.split("Your choices:")
         description = parts[0].strip()
         choices = parts[1].strip() if len(parts) > 1 else ""
         return description, choices
 
+    async def update_quest_state(self, user_id):
+        current_stage = self.current_stage.get(user_id, 0)
+        total_stages = self.total_stages.get(user_id, 1)
+        progress = current_stage / total_stages
+
+        if progress >= 0.9:
+            self.quest_state[user_id] = "final_challenge"
+        elif progress >= 0.7:
+            self.quest_state[user_id] = "nearing_end"
+        elif progress >= 0.3:
+            self.quest_state[user_id] = "middle"
+        else:
+            self.quest_state[user_id] = "beginning"
+
     async def generate_response(self, prompt, elaborate=False):
         return await generate_response(prompt, elaborate)
-    
 
-    
-
-# Instantiate ZenQuest after its definition
+# Global instance of ZenQuest
 zen_quest = ZenQuest()
 
 
