@@ -1911,6 +1911,13 @@ class ZenQuest:
         try:
             assert battle_id is not None, "battle_id is missing in end_pvp_battle"
 
+            db = get_db_connection()
+            if not db:
+                logger.error("Failed to establish database connection in end_pvp_battle")
+                return
+
+            cursor = db.cursor(dictionary=True)
+
             if user_id != 7283636452:  # Only update karma for real players, not the bot
                 karma_change = 10 if victory else -5
                 self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
@@ -1936,6 +1943,10 @@ class ZenQuest:
                 self.in_combat[user_id] = False
                 logger.info(f"Combat state cleared for User {user_id}")
 
+                cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", 
+                               (user_id if victory else 7283636452, battle_id))
+                db.commit()
+
                 if not victory:
                     # End the quest with failure if the player lost the combat
                     await self.end_quest(None, context, victory=False, reason="You have been defeated in combat. Your journey ends here.", user_id=user_id)
@@ -1944,6 +1955,10 @@ class ZenQuest:
                     await self.progress_story(None, context, "finished combat", user_id)
 
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
+
+            # Send a message to the user about the battle outcome
+            outcome_message = "You have emerged victorious in combat!" if victory else "You have been defeated in combat."
+            await context.bot.send_message(chat_id=user_id, text=f"{outcome_message}\n\n{battle_conclusion}")
 
         except AssertionError as ae:
             logger.error(f"AssertionError in end_pvp_battle: {ae}")
@@ -1961,6 +1976,13 @@ class ZenQuest:
             # Ensure combat state is cleared
             self.in_combat[user_id] = False
             logger.info(f"Combat state cleared for User {user_id}")
+
+            # Close cursor and database connection
+            if 'cursor' in locals():
+                cursor.close()
+            if 'db' in locals() and db.is_connected():
+                db.close()
+                logger.info(f"Database connection closed for User {user_id}")
 
     async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str, user_id: int = None):
         if user_id is None:
@@ -2277,6 +2299,13 @@ class ZenQuest:
         try:
             assert battle_id is not None, "battle_id is missing in end_pvp_battle"
 
+            db = get_db_connection()
+            if not db:
+                logger.error("Failed to establish database connection in end_pvp_battle")
+                return
+
+            cursor = db.cursor(dictionary=True)
+
             if user_id != 7283636452:  # Only update karma for real players, not the bot
                 karma_change = 10 if victory else -5
                 self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
@@ -2302,6 +2331,10 @@ class ZenQuest:
                 self.in_combat[user_id] = False
                 logger.info(f"Combat state cleared for User {user_id}")
 
+                cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", 
+                               (user_id if victory else 7283636452, battle_id))
+                db.commit()
+
                 if not victory:
                     # End the quest with failure if the player lost the combat
                     await self.end_quest(None, context, victory=False, reason="You have been defeated in combat. Your journey ends here.", user_id=user_id)
@@ -2310,6 +2343,10 @@ class ZenQuest:
                     await self.progress_story(None, context, "finished combat", user_id)
 
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
+
+            # Send a message to the user about the battle outcome
+            outcome_message = "You have emerged victorious in combat!" if victory else "You have been defeated in combat."
+            await context.bot.send_message(chat_id=user_id, text=f"{outcome_message}\n\n{battle_conclusion}")
 
         except AssertionError as ae:
             logger.error(f"AssertionError in end_pvp_battle: {ae}")
@@ -2327,6 +2364,13 @@ class ZenQuest:
             # Ensure combat state is cleared
             self.in_combat[user_id] = False
             logger.info(f"Combat state cleared for User {user_id}")
+
+            # Close cursor and database connection
+            if 'cursor' in locals():
+                cursor.close()
+            if 'db' in locals() and db.is_connected():
+                db.close()
+                logger.info(f"Database connection closed for User {user_id}")
 
     async def handle_combat_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -2599,7 +2643,7 @@ class ZenQuest:
                 consequence = await generate_response(consequence_prompt)
                 
                 # End combat without sending a separate message
-                await self.end_combat(update, context, winner_id, battle['id'])
+                await self.end_pvp_battle(context, user_id, False, battle['id'])
                 
                 # Send a single message with the surrender consequences
                 await update.message.reply_text(f"You have chosen to surrender. {consequence}")
