@@ -1911,33 +1911,47 @@ class ZenQuest:
         try:
             assert battle_id is not None, "battle_id is missing in end_pvp_battle"
 
-            if user_id != 7283636452:  # Only update karma for real players, not the bot
-                karma_change = 10 if victory else -5
-                self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
+            if user_id != 7283636452:  # Only update for real players, not the bot
+                if victory:
+                    karma_change = 10
+                    hp_change = 20
+                    self.player_karma[user_id] = min(100, self.player_karma[user_id] + karma_change)
+                    self.player_hp[user_id] = min(100, self.player_hp[user_id] + hp_change)
+                else:
+                    self.player_hp[user_id] = 0  # Set HP to 0 for defeat
 
             battle_outcome = "victory" if victory else "defeat"
             prompt = f"""
             The player has just experienced a {battle_outcome} in a spiritual combat during their Zen quest.
-            Generate a brief (2-3 sentences) description of:
+            Generate a brief (3-4 sentences) description of:
             1. The immediate aftermath of the battle
             2. How this {battle_outcome} affects the player's spiritual journey
-            3. A Zen-like insight gained from this experience
+            3. The physical and mental toll of the battle
+            4. A Zen-like insight gained from this experience
             """
             battle_conclusion = await self.generate_response(prompt)
 
             if user_id != 7283636452:  # Only update scene for real players, not the bot
                 self.current_scene[user_id] += f"\n\n{battle_conclusion}"
 
-                # Update quest progress
-                self.current_stage[user_id] += 1
-                await self.update_quest_state(user_id)
-
-                # Ensure combat state is cleared before progressing the story
+                # Ensure combat state is cleared
                 self.in_combat[user_id] = False
                 logger.info(f"Combat state cleared for User {user_id}")
 
-                # Call progress_story to continue quest without sending a separate message
-                await self.progress_story(None, context, "finished combat", user_id)
+                if victory:
+                    # Update quest progress
+                    self.current_stage[user_id] += 1
+                    await self.update_quest_state(user_id)
+
+                    # Send the battle conclusion
+                    await context.bot.send_message(chat_id=user_id, text=battle_conclusion)
+
+                    # Call progress_story to continue quest
+                    await self.progress_story(None, context, "finished combat", user_id)
+                else:
+                    # End the quest as a failure
+                    failure_reason = "You have been defeated in spiritual combat, ending your journey prematurely."
+                    await self.end_quest(context, user_id, victory=False, reason=failure_reason)
 
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
 
