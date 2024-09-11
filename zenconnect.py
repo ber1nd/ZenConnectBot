@@ -2158,7 +2158,9 @@ class ZenQuest:
         description = parts[0].strip()
         choices = parts[1].strip() if len(parts) > 1 else ""
         return description, choices
-    
+
+    async def generate_response(self, prompt, elaborate=False):
+        return await generate_response(prompt, elaborate)
 # Instantiate ZenQuest after its definition
 zen_quest = ZenQuest()
 
