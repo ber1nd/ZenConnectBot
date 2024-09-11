@@ -1903,7 +1903,7 @@ class ZenQuest:
             if user_id != 7283636452:  # Only update karma for real players, not the bot
                 karma_change = 10 if victory else -5
                 self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
-            
+
             battle_outcome = "victory" if victory else "defeat"
             prompt = f"""
             The player has just experienced a {battle_outcome} in a spiritual combat during their Zen quest.
@@ -1913,17 +1913,17 @@ class ZenQuest:
             3. A Zen-like insight gained from this experience
             """
             battle_conclusion = await self.generate_response(prompt)
-            
+
             if user_id != 7283636452:  # Only update scene for real players, not the bot
                 self.current_scene[user_id] += f"\n\n{battle_conclusion}"
-                
+
                 # Update quest progress
                 self.current_stage[user_id] += 1
                 await self.update_quest_state(user_id)
-                
-                # Send the updated scene to the user
-                await self.send_scene(context=context, user_id=user_id)
-            
+
+                # Ensure the quest continues after combat
+                await self.progress_story(context=context, user_input="finished combat")
+
             # Log the battle outcome
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
         
