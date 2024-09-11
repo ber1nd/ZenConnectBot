@@ -1936,14 +1936,8 @@ class ZenQuest:
                 self.in_combat[user_id] = False
                 logger.info(f"Combat state cleared for User {user_id}")
 
-                # Handle the outcome based on victory or defeat
-                if victory:
-                    # Call progress_story to continue quest if the player won
-                    await self.progress_story(None, context, "finished combat", user_id)
-                else:
-                    # If the player lost, end the quest with a failure
-                    await self.end_quest(None, context, victory=False, reason="You were defeated in battle. Your journey has come to an unfortunate end.")
-                    return
+                # Call progress_story to continue quest without sending a separate message
+                await self.progress_story(None, context, "finished combat", user_id)
 
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
 
