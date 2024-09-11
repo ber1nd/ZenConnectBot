@@ -1671,6 +1671,7 @@ class ZenQuest:
         user_input = update.message.text.lower()
 
         if not self.quest_active.get(user_id, False) or update.message.chat.type != 'private':
+            await update.message.reply_text("You don't have an active quest. Start a new one with /zenquest.")
             return
 
         # Double-check combat state
@@ -2016,10 +2017,7 @@ class ZenQuest:
 
             if new_player_hp <= 0 or new_opponent_hp <= 0:
                 winner_id = user_id if new_opponent_hp <= 0 else battle[f'{opponent_key}_id']
-                if new_player_hp <= 0:
-                    await self.end_quest(context, user_id, victory=False, reason="You have been defeated in combat. Your journey ends here.")
-                else:
-                    await self.end_pvp_battle(context, user_id, True, battle_id)
+                await self.end_combat(update, context, winner_id, battle_id)
             else:
                 battle_state = f"Your HP: {new_player_hp}, Energy: {new_player_energy}\nOpponent HP: {new_opponent_hp}"
                 await query.edit_message_text(f"{battle_state}\n\nChoose your next move:", reply_markup=generate_pvp_move_buttons(user_id))
@@ -2097,17 +2095,15 @@ class ZenQuest:
 
                 context.user_data['opponent_energy'] = new_ai_energy
 
-                if new_player_hp <= 0 or new_ai_hp <= 0:
-                    if new_player_hp <= 0:
-                        await self.end_quest(context, battle['challenger_id'], victory=False, reason="You have been defeated by the AI opponent. Your journey ends here.")
-                    else:
-                        await self.end_pvp_battle(context, battle['challenger_id'], True, battle_id)
-                else:
-                    battle_state = f"Your HP: {new_player_hp}\nOpponent HP: {new_ai_hp}"
-                    await update.callback_query.message.edit_text(
-                        f"{battle_state}\n\nThe AI used {action}. Your turn! Choose your move:",
-                        reply_markup=generate_pvp_move_buttons(battle['challenger_id'])
-                    )
+            if new_player_hp <= 0 or new_ai_hp <= 0:
+                winner_id = battle['opponent_id'] if new_player_hp <= 0 else battle['challenger_id']
+                await self.end_combat(update, context, winner_id, battle_id)
+            else:
+                battle_state = f"Your HP: {new_player_hp}\nOpponent HP: {new_ai_hp}"
+                await update.callback_query.message.edit_text(
+                    f"{battle_state}\n\nThe AI used {action}. Your turn! Choose your move:",
+                    reply_markup=generate_pvp_move_buttons(battle['challenger_id'])
+                )
 
         except Exception as e:
             logger.error(f"Error in ai_combat_move: {e}", exc_info=True)
@@ -2160,8 +2156,8 @@ class ZenQuest:
             karma_change = 10 if victory else -5
             self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
 
-            # If the player lost the combat, end the quest
             if not victory:
+                # If the player lost the combat, end the quest
                 await self.end_quest(update, context, victory=False, reason="You have been defeated in combat. Your journey ends here.")
             else:
                 # Continue the quest if the player won
@@ -2179,16 +2175,20 @@ class ZenQuest:
             logger.error(f"Error in end_combat: {e}", exc_info=True)
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="An error occurred while ending the battle. Your quest will continue, but some details may be inconsistent."
+                text="An error occurred while ending the battle. Your quest has ended."
             )
+            # Ensure the quest is marked as inactive in case of an error
+            self.quest_active[user_id] = False
         finally:
             if db and db.is_connected():
                 cursor.close()
                 db.close()
 
-        # Double-check that combat state is cleared
+        # Double-check that combat state is cleared and quest is inactive if player lost
         self.in_combat[user_id] = False
-        logger.info(f"Final check: Combat state cleared for User {user_id}")
+        if not victory:
+            self.quest_active[user_id] = False
+        logger.info(f"Final check: Combat state cleared for User {user_id}. Quest active: {self.quest_active.get(user_id, False)}")
 
     async def generate_combat_conclusion(self, victory: bool):
         prompt = f"""
