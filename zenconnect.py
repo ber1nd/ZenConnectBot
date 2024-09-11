@@ -1640,7 +1640,19 @@ class ZenQuest:
             "destroy sacred artifact", "harm innocent", "break vow", "ignore warning",
             "consume poison", "jump off cliff", "attack ally", "steal from temple"
         ]
-
+    
+    async def generate_quest_goal(self):
+        prompt = """
+        Create a brief Zen-themed quest goal (max 50 words). Include:
+        1. A journey of self-discovery or helping others
+        2. Exploration of a mystical or natural location
+        3. A search for wisdom or a symbolic artifact
+        4. A hint at physical and spiritual challenges
+        """
+        # Assuming you have an async method to generate a response, like a GPT-based AI.
+        goal = await self.generate_response(prompt, elaborate=False)
+        return goal
+    
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         if update.message.chat.type != 'private':
