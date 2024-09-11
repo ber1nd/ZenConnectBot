@@ -1803,7 +1803,7 @@ class ZenQuest:
         event_type = random.choices([
             "normal", "challenge", "reward", "meditation", "npc_encounter", "moral_dilemma",
             "spiritual_trial", "natural_obstacle", "mystical_phenomenon", "combat", "riddle", "quest_fail"
-        ], weights=[30, 15, 5, 5, 5, 10, 5, 5, 5, 10, 3, 2], k=1)[0]
+        ], weights=[30, 15, 5, 5, 5, 10, 5, 5, 5, 5, 10, 2], k=1)[0]
 
         prompt = f"""
         Previous scene: {self.current_scene[user_id]}
@@ -2168,6 +2168,11 @@ class ZenQuest:
                 context.user_data.pop(key, None)
             logger.info(f"Cleared combat-related data for User {user_id}")
 
+            # End the quest if the player loses combat
+            if not victory:
+                await self.end_quest(update, context, victory=False, reason="You have been defeated in combat. Your journey ends here.")
+                return
+
         except Exception as e:
             logger.error(f"Error in end_combat: {e}", exc_info=True)
             await context.bot.send_message(
@@ -2252,7 +2257,7 @@ class ZenQuest:
         user_id = update.effective_user.id
         riddle = await self.generate_riddle()
         self.riddles[user_id] = {'riddle': riddle['riddle'], 'answer': riddle['answer'], 'active': True, 'attempts': 0}
-        await update.message.reply_text(f"Solve this riddle:\n\n{riddle['riddle']}\n\nYou have 3 attempts.")
+        await update.message.reply_text(f"You encounter a mysterious sage who poses a riddle:\n\n{riddle['riddle']}\n\nYou have 3 attempts to solve it.")
 
     async def handle_riddle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         user_id = update.effective_user.id
@@ -2260,16 +2265,16 @@ class ZenQuest:
         riddle_info['attempts'] += 1
 
         if user_input.lower() == riddle_info['answer'].lower():
-            await update.message.reply_text("Correct! You have solved the riddle.")
+            await update.message.reply_text("Correct! The sage nods approvingly. 'You have wisdom beyond your years,' he says.")
             self.player_karma[user_id] = min(100, self.player_karma[user_id] + 5)
             await self.progress_story(update, context, "solved the riddle")
         elif riddle_info['attempts'] >= 3:
-            await update.message.reply_text(f"You've used all your attempts. The correct answer was: {riddle_info['answer']}")
+            await update.message.reply_text(f"The sage shakes his head. 'The answer was: {riddle_info['answer']}. Perhaps next time,' he says before vanishing.")
             self.player_karma[user_id] = max(0, self.player_karma[user_id] - 5)
             await self.progress_story(update, context, "failed to solve the riddle")
         else:
             remaining_attempts = 3 - riddle_info['attempts']
-            await update.message.reply_text(f"That's not correct. You have {remaining_attempts} attempts left.")
+            await update.message.reply_text(f"The sage frowns. 'That's not correct. You have {remaining_attempts} attempts left,' he says.")
 
         riddle_info['active'] = riddle_info['attempts'] < 3
 
