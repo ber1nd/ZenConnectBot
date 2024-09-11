@@ -2288,8 +2288,9 @@ class ZenQuest:
         riddle_parts = response.split("Answer:")
         return {'riddle': riddle_parts[0].replace("Riddle:", "").strip(), 'answer': riddle_parts[1].strip()}
 
-    async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
-        user_id = update.effective_user.id
+    async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str, user_id: int = None):
+        if update:
+            user_id = update.effective_user.id
         
         self.quest_active[user_id] = False
         self.in_combat[user_id] = False
@@ -2297,12 +2298,19 @@ class ZenQuest:
         conclusion = await self.generate_quest_conclusion(victory, self.current_stage.get(user_id, 0))
         message = f"{reason}\n\n{conclusion}"
         
-        await update.message.reply_text(message)
+        if update:
+            await update.message.reply_text(message)
+        else:
+            await context.bot.send_message(chat_id=user_id, text=message)
 
         zen_points = random.randint(30, 50) if victory else -random.randint(10, 20)
         zen_message = f"You have {'earned' if victory else 'lost'} {abs(zen_points)} Zen points!"
         
-        await update.message.reply_text(zen_message)
+        if update:
+            await update.message.reply_text(zen_message)
+        else:
+            await context.bot.send_message(chat_id=user_id, text=zen_message)
+        
         await add_zen_points(update, context, zen_points)
 
         for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal', 'in_combat', 'riddles', 'total_stages']:
