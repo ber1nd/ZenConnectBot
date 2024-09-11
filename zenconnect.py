@@ -2220,8 +2220,8 @@ class ZenQuest:
                 winner_id = battle['opponent_id'] if user_id == battle['challenger_id'] else battle['challenger_id']
                 
                 # Apply severe consequences
-                self.player_karma[user_id] = max(0, self.player_karma[user_id] - 30)  # Significant karma loss
-                self.player_hp[user_id] = max(0, self.player_hp[user_id] - 50)  # Severe HP loss
+                self.player_karma[user_id] = max(0, self.player_karma.get(user_id, 100) - 30)  # Significant karma loss
+                self.player_hp[user_id] = max(0, self.player_hp.get(user_id, 100) - 50)  # Severe HP loss
                 
                 consequence_prompt = f"""
                 The player has surrendered in combat during their Zen quest.
@@ -2238,7 +2238,7 @@ class ZenQuest:
                 # Send a single message with the surrender consequences
                 await update.message.reply_text(f"You have chosen to surrender. {consequence}")
                 
-                if self.player_hp[user_id] <= 0 or self.player_karma[user_id] <= 10:
+                if self.player_hp.get(user_id, 0) <= 0 or self.player_karma.get(user_id, 0) <= 10:
                     await self.end_quest(update, context, victory=False, reason="Your surrender has led to a premature end of your journey.")
             else:
                 await update.message.reply_text("No active battles found to surrender.")
