@@ -1964,6 +1964,7 @@ class ZenQuest:
 
             if not battle or battle['status'] != 'in_progress':
                 await query.answer("This battle has ended or doesn't exist.")
+                self.in_combat[user_id] = False
                 return
 
             is_challenger = battle['challenger_id'] == user_id
@@ -1971,9 +1972,9 @@ class ZenQuest:
             opponent_key = 'opponent' if is_challenger else 'challenger'
 
             result = await perform_action(move, battle[f'{player_key}_hp'], battle[f'{opponent_key}_hp'], 
-                                          context.user_data[f'{player_key}_energy'], 
-                                          context.user_data.get(f'{player_key}_next_turn_synergy', {}),
-                                          context, player_key, False, "Opponent")
+                                        context.user_data[f'{player_key}_energy'], 
+                                        context.user_data.get(f'{player_key}_next_turn_synergy', {}),
+                                        context, player_key, False, "Opponent")
 
             if not result:
                 await query.answer("Invalid move or not enough energy.")
@@ -2111,6 +2112,7 @@ class ZenQuest:
             """, (winner_id, battle_id))
             db.commit()
 
+            # Clear combat state
             self.in_combat[user_id] = False
             self.player_hp[user_id] = battle['challenger_hp']
 
@@ -2118,17 +2120,19 @@ class ZenQuest:
             
             await context.bot.send_message(chat_id=update.effective_chat.id, text=conclusion)
 
-            # Generate next scene without combat
-            next_scene_prompt = f"""
-            Generate a brief scene (3-4 sentences) that follows a {'victorious' if victory else 'lost'} combat in the Zen quest.
+            # Generate a post-combat scene
+            post_combat_prompt = f"""
+            Generate a brief scene (max 100 words) that follows a {'victorious' if victory else 'lost'} combat in the Zen quest.
             The scene should:
-            1. Describe the immediate aftermath of the battle
-            2. Provide a moment of reflection or insight
-            3. Present a new challenge or direction for the quest that doesn't involve immediate combat
-            4. Include three distinct, non-combat choices for the player's next action
+            1. Describe the immediate aftermath of the battle (1-2 sentences)
+            2. Provide a moment of reflection or insight (1 sentence)
+            3. Present a new, non-combat challenge or direction for the quest (1-2 sentences)
+            4. Include two distinct, non-combat choices for the player's next action (1 sentence each)
+
+            Do not include any combat options or "COMBAT_START" tags.
             """
-            next_scene = await self.generate_next_scene(user_id, "combat ended")
-            self.current_scene[user_id] = next_scene
+            post_combat_scene = await self.generate_response(post_combat_prompt, elaborate=False)
+            self.current_scene[user_id] = post_combat_scene
 
             # Update quest progress
             self.current_stage[user_id] += 1
@@ -2151,6 +2155,9 @@ class ZenQuest:
             if db and db.is_connected():
                 cursor.close()
                 db.close()
+
+        # Double-check that combat state is cleared
+        self.in_combat[user_id] = False
 
 
     async def generate_combat_conclusion(self, victory: bool):
