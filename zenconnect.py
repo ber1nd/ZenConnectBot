@@ -1717,15 +1717,16 @@ class ZenQuest:
 
         await self.progress_story(update, context, user_input)
 
-    async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
-        user_id = update.effective_user.id
+    async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str, user_id: int = None):
+        if user_id is None:
+            user_id = update.effective_user.id
 
         try:
             morality_check = await self.check_action_morality(user_input)
             
             if morality_check['is_immoral']:
                 consequence = await self.generate_severe_consequence(morality_check['reason'], self.current_scene[user_id])
-                await update.message.reply_text(consequence['description'])
+                await context.bot.send_message(chat_id=user_id, text=consequence['description'])
                 
                 self.player_karma[user_id] -= 20
 
@@ -1769,7 +1770,7 @@ class ZenQuest:
             else:
                 self.current_stage[user_id] += 1
                 await self.update_quest_state(user_id)
-                await self.send_scene(update, context)
+                await self.send_scene(context=context, user_id=user_id)
 
             self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + random.randint(-3, 3)))
 
@@ -1782,7 +1783,7 @@ class ZenQuest:
 
         except Exception as e:
             logger.error(f"Error progressing story: {e}", exc_info=True)
-            await update.message.reply_text("An error occurred while processing your action. Please try again.")
+            await context.bot.send_message(chat_id=user_id, text="An error occurred while processing your action. Please try again.")
 
     async def generate_next_scene(self, user_id: int, user_input: str):
         player_karma = self.player_karma.get(user_id, 100)
@@ -1928,7 +1929,8 @@ class ZenQuest:
                 await self.send_scene(context=context, user_id=user_id)
 
                 # Call progress_story to continue quest
-                await self.progress_story(context.bot, context, "finished combat", user_id)
+                update = Update(0)  # Create a dummy Update object
+                await self.progress_story(update, context, "finished combat", user_id)
 
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
 
@@ -2007,7 +2009,7 @@ class ZenQuest:
 
             if new_player_hp <= 0 or new_opponent_hp <= 0:
                 winner_id = user_id if new_opponent_hp <= 0 else battle[f'{opponent_key}_id']
-                await self.end_pvp_battle(context, user_id, new_opponent_hp <= 0, battle_id)  # Pass battle_id correctly here
+                await self.end_pvp_battle(context, user_id, new_opponent_hp <= 0, battle_id)
             else:
                 battle_state = f"Your HP: {new_player_hp}, Energy: {new_player_energy}\nOpponent HP: {new_opponent_hp}"
                 await query.edit_message_text(f"{battle_state}\n\nChoose your next move:", reply_markup=generate_pvp_move_buttons(user_id))
@@ -2087,7 +2089,7 @@ class ZenQuest:
 
                 if new_player_hp <= 0 or new_ai_hp <= 0:
                     winner_id = battle['opponent_id'] if new_player_hp <= 0 else battle['challenger_id']
-                    await self.end_pvp_battle(context, battle['challenger_id'], new_player_hp > 0, battle_id)  # Ensure battle_id is passed
+                    await self.end_pvp_battle(context, battle['challenger_id'], new_player_hp > 0, battle_id)
                 else:
                     battle_state = f"Your HP: {new_player_hp}\nOpponent HP: {new_ai_hp}"
                     await update.callback_query.message.edit_text(
