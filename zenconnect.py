@@ -1641,6 +1641,20 @@ class ZenQuest:
             "consume poison", "jump off cliff", "attack ally", "steal from temple"
         ]
     
+
+    async def generate_initial_scene(self, quest_goal):
+        prompt = f"""
+        Create a concise opening scene (max 100 words) for this Zen quest:
+        {quest_goal}
+
+        Include:
+        1. Brief description of the starting location
+        2. Introduction to the quest's purpose
+        3. Three distinct, non-trivial choices for the player to begin their journey
+        4. A hint of challenges ahead
+        """
+        return await generate_response(prompt, elaborate=True)
+
     async def generate_quest_goal(self):
         prompt = """
         Create a brief Zen-themed quest goal (max 50 words). Include:
