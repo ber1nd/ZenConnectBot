@@ -2098,14 +2098,17 @@ class ZenQuest:
                 context.user_data['opponent_energy'] = new_ai_energy
 
                 if new_player_hp <= 0 or new_ai_hp <= 0:
-                    winner_id = battle['opponent_id'] if new_player_hp <= 0 else battle['challenger_id']
-                    await self.end_pvp_battle(context, battle['challenger_id'], new_player_hp > 0, battle_id)
+                    if new_player_hp <= 0:
+                        await self.end_quest(context, battle['challenger_id'], victory=False, reason="You have been defeated by the AI opponent. Your journey ends here.")
+                    else:
+                        await self.end_pvp_battle(context, battle['challenger_id'], True, battle_id)
                 else:
                     battle_state = f"Your HP: {new_player_hp}\nOpponent HP: {new_ai_hp}"
                     await update.callback_query.message.edit_text(
                         f"{battle_state}\n\nThe AI used {action}. Your turn! Choose your move:",
                         reply_markup=generate_pvp_move_buttons(battle['challenger_id'])
                     )
+
         except Exception as e:
             logger.error(f"Error in ai_combat_move: {e}", exc_info=True)
         finally:
