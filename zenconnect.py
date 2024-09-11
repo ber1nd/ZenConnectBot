@@ -1925,7 +1925,7 @@ class ZenQuest:
                 await self.send_scene(context=context, user_id=user_id)
                 
                 # Call progress_story to continue quest
-                await self.progress_story(update=update, context=context, user_input="finished combat")  # <--- Fix applied here
+                await self.progress_story(update, context, "finished combat")
 
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
         
@@ -1936,6 +1936,11 @@ class ZenQuest:
                     chat_id=user_id,
                     text="An error occurred while concluding the battle. Your quest will continue, but some details may be inconsistent."
                 )
+
+        finally:
+            # Ensure combat state is cleared
+            self.in_combat[user_id] = False
+            logger.info(f"Combat state cleared for User {user_id}")
 
     async def handle_combat_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -2090,7 +2095,7 @@ class ZenQuest:
                 db.close()
 
     async def end_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, winner_id: int, battle_id: int):
-        logger.info(f"Ending combat. User ID: {update.effective_user.id}, Winner ID: {winner_id}, Battle ID: {battle_id}")
+        logger.info(f"Ending combat. Winner ID: {winner_id}, Battle ID: {battle_id}")
         
         db = get_db_connection()
         if not db:
@@ -2127,6 +2132,12 @@ class ZenQuest:
             
             await context.bot.send_message(chat_id=update.effective_chat.id, text=conclusion)
 
+            # Update karma and progress the story
+            karma_change = 10 if victory else -5
+            self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
+            self.current_stage[user_id] += 1
+            await self.update_quest_state(user_id)
+
             # Ensure the quest continues after combat
             await self.progress_story(update, context, "finished combat")
             logger.info(f"Quest continues after combat for User {user_id}")
@@ -2141,9 +2152,13 @@ class ZenQuest:
             logger.info(f"Cleared combat-related data for User {user_id}")
 
         except Exception as e:
-            logger.error(f"Error in end_combat: {e}")
+            logger.error(f"Error in end_combat: {e}", exc_info=True)
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="An error occurred while ending the battle. Your quest will continue, but some details may be inconsistent."
+            )
         finally:
-            if db.is_connected():
+            if db and db.is_connected():
                 cursor.close()
                 db.close()
 
