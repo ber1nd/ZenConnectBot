@@ -1897,7 +1897,8 @@ class ZenQuest:
                     db.close()
         else:
             await update.message.reply_text("Unable to connect to the database. Please try again later.")
-    async def end_pvp_battle(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, battle_id: int):
+
+    async def end_pvp_battle(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, battle_id: int):
         try:
             # Ensure battle_id is provided and valid
             assert battle_id is not None, "battle_id is missing in end_pvp_battle"
@@ -1927,7 +1928,7 @@ class ZenQuest:
                 await self.send_scene(context=context, user_id=user_id)
 
                 # Call progress_story to continue quest
-                await self.progress_story(update, context, "finished combat")
+                await self.progress_story(context.bot, context, "finished combat", user_id)
 
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
 
@@ -2006,7 +2007,7 @@ class ZenQuest:
 
             if new_player_hp <= 0 or new_opponent_hp <= 0:
                 winner_id = user_id if new_opponent_hp <= 0 else battle[f'{opponent_key}_id']
-                await self.end_pvp_battle(update, context, user_id, new_opponent_hp <= 0, battle_id)  # Pass battle_id correctly here
+                await self.end_pvp_battle(context, user_id, new_opponent_hp <= 0, battle_id)  # Pass battle_id correctly here
             else:
                 battle_state = f"Your HP: {new_player_hp}, Energy: {new_player_energy}\nOpponent HP: {new_opponent_hp}"
                 await query.edit_message_text(f"{battle_state}\n\nChoose your next move:", reply_markup=generate_pvp_move_buttons(user_id))
@@ -2086,7 +2087,7 @@ class ZenQuest:
 
                 if new_player_hp <= 0 or new_ai_hp <= 0:
                     winner_id = battle['opponent_id'] if new_player_hp <= 0 else battle['challenger_id']
-                    await self.end_pvp_battle(update, context, battle['challenger_id'], new_player_hp > 0, battle_id)  # Ensure battle_id is passed
+                    await self.end_pvp_battle(context, battle['challenger_id'], new_player_hp > 0, battle_id)  # Ensure battle_id is passed
                 else:
                     battle_state = f"Your HP: {new_player_hp}\nOpponent HP: {new_ai_hp}"
                     await update.callback_query.message.edit_text(
@@ -2150,7 +2151,7 @@ class ZenQuest:
             self.current_scene[user_id] += f"\n\n{battle_conclusion}"
 
             # Ensure the quest continues after combat
-            await self.progress_story(update, context, "finished combat")
+            await self.progress_story(update, context, "finished combat", user_id)
             logger.info(f"Quest continues after combat for User {user_id}")
 
             # Clear any remaining combat-related data
