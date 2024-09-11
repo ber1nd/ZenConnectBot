@@ -1909,7 +1909,6 @@ class ZenQuest:
 
     async def end_pvp_battle(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, battle_id: int):
         try:
-            # Ensure battle_id is provided and valid
             assert battle_id is not None, "battle_id is missing in end_pvp_battle"
 
             if user_id != 7283636452:  # Only update karma for real players, not the bot
@@ -1933,14 +1932,11 @@ class ZenQuest:
                 self.current_stage[user_id] += 1
                 await self.update_quest_state(user_id)
 
-                # Send the updated scene to the user
-                await self.send_scene(context=context, user_id=user_id)
-
                 # Ensure combat state is cleared before progressing the story
                 self.in_combat[user_id] = False
                 logger.info(f"Combat state cleared for User {user_id}")
 
-                # Call progress_story to continue quest
+                # Call progress_story to continue quest without sending a separate message
                 await self.progress_story(None, context, "finished combat", user_id)
 
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
