@@ -2080,7 +2080,7 @@ class ZenQuest:
 
                 if new_player_hp <= 0 or new_ai_hp <= 0:
                     winner_id = battle['opponent_id'] if new_player_hp <= 0 else battle['challenger_id']
-                    await self.end_pvp_battle(update, context, battle['challenger_id'], winner_id == battle['challenger_id'], battle['id'])
+                    await self.end_combat(update, context, winner_id, battle_id)
                 else:
                     battle_state = f"Your HP: {new_player_hp}\nOpponent HP: {new_ai_hp}"
                     await update.callback_query.message.edit_text(
@@ -2088,7 +2088,7 @@ class ZenQuest:
                         reply_markup=generate_pvp_move_buttons(battle['challenger_id'])
                     )
         except Exception as e:
-            logger.error(f"Error in ai_combat_move: {e}")
+            logger.error(f"Error in ai_combat_move: {e}", exc_info=True)
         finally:
             if db and db.is_connected():
                 cursor.close()
@@ -2127,10 +2127,19 @@ class ZenQuest:
             self.player_hp[user_id] = battle['challenger_hp']
             logger.info(f"Combat state cleared for User {user_id}. HP: {self.player_hp[user_id]}")
 
-            conclusion = await self.generate_combat_conclusion(victory)
-            logger.info(f"Combat conclusion generated for User {user_id}. Conclusion: {conclusion}")
+            # Generate battle conclusion
+            battle_outcome = "victory" if victory else "defeat"
+            prompt = f"""
+            The player has just experienced a {battle_outcome} in a spiritual combat during their Zen quest.
+            Generate a brief (2-3 sentences) description of:
+            1. The immediate aftermath of the battle
+            2. How this {battle_outcome} affects the player's spiritual journey
+            3. A Zen-like insight gained from this experience
+            """
+            battle_conclusion = await self.generate_response(prompt)
+            logger.info(f"Combat conclusion generated for User {user_id}. Conclusion: {battle_conclusion}")
             
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=conclusion)
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=battle_conclusion)
 
             # Update karma and progress the story
             karma_change = 10 if victory else -5
@@ -2138,17 +2147,16 @@ class ZenQuest:
             self.current_stage[user_id] += 1
             await self.update_quest_state(user_id)
 
+            # Update the current scene with the battle conclusion
+            self.current_scene[user_id] += f"\n\n{battle_conclusion}"
+
             # Ensure the quest continues after combat
             await self.progress_story(update, context, "finished combat")
             logger.info(f"Quest continues after combat for User {user_id}")
 
             # Clear any remaining combat-related data
-            if 'battle_id' in context.user_data:
-                del context.user_data['battle_id']
-            if 'challenger_energy' in context.user_data:
-                del context.user_data['challenger_energy']
-            if 'opponent_energy' in context.user_data:
-                del context.user_data['opponent_energy']
+            for key in ['battle_id', 'challenger_energy', 'opponent_energy']:
+                context.user_data.pop(key, None)
             logger.info(f"Cleared combat-related data for User {user_id}")
 
         except Exception as e:
