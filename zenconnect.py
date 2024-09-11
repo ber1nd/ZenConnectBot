@@ -2009,10 +2009,10 @@ class ZenQuest:
                     await self.ai_combat_move(update, context, battle_id)
 
         except Exception as e:
-            logger.error(f"Error in process_combat_move: {e}")
+            logger.error(f"Error in process_combat_move: {e}", exc_info=True)
             await query.answer("An error occurred. Please try again.")
         finally:
-            if db.is_connected():
+            if db and db.is_connected():
                 cursor.close()
                 db.close()
 
