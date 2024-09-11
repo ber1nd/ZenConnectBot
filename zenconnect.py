@@ -2000,7 +2000,7 @@ class ZenQuest:
 
             if new_player_hp <= 0 or new_opponent_hp <= 0:
                 winner_id = user_id if new_opponent_hp <= 0 else battle[f'{opponent_key}_id']
-                await self.end_combat(update, context, winner_id, battle_id)
+                await self.end_pvp_battle(update, context, user_id, new_opponent_hp <= 0, battle_id)
             else:
                 battle_state = f"Your HP: {new_player_hp}, Energy: {new_player_energy}\nOpponent HP: {new_opponent_hp}"
                 await query.edit_message_text(f"{battle_state}\n\nChoose your next move:", reply_markup=generate_pvp_move_buttons(user_id))
