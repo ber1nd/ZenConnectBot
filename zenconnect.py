@@ -1726,6 +1726,11 @@ class ZenQuest:
             return
 
         try:
+            # Check if the user is still in combat (this should not happen, but let's be safe)
+            if self.in_combat.get(user_id, False):
+                logger.warning(f"User {user_id} is still marked as in combat in progress_story. Clearing combat state.")
+                self.in_combat[user_id] = False
+
             morality_check = await self.check_action_morality(user_input)
             
             if morality_check['is_immoral']:
@@ -1930,6 +1935,10 @@ class ZenQuest:
 
                 # Send the updated scene to the user
                 await self.send_scene(context=context, user_id=user_id)
+
+                # Ensure combat state is cleared before progressing the story
+                self.in_combat[user_id] = False
+                logger.info(f"Combat state cleared for User {user_id}")
 
                 # Call progress_story to continue quest
                 await self.progress_story(None, context, "finished combat", user_id)
