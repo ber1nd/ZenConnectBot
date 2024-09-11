@@ -1719,7 +1719,11 @@ class ZenQuest:
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str, user_id: int = None):
         if user_id is None:
-            user_id = update.effective_user.id
+            user_id = update.effective_user.id if update and update.effective_user else None
+        
+        if user_id is None:
+            logger.error("Unable to determine user_id in progress_story")
+            return
 
         try:
             morality_check = await self.check_action_morality(user_input)
@@ -1756,7 +1760,7 @@ class ZenQuest:
             self.player_hp[user_id] = max(0, min(100, self.player_hp[user_id] + hp_change))
 
             if "COMBAT_START" in next_scene:
-                await self.initiate_combat(update, context, opponent="enemy")
+                await self.initiate_combat(context, user_id, opponent="enemy")
                 return
             elif "RIDDLE_START" in next_scene:
                 await self.initiate_riddle(update, context)
@@ -1855,8 +1859,7 @@ class ZenQuest:
 
         return next_scene
 
-    async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, opponent="unknown"):
-        user_id = update.effective_user.id
+    async def initiate_combat(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, opponent="unknown"):
         self.in_combat[user_id] = True
         
         battle_context = await self.generate_pvp_context(self.current_scene[user_id], self.quest_goal[user_id])
@@ -1873,7 +1876,7 @@ class ZenQuest:
                     INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status,
                                              challenger_hp, opponent_hp)
                     VALUES (%s, %s, %s, %s, 'in_progress', %s, 100)
-                """, (user_id, 7283636452, update.effective_chat.id, user_id, self.player_hp[user_id]))
+                """, (user_id, 7283636452, context.bot.id, user_id, self.player_hp[user_id]))
                 db.commit()
 
                 battle_id = cursor.lastrowid
@@ -1882,22 +1885,22 @@ class ZenQuest:
                 context.user_data['opponent_energy'] = 50
                 context.user_data['battle_id'] = battle_id
 
-                await update.message.reply_text(f"{battle_context}\n\nYou enter into combat with {opponent}. Prepare for a spiritual battle!")
+                await context.bot.send_message(chat_id=user_id, text=f"{battle_context}\n\nYou enter into combat with {opponent}. Prepare for a spiritual battle!")
                 await send_game_rules(context, user_id, 7283636452)
                 await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
+                    chat_id=context.bot.id,
                     text="Choose your move:",
                     reply_markup=generate_pvp_move_buttons(user_id)
                 )
             except mysql.connector.Error as e:
                 logger.error(f"Database error in initiate_combat: {e}")
-                await update.message.reply_text("An error occurred while setting up combat. Please try again.")
+                await context.bot.send_message(chat_id=user_id, text="An error occurred while setting up combat. Please try again.")
             finally:
                 if db.is_connected():
                     cursor.close()
                     db.close()
         else:
-            await update.message.reply_text("Unable to connect to the database. Please try again later.")
+            await context.bot.send_message(chat_id=user_id, text="Unable to connect to the database. Please try again later.")
 
     async def end_pvp_battle(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, battle_id: int):
         try:
@@ -1929,8 +1932,7 @@ class ZenQuest:
                 await self.send_scene(context=context, user_id=user_id)
 
                 # Call progress_story to continue quest
-                update = Update(0)  # Create a dummy Update object
-                await self.progress_story(update, context, "finished combat", user_id)
+                await self.progress_story(None, context, "finished combat", user_id)
 
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
 
