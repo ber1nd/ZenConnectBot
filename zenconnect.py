@@ -2150,6 +2150,12 @@ class ZenQuest:
         messages = [message[i:i+max_length] for i in range(0, len(message), max_length)]
         for msg in messages:
             await update.message.reply_text(msg)
+            
+    async def send_split_message_context(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, message: str):
+        max_length = 4000  # Telegram's message limit is 4096 characters, but we'll use 4000 to be safe
+        messages = [message[i:i+max_length] for i in range(0, len(message), max_length)]
+        for msg in messages:
+            await context.bot.send_message(chat_id=user_id, text=msg)
 
     # Method to send the current scene to the user
     async def send_scene(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, user_id: int = None):
@@ -2185,6 +2191,10 @@ class ZenQuest:
 
     async def generate_response(self, prompt, elaborate=False):
         return await generate_response(prompt, elaborate)
+    
+
+    
+
 # Instantiate ZenQuest after its definition
 zen_quest = ZenQuest()
 
