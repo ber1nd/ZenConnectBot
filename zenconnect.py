@@ -2067,7 +2067,7 @@ class ZenQuest:
                                         context, 'opponent', True, "Player")
 
             if result:
-                new_ai_hp, new_player_hp, new_ai_energy, damage, heal, energy_cost, energy_gain, synergy_effect = result
+                result_message, new_ai_hp, new_player_hp, new_ai_energy, damage, heal, energy_cost, energy_gain, synergy_effect = result
 
                 cursor.execute("""
                     UPDATE pvp_battles 
@@ -2080,7 +2080,7 @@ class ZenQuest:
 
                 if new_player_hp <= 0 or new_ai_hp <= 0:
                     winner_id = battle['opponent_id'] if new_player_hp <= 0 else battle['challenger_id']
-                    await self.end_combat(update, context, winner_id, battle_id)
+                    await self.end_pvp_battle(update, context, battle['challenger_id'], new_player_hp > 0, battle_id)
                 else:
                     battle_state = f"Your HP: {new_player_hp}\nOpponent HP: {new_ai_hp}"
                     await update.callback_query.message.edit_text(
