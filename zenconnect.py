@@ -1876,7 +1876,7 @@ class ZenQuest:
                     INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status,
                                              challenger_hp, opponent_hp)
                     VALUES (%s, %s, %s, %s, 'in_progress', %s, 100)
-                """, (user_id, 7283636452, context.bot.id, user_id, self.player_hp[user_id]))
+                """, (user_id, 7283636452, user_id, user_id, self.player_hp[user_id]))
                 db.commit()
 
                 battle_id = cursor.lastrowid
@@ -1888,7 +1888,7 @@ class ZenQuest:
                 await context.bot.send_message(chat_id=user_id, text=f"{battle_context}\n\nYou enter into combat with {opponent}. Prepare for a spiritual battle!")
                 await send_game_rules(context, user_id, 7283636452)
                 await context.bot.send_message(
-                    chat_id=context.bot.id,
+                    chat_id=user_id,
                     text="Choose your move:",
                     reply_markup=generate_pvp_move_buttons(user_id)
                 )
