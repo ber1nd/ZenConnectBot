@@ -1897,13 +1897,15 @@ class ZenQuest:
                     db.close()
         else:
             await update.message.reply_text("Unable to connect to the database. Please try again later.")
-
     async def end_pvp_battle(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, battle_id: int):
         try:
+            # Ensure battle_id is provided and valid
+            assert battle_id is not None, "battle_id is missing in end_pvp_battle"
+
             if user_id != 7283636452:  # Only update karma for real players, not the bot
                 karma_change = 10 if victory else -5
                 self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
-            
+
             battle_outcome = "victory" if victory else "defeat"
             prompt = f"""
             The player has just experienced a {battle_outcome} in a spiritual combat during their Zen quest.
@@ -1913,30 +1915,34 @@ class ZenQuest:
             3. A Zen-like insight gained from this experience
             """
             battle_conclusion = await self.generate_response(prompt)
-            
+
             if user_id != 7283636452:  # Only update scene for real players, not the bot
                 self.current_scene[user_id] += f"\n\n{battle_conclusion}"
-                
+
                 # Update quest progress
                 self.current_stage[user_id] += 1
                 await self.update_quest_state(user_id)
-                
+
                 # Send the updated scene to the user
                 await self.send_scene(context=context, user_id=user_id)
-                
+
                 # Call progress_story to continue quest
                 await self.progress_story(update, context, "finished combat")
 
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
-        
+
+        except AssertionError as ae:
+            logger.error(f"AssertionError in end_pvp_battle: {ae}")
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="An internal error occurred while concluding the battle. Your quest will continue, but some details may be inconsistent."
+            )
         except Exception as e:
             logger.error(f"Error in end_pvp_battle: {e}", exc_info=True)
-            if user_id != 7283636452:  # Only send error message to real players, not the bot
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text="An error occurred while concluding the battle. Your quest will continue, but some details may be inconsistent."
-                )
-
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="An error occurred while concluding the battle. Your quest will continue, but some details may be inconsistent."
+            )
         finally:
             # Ensure combat state is cleared
             self.in_combat[user_id] = False
@@ -2000,7 +2006,7 @@ class ZenQuest:
 
             if new_player_hp <= 0 or new_opponent_hp <= 0:
                 winner_id = user_id if new_opponent_hp <= 0 else battle[f'{opponent_key}_id']
-                await self.end_pvp_battle(update, context, user_id, new_opponent_hp <= 0, battle_id)
+                await self.end_pvp_battle(update, context, user_id, new_opponent_hp <= 0, battle_id)  # Pass battle_id correctly here
             else:
                 battle_state = f"Your HP: {new_player_hp}, Energy: {new_player_energy}\nOpponent HP: {new_opponent_hp}"
                 await query.edit_message_text(f"{battle_state}\n\nChoose your next move:", reply_markup=generate_pvp_move_buttons(user_id))
@@ -2080,7 +2086,7 @@ class ZenQuest:
 
                 if new_player_hp <= 0 or new_ai_hp <= 0:
                     winner_id = battle['opponent_id'] if new_player_hp <= 0 else battle['challenger_id']
-                    await self.end_pvp_battle(update, context, battle['challenger_id'], new_player_hp > 0, battle_id)
+                    await self.end_pvp_battle(update, context, battle['challenger_id'], new_player_hp > 0, battle_id)  # Ensure battle_id is passed
                 else:
                     battle_state = f"Your HP: {new_player_hp}\nOpponent HP: {new_ai_hp}"
                     await update.callback_query.message.edit_text(
@@ -2129,14 +2135,7 @@ class ZenQuest:
 
             # Generate battle conclusion
             battle_outcome = "victory" if victory else "defeat"
-            prompt = f"""
-            The player has just experienced a {battle_outcome} in a spiritual combat during their Zen quest.
-            Generate a brief (2-3 sentences) description of:
-            1. The immediate aftermath of the battle
-            2. How this {battle_outcome} affects the player's spiritual journey
-            3. A Zen-like insight gained from this experience
-            """
-            battle_conclusion = await self.generate_response(prompt)
+            battle_conclusion = await self.generate_combat_conclusion(victory)
             logger.info(f"Combat conclusion generated for User {user_id}. Conclusion: {battle_conclusion}")
             
             await context.bot.send_message(chat_id=update.effective_chat.id, text=battle_conclusion)
@@ -2173,7 +2172,6 @@ class ZenQuest:
         # Double-check that combat state is cleared
         self.in_combat[user_id] = False
         logger.info(f"Final check: Combat state cleared for User {user_id}")
-
 
     async def generate_combat_conclusion(self, victory: bool):
         prompt = f"""
