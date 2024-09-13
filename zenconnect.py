@@ -1,4 +1,5 @@
 from ast import Dict
+from collections import defaultdict
 import os
 import asyncio
 import sys
@@ -17,7 +18,7 @@ from telegram import WebAppInfo
 import re
 import json
 from dotenv import load_dotenv
-from collections import defaultdict
+from typing import Dict, Optional
 import random
 
 # Set up logging
