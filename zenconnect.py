@@ -513,17 +513,20 @@ async def add_zen_points(update_or_context, context_or_user_id, points, db):
         
         db.commit()
         
-        if isinstance(update_or_context, Update):
+        # Only send a message if we have an Update object
+        if isinstance(update_or_context, Update) and update.message:
             await update.message.reply_text(f"Your new Zen points balance: {new_points}")
         else:
-            await context.bot.send_message(chat_id=user_id, text=f"Your new Zen points balance: {new_points}")
-    
+            # Optionally, handle the case where we might want to inform the user via context
+            pass
+
     except mysql.connector.Error as e:
         logger.error(f"Database error in add_zen_points: {e}")
-        if isinstance(update_or_context, Update):
+        if isinstance(update_or_context, Update) and update.message:
             await update.message.reply_text("An error occurred while updating your Zen points. Please try again later.")
         else:
-            await context.bot.send_message(chat_id=user_id, text="An error occurred while updating your Zen points. Please try again later.")
+            # Optionally, handle the error when update is not available
+            pass
 
 # PvP Functionality
 
@@ -1460,15 +1463,22 @@ async def execute_pvp_move(update: Update, context: ContextTypes.DEFAULT_TYPE, d
             winner_id = user_id if opponent_hp <= 0 else opponent_id
             cursor.execute("UPDATE pvp_battles SET status = 'completed', winner_id = %s WHERE id = %s", (winner_id, battle['id']))
             db.commit()
-        
+
             victory = winner_id == user_id
+
+            # Update player's HP
+            if winner_id == user_id:
+                zen_quest.player_hp[user_id] = user_hp
+            else:
+                zen_quest.player_hp[user_id] = 0
+
             try:
-                await zen_quest.end_pvp_battle(context, user_id, victory, battle['id'])
+                await zen_quest.end_pvp_battle(update, context, user_id, victory, battle['id'])
             except Exception as e:
                 logger.error(f"Error in end_pvp_battle: {e}")
                 if not bot_mode:
                     await send_message(update, "An error occurred while ending the battle. Your quest status may be affected.")
-            
+
             return
 
         next_turn = opponent_id if user_id == battle['challenger_id'] else battle['challenger_id']
@@ -1907,7 +1917,7 @@ class ZenQuest:
         else:
             await context.bot.send_message(chat_id=user_id, text="Unable to connect to the database. Please try again later.")
 
-    async def end_pvp_battle(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, battle_id: int):
+    async def end_pvp_battle(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, battle_id: int):
         try:
             assert battle_id is not None, "battle_id is missing in end_pvp_battle"
 
@@ -1926,25 +1936,26 @@ class ZenQuest:
             battle_conclusion = await self.generate_response(prompt)
 
             if user_id != 7283636452:  # Only update scene for real players, not the bot
-                self.current_scene[user_id] += f"\n\n{battle_conclusion}"
+                if not victory:
+                    # If the player lost, end the quest
+                    await self.end_quest(None, context, victory=False, reason=battle_conclusion, user_id=user_id)
+                    return
+                else:
+                    # Player won, continue the quest
+                    self.current_scene[user_id] += f"\n\n{battle_conclusion}"
 
-                # Update quest progress
-                self.current_stage[user_id] += 1
-                await self.update_quest_state(user_id)
+                    # Update quest progress
+                    self.current_stage[user_id] += 1
+                    await self.update_quest_state(user_id)
 
-                # Ensure combat state is cleared before progressing the story
-                self.in_combat[user_id] = False
-                logger.info(f"Combat state cleared for User {user_id}")
+                    # Ensure combat state is cleared before progressing the story
+                    self.in_combat[user_id] = False
+                    logger.info(f"Combat state cleared for User {user_id}")
 
-                # Call progress_story to continue quest without sending a separate message
-                await self.progress_story(None, context, "finished combat", user_id)
+                    # Call progress_story to continue quest without sending a separate message
+                    await self.progress_story(None, context, "finished combat", user_id)
 
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
-            
-            # Check if the bot won, and end the quest if it did
-            if not victory:
-                await self.end_quest(None, context, victory=False, reason="You were defeated in combat.")
-                return
 
         except AssertionError as ae:
             logger.error(f"AssertionError in end_pvp_battle: {ae}")
@@ -2289,27 +2300,29 @@ class ZenQuest:
         riddle_parts = response.split("Answer:")
         return {'riddle': riddle_parts[0].replace("Riddle:", "").strip(), 'answer': riddle_parts[1].strip()}
 
-    async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
-        user_id = update.effective_user.id if update else context._user_id
-        
+    async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str, user_id: int = None):
+        if user_id is None:
+            user_id = update.effective_user.id if update and update.effective_user else None
+
+        if user_id is None:
+            logger.error("Unable to determine user_id in end_quest")
+            return
+
         self.quest_active[user_id] = False
         self.in_combat[user_id] = False
 
         conclusion = await self.generate_quest_conclusion(victory, self.current_stage.get(user_id, 0))
         message = f"{reason}\n\n{conclusion}"
 
-        if update:
-            await update.message.reply_text(message)
-        else:
-            await context.bot.send_message(chat_id=user_id, text=message)
+        await context.bot.send_message(chat_id=user_id, text=message)
 
         zen_points = random.randint(30, 50) if victory else -random.randint(10, 20)
         zen_message = f"You have {'earned' if victory else 'lost'} {abs(zen_points)} Zen points!"
-        
-        await update.message.reply_text(zen_message)
-        await add_zen_points(update, context, zen_points)
 
-        # Clear quest data for the user
+        await context.bot.send_message(chat_id=user_id, text=zen_message)
+
+        await add_zen_points(context, user_id, zen_points)
+
         for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal', 'in_combat', 'riddles', 'total_stages']:
             getattr(self, attr).pop(user_id, None)
 
