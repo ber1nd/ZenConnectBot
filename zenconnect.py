@@ -1634,10 +1634,11 @@ class ZenQuest:
             "summon creatures", "control weather", "phase through walls"
         ]
         self.failure_actions = [
-            "kill myself", "suicide", "give up", "abandon quest", "betray", "surrender",
+            "give up", "abandon quest", "betray", "surrender", 
             "destroy sacred artifact", "harm innocent", "break vow", "ignore warning",
             "consume poison", "jump off cliff", "attack ally", "steal from temple"
-        ]
+    ]
+            
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -1700,10 +1701,6 @@ class ZenQuest:
 
         if user_id in self.riddles and self.riddles[user_id]['active']:
             await self.handle_riddle_input(update, context, user_input)
-            return
-
-        if any(word in user_input for word in ["hurt myself", "self-harm", "suicide", "kill myself", "cut"]):
-            await self.handle_self_harm(update, context, user_input)
             return
 
         if self.is_action_unfeasible(user_input):
@@ -2333,38 +2330,17 @@ class ZenQuest:
     async def handle_unfeasible_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("That action is not possible in this realm. Please choose a different path.")
 
+
+    # You can now handle the failure in a more Zen-appropriate way, such as loss of karma or spiritual consequences.
     async def handle_failure_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
-        await update.message.reply_text("Your choice leads to an unfortunate end.")
-        await self.end_quest(update, context, victory=False, reason="You have chosen a path that ends your journey prematurely.")
-
-    async def handle_self_harm(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
-        user_id = update.effective_user.id
-        self.player_karma[user_id] = max(0, self.player_karma[user_id] - 30)
+        self.player_karma[user_id] = max(0, self.player_karma[user_id] - 20)
         
-        hp_loss = random.randint(20, 40) if "cut" in user_input else random.randint(30, 50)
-        self.player_hp[user_id] = max(0, self.player_hp[user_id] - hp_loss)
+        # Generate a failure consequence but make it about spiritual failure rather than physical harm
+        consequence = "Your choice has led to a significant spiritual loss. Reflect on your decisions and try to align with the path of wisdom."
         
-        consequence_prompt = f"""
-        The player has attempted self-harm: "{user_input}"
-        Current HP: {self.player_hp[user_id]}
-        Current Karma: {self.player_karma[user_id]}
-
-        Describe the immediate consequences of this action in 2-3 sentences. Include:
-        1. The physical impact on the player
-        2. The emotional or spiritual toll
-        3. How this affects their current quest
-
-        Keep the description serious but non-graphic, and end with a gentle reminder about the value of life and the potential for healing.
-        """
-        
-        consequence = await generate_response(consequence_prompt)
-        await update.message.reply_text(consequence)
-        
-        if self.player_hp[user_id] <= 0:
-            await self.end_quest(update, context, victory=False, reason="Your actions have led to a tragic end. Remember, every life is precious.")
-        else:
-            await self.send_scene(update, context)
+        # End the quest if necessary
+        await self.end_quest(update, context, victory=False, reason="You strayed far from the path of enlightenment.")
 
     async def get_quest_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -2436,14 +2412,13 @@ class ZenQuest:
 
     async def generate_pvp_context(self, current_scene, quest_goal):
         prompt = f"""
-        Based on the current scene and quest goal, generate a brief context (2-3 sentences) for why a combat situation is starting:
+        Based on the current scene and quest goal, generate a brief context (2-3 sentences) for why a spiritual conflict is starting:
         Current scene: {current_scene}
         Quest goal: {quest_goal}
         The context should:
-        1. Explain the sudden appearance of an opponent
-        2. Provide a clear reason for the conflict
+        1. Explain the appearance of a spiritual opponent or challenge, rather than a violent conflict
+        2. Provide a clear reason for the conflict in a way that aligns with Zen teachings
         3. Fit thematically with the Zen quest
-        4. Suggest how the outcome might affect the quest's progression
         """
         return await generate_response(prompt, elaborate=False)
 
@@ -2461,26 +2436,22 @@ class ZenQuest:
 
     async def generate_severe_consequence(self, reason, current_scene):
         prompt = f"""
-        The player has committed a severely immoral or unethical act: {reason}
+        The player has committed a severely unethical act: {reason}
         Current scene: {current_scene}
 
-        Generate a severe consequence for this action. It should be one of:
-        1. Immediate quest failure due to a complete violation of Zen principles
-        2. Confrontation with powerful spiritual guardians leading to combat
-        3. A karmic curse or spiritual affliction that greatly hinders the player's progress
+        Generate a spiritual consequence for this action. It should be one of:
+        1. A spiritual challenge where the player's moral choices are reflected back at them
+        2. A confrontation with their inner self or a spiritual guide
+        3. A moral setback that temporarily hinders progress but offers a lesson
 
-        Provide a vivid description of the consequence (3-4 sentences) and specify the type ('quest_fail', 'combat', or 'affliction').
-        The consequence should be severe and directly tied to the player's action, emphasizing the importance of moral choices in the quest.
-        It should also fit within the mystical and spiritual theme of the quest.
+        Provide a vivid description of the consequence (3-4 sentences) without including violence, and specify the type ('spiritual_challenge' or 'affliction').
         """
         response = await generate_response(prompt)
-        if "quest_fail" in response.lower():
-            type = "quest_fail"
-        elif "combat" in response.lower():
-            type = "combat"
+        if "spiritual_challenge" in response.lower():
+            consequence_type = "spiritual_challenge"
         else:
-            type = "affliction"
-        return {"type": type, "description": response}
+            consequence_type = "affliction"
+        return {"type": consequence_type, "description": response}
 
     async def apply_affliction(self, update: Update, context: ContextTypes.DEFAULT_TYPE, affliction_description):
         user_id = update.effective_user.id
