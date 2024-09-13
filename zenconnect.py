@@ -1635,9 +1635,9 @@ class ZenQuest:
         ]
         self.failure_actions = [
             "give up", "abandon quest", "betray", "surrender", 
-            "destroy sacred artifact", "harm innocent", "break vow", "ignore warning",
-            "consume poison", "jump off cliff", "attack ally", "steal from temple"
-    ]
+            "neglect guidance", "lose focus", "break vow", "ignore warning",
+            "lose balance", "misjudge path", "challenge ally", "steal from temple"
+        ]
             
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
