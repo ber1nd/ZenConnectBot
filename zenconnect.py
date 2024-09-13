@@ -1,6 +1,5 @@
 import os
 import asyncio
-import sys
 import logging
 import functools
 from openai import AsyncOpenAI
@@ -13,7 +12,6 @@ from aiohttp import web
 from telegram.error import BadRequest
 from telegram import WebAppInfo
 import re
-import json
 from dotenv import load_dotenv
 from collections import defaultdict
 import random
