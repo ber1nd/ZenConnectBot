@@ -2503,7 +2503,9 @@ class ZenQuest:
         else:
             self.quest_state[user_id] = "beginning"
 
-    # The generate_response method is already defined as a helper function above.
+    async def generate_response(self, prompt, elaborate=False):
+        return await generate_response(prompt, elaborate)
+
 
 # Instantiate the ZenQuest class
 zen_quest = ZenQuest()
