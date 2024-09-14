@@ -1919,9 +1919,11 @@ class ZenQuest:
         if db:
             try:
                 with db.cursor(dictionary=True) as cursor:
+                    # Insert or ignore the user in the users table
                     cursor.execute("INSERT IGNORE INTO users (user_id) VALUES (%s)", (user_id,))
                     db.commit()
 
+                    # Insert a new battle record
                     cursor.execute("""
                         INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status,
                                                 challenger_hp, opponent_hp)
@@ -1931,12 +1933,32 @@ class ZenQuest:
 
                     battle_id = cursor.lastrowid
 
+                    # Initialize user_data for combat
                     context.user_data['challenger_energy'] = 50
                     context.user_data['opponent_energy'] = 50
                     context.user_data['battle_id'] = battle_id
 
-                # Send game rules to both users
+                # **Generate Narrative for Combat Initiation**
+                narrative_prompt = f"""
+                Generate a brief narrative explaining why the player is now engaged in combat.
+                Current scene: {self.current_scene[user_id]}
+                Opponent: {opponent}
+
+                The narrative should:
+                1. Explain the reason for the combat
+                2. Blend seamlessly with the ongoing quest
+                3. Maintain the Zen theme, focusing on wisdom and strategy
+                4. Be concise, around 2-3 sentences
+                """
+                combat_narrative = await self.generate_response(narrative_prompt)
+
+                # **Send the Narrative to the User**
+                await context.bot.send_message(chat_id=user_id, text=combat_narrative, parse_mode='Markdown')
+
+                # **Send Game Rules to Both Users**
                 await send_game_rules(context, user_id, 7283636452)
+
+                # **Send Combat Move Options**
                 await context.bot.send_message(
                     chat_id=user_id,
                     text="Choose your move:",
