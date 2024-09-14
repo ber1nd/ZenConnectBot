@@ -45,7 +45,7 @@ async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await zen_quest.meditate(update, context)
 
 # Initialize the bot
-application = ApplicationBuilder().token('7283636452:AAEykZ4zlQkQSqCqa3QaV4dACabFbVW3CaI').build()
+application = ApplicationBuilder().token('TELEGRAM_TOKEN').build()
 
 # Add handlers
 application.add_handler(CommandHandler('zenquest', start_zenquest))
