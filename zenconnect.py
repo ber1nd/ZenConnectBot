@@ -1,4 +1,5 @@
 import os
+from telegram.ext import Context  # Ensure this import is at the top of your file
 import asyncio
 import sys
 import logging
@@ -527,7 +528,7 @@ async def add_zen_points(update_or_context, context_or_user_id, points, db):
 
 # PvP Functionality
 
-async def send_game_rules(context: ContextTypes.DEFAULT_TYPE, user_id1: int, user_id2: int):
+async def send_game_rules(context: Context, user_id1: int, user_id2: int):
     rules_message = """
 # Zen Warrior PvP Game Rules
 
@@ -547,15 +548,27 @@ Welcome to Zen Warrior PvP, a battle of wisdom and strategy!
 
 ## Key Synergies:
 - **Focus → Strike**: Increased damage and critical hit chance
-- **Focus  Zen Strike**: Significantly increased damage
+- **Focus → Zen Strike**: Significantly increased damage
 - **Strike → Focus**: Extra energy gain
 - **Defend → Mind Trap**: Reflect damage on the opponent's next attack
 
 Remember, true mastery comes from understanding the flow of energy and the balance of actions. May your battles be enlightening!
     """
-    await context.bot.send_message(chat_id=user_id1, text=rules_message, parse_mode='Markdown')
-    if user_id2 != 7283636452:  # Don't send to the bot
-        await context.bot.send_message(chat_id=user_id2, text=rules_message, parse_mode='Markdown')
+    try:
+        # Send game rules to user_id1
+        await context.bot.send_message(chat_id=user_id1, text=rules_message, parse_mode='Markdown')
+        logger.info(f"Sent game rules to user {user_id1}.")
+        
+        # Send game rules to user_id2 if it's not the bot itself
+        if user_id2 != 7283636452:  # Replace 7283636452 with your bot's actual user ID if different
+            await context.bot.send_message(chat_id=user_id2, text=rules_message, parse_mode='Markdown')
+            logger.info(f"Sent game rules to user {user_id2}.")
+    except Exception as e:
+        logger.error(f"Error sending game rules to users {user_id1} and {user_id2}: {e}")
+        # Optionally, notify the user about the error
+        await context.bot.send_message(chat_id=user_id1, text="An error occurred while sending game rules. Please try again later.")
+        if user_id2 != 7283636452:
+            await context.bot.send_message(chat_id=user_id2, text="An error occurred while sending game rules. Please try again later.")
 
 @with_database_connection
 async def start_pvp(update: Update, context: ContextTypes.DEFAULT_TYPE, db):
@@ -1756,6 +1769,82 @@ class ZenQuest:
         try:
             # Ensure user is not in combat
             if self.in_combat.get(user_id, False):
+                self.in_combat[user_id] = False
+
+            morality_check = await self.check_action_morality(user_input)
+            
+            if morality_check['is_immoral']:
+                consequence = await self.generate_severe_consequence(morality_check['reason'], self.current_scene[user_id])
+                await context.bot.send_message(chat_id=user_id, text=consequence['description'])
+                
+                self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] - 20))  # Adjust karma loss as needed
+
+                if consequence['type'] == 'quest_fail':
+                    await self.end_quest(update, context, victory=False, reason=consequence['description'])
+                    return
+                elif consequence['type'] == 'combat':
+                    await self.initiate_combat(update, context, user_id, opponent="spiritual guardians")
+                    return
+                elif consequence['type'] == 'affliction':
+                    await self.apply_affliction(update, context, consequence['description'])
+
+            next_scene = await self.generate_next_scene(user_id, user_input)
+            self.current_scene[user_id] = next_scene
+
+            # Update HP based on the scene
+            hp_change = 0
+            if "HP_CHANGE:" in next_scene:
+                try:
+                    hp_change_str = next_scene.split("HP_CHANGE:")[1].split()[0]
+                    hp_change = int(hp_change_str.replace('+', '').replace('-', ''))
+                    if hp_change_str.startswith('-'):
+                        hp_change = -hp_change
+                except (ValueError, IndexError):
+                    logger.warning(f"Invalid HP_CHANGE format in scene: {next_scene}")
+
+            self.player_hp[user_id] = max(0, min(100, self.player_hp.get(user_id, 100) + hp_change))
+
+            if "COMBAT_START" in next_scene:
+                await self.initiate_combat(update, context, user_id, opponent="enemy")
+                return
+            elif "RIDDLE_START" in next_scene:
+                await self.initiate_riddle(update, context)
+                return
+            elif "QUEST_COMPLETE" in next_scene:
+                await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+                return
+            elif "QUEST_FAIL" in next_scene:
+                await self.end_quest(update, context, victory=False, reason="Your quest has come to an unfortunate end.")
+                return
+            else:
+                self.current_stage[user_id] += 1
+                await self.update_quest_state(user_id)
+                await self.send_scene(context=context, user_id=user_id)
+
+            # Randomly adjust karma slightly
+            self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + random.randint(-3, 3)))
+
+            # Check for quest termination conditions
+            if self.player_hp[user_id] <= 0:
+                await self.end_quest(update, context, victory=False, reason="Your life force has been depleted. Your journey ends here.")
+                return
+            elif self.player_karma[user_id] < 10:
+                await self.end_quest(update, context, victory=False, reason="Your actions have led you far astray from the path of enlightenment.")
+                return
+
+        except Exception as e:
+            logger.error(f"Error progressing story: {e}", exc_info=True)
+            await context.bot.send_message(chat_id=user_id, text="An error occurred while processing your action. Please try again.")
+        if user_id is None:
+            user_id = update.effective_user.id if update and update.effective_user else None
+
+        if user_id is None:
+            logger.error("Unable to determine user_id in progress_story")
+            return
+
+        try:
+            # Ensure user is not in combat
+            if self.in_combat.get(user_id, False):
                 logger.warning(f"User {user_id} is still marked as in combat in progress_story. Clearing combat state.")
                 self.in_combat[user_id] = False
 
@@ -1899,7 +1988,7 @@ class ZenQuest:
 
         return next_scene
 
-    async def initiate_combat(self, user_id: int, opponent="unknown"):
+    async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, opponent="unknown"):
         self.in_combat[user_id] = True
 
         battle_context = await self.generate_pvp_context(self.current_scene[user_id], self.quest_goal[user_id])
@@ -1913,33 +2002,31 @@ class ZenQuest:
 
                     cursor.execute("""
                         INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status,
-                                                 challenger_hp, opponent_hp)
+                                                challenger_hp, opponent_hp)
                         VALUES (%s, %s, %s, %s, 'in_progress', %s, %s)
                     """, (user_id, 7283636452, user_id, user_id, self.player_hp[user_id], 100))
                     db.commit()
 
                     battle_id = cursor.lastrowid
 
-                    context_data = context = ContextTypes.DEFAULT_TYPE
-                    context_data = context_data  # Placeholder, as ContextTypes.DEFAULT_TYPE is not directly usable here
+                    context.user_data['challenger_energy'] = 50
+                    context.user_data['opponent_energy'] = 50
+                    context.user_data['battle_id'] = battle_id
 
-                    # Store combat-related data
-                    # Since we're within a single file and not using context.user_data, you might need to manage combat state differently
-                    # This example assumes context.user_data is accessible, which might not be the case here
-                    # Adjust accordingly based on your actual implementation
-
-                # Send combat initiation messages
-                # Assuming 'send_game_rules' and 'generate_pvp_move_buttons' are properly implemented
+                # Corrected parameter name from user_id1 to user_id
                 await send_game_rules(context, user_id, 7283636452)
-                # You may need to adjust how you handle sending messages without the 'update' object
-                # This example omits sending messages due to lack of 'update'
-
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text="Choose your move:",
+                    reply_markup=generate_pvp_move_buttons(user_id)
+                )
             except mysql.connector.Error as e:
                 logger.error(f"Database error in initiate_combat: {e}")
+                await context.bot.send_message(chat_id=user_id, text="An error occurred while setting up combat. Please try again.")
             finally:
                 db.close()
         else:
-            logger.error("Unable to connect to the database in initiate_combat.")
+            await context.bot.send_message(chat_id=user_id, text="Unable to connect to the database. Please try again later.")
 
     async def end_pvp_battle(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, battle_id: int):
         try:
