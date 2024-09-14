@@ -1638,25 +1638,6 @@ logging.basicConfig(level=logging.INFO)  # Set to DEBUG for more detailed logs
 
 # def get_db_connection():
 #     pass
-async def execute_query(self, query: str, params: tuple = None, fetch: bool = False, fetch_one: bool = False):
-    db = get_db_connection()
-    if not db:
-        logger.error("Database connection failed.")
-        return None
-
-    try:
-        cursor = db.cursor(dictionary=True, buffered=True)
-        cursor.execute(query, params)
-        if fetch_one:
-            return cursor.fetchone()
-        elif fetch:
-            return cursor.fetchall()
-    except mysql.connector.Error as e:
-        logger.error(f"Database error during query execution: {e}")
-        return None
-    finally:
-        cursor.close()
-        db.close()
         
 class ZenQuest:
     def __init__(self):
@@ -1681,6 +1662,26 @@ class ZenQuest:
             "destroy sacred artifact", "harm innocent", "break vow", "ignore warning",
             "consume poison", "jump off cliff", "attack ally", "steal from temple"
         ]
+    
+    async def execute_query(self, query: str, params: tuple = None, fetch: bool = False, fetch_one: bool = False):
+        db = get_db_connection()
+        if not db:
+            logger.error("Database connection failed.")
+            return None
+
+        try:
+            cursor = db.cursor(dictionary=True, buffered=True)
+            cursor.execute(query, params)
+            if fetch_one:
+                return cursor.fetchone()
+            elif fetch:
+                return cursor.fetchall()
+        except mysql.connector.Error as e:
+            logger.error(f"Database error during query execution: {e}")
+            return None
+        finally:
+            cursor.close()
+            db.close()
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -1795,7 +1796,12 @@ class ZenQuest:
 
             self.player_hp[user_id] = max(0, min(100, self.player_hp.get(user_id, 100) + hp_change))
 
+            # Determine whether to start combat based on scene and quest state
+            # Add additional logic here if needed to prevent unintended combat starts
+
             if "COMBAT_START" in next_scene:
+                # Add a condition to prevent combat initiation after victory
+                # For example, check if previous action was a victory
                 await self.initiate_combat(update, context, user_id, opponent="enemy")
                 return
             elif "RIDDLE_START" in next_scene:
@@ -2001,7 +2007,6 @@ class ZenQuest:
                     await self.end_quest(context, user_id, victory=False, reason="You have been defeated in combat.")
 
             logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
-
         except AssertionError as ae:
             logger.error(f"AssertionError in end_pvp_battle: {ae}")
             await context.bot.send_message(
