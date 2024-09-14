@@ -488,43 +488,24 @@ def setup_zenquest_handlers(application):
 
 
 @with_database_connection
-async def add_zen_points(update_or_context, context_or_user_id, points, db):
-    if isinstance(update_or_context, Update):
-        # Original case with update object
-        update = update_or_context
-        context = context_or_user_id
-        user_id = update.effective_user.id
-    else:
-        # New case with context and user_id
-        context = update_or_context
-        user_id = context_or_user_id
-
+async def add_zen_points(context: ContextTypes.DEFAULT_TYPE, user_id: int, zen_points: int):
     try:
-        cursor = db.cursor()
-        cursor.execute("SELECT zen_points FROM users WHERE user_id = %s", (user_id,))
-        result = cursor.fetchone()
-        
-        if result:
-            current_points = result[0]
-            new_points = max(0, current_points + points)  # Ensure points don't go below 0
-            cursor.execute("UPDATE users SET zen_points = %s WHERE user_id = %s", (new_points, user_id))
-        else:
-            new_points = max(0, points)  # Ensure points don't go below 0
-            cursor.execute("INSERT INTO users (user_id, zen_points) VALUES (%s, %s)", (user_id, new_points))
-        
-        db.commit()
-        
-        if isinstance(update_or_context, Update):
-            await update.message.reply_text(f"Your new Zen points balance: {new_points}")
-        else:
-            await context.bot.send_message(chat_id=user_id, text=f"Your new Zen points balance: {new_points}")
-    
-    except mysql.connector.Error as e:
-        logger.error(f"Database error in add_zen_points: {e}")
-        if isinstance(update_or_context, Update):
-            await update.message.reply_text("An error occurred while updating your Zen points. Please try again later.")
-        else:
-            await context.bot.send_message(chat_id=user_id, text="An error occurred while updating your Zen points. Please try again later.")
+        db = get_db_connection()
+        if db:
+            try:
+                cursor = db.cursor()
+                cursor.execute("""
+                    UPDATE users SET zen_points = zen_points + %s WHERE user_id = %s
+                """, (zen_points, user_id))
+                db.commit()
+                logger.info(f"Updated Zen points for user {user_id} by {zen_points}.")
+            except mysql.connector.Error as e:
+                logger.error(f"Database error while updating Zen points for user {user_id}: {e}")
+            finally:
+                cursor.close()
+                db.close()
+    except Exception as e:
+        logger.error(f"Unexpected error in add_zen_points: {e}")
 
 # PvP Functionality
 
