@@ -1909,37 +1909,76 @@ class ZenQuest:
         return next_scene
 
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, opponent="unknown"):
+        # **1. Verify Active Quest**
+        if not self.quest_active.get(user_id):
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="You are not currently on an active quest. Use /zenquest to embark on a new journey."
+            )
+            logger.warning(f"Combat initiation attempted without an active quest by User {user_id}.")
+            return
+
+        # **2. Check if Already in Combat**
+        if self.in_combat.get(user_id, False):
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="You are already engaged in combat. Please finish your current battle before starting a new one."
+            )
+            logger.warning(f"Combat initiation attempted while already in combat by User {user_id}.")
+            return
+
+        # **3. Set Combat State**
         self.in_combat[user_id] = True
+        logger.info(f"Combat initiated for User {user_id} against Opponent {opponent}.")
 
-        battle_context = await self.generate_pvp_context(self.current_scene[user_id], self.quest_goal[user_id])
+        # **4. Generate Battle Context**
+        battle_context = await self.generate_pvp_context(
+            self.current_scene.get(user_id, "Unknown Scene"),
+            self.quest_goal.get(user_id, "Unknown Quest Goal")
+        )
 
+        # **5. Establish Database Connection**
         db = get_db_connection()
         if db:
             try:
                 with db.cursor(dictionary=True) as cursor:
-                    # Insert or ignore the user in the users table
-                    cursor.execute("INSERT IGNORE INTO users (user_id) VALUES (%s)", (user_id,))
+                    # **a. Insert or Ignore User in Users Table**
+                    cursor.execute(
+                        "INSERT IGNORE INTO users (user_id) VALUES (%s)",
+                        (user_id,)
+                    )
                     db.commit()
+                    logger.debug(f"User {user_id} ensured in users table.")
 
-                    # Insert a new battle record
+                    # **b. Insert New Battle Record**
                     cursor.execute("""
-                        INSERT INTO pvp_battles (challenger_id, opponent_id, group_id, current_turn, status,
-                                                challenger_hp, opponent_hp)
+                        INSERT INTO pvp_battles (
+                            challenger_id, opponent_id, group_id, current_turn, status,
+                            challenger_hp, opponent_hp
+                        )
                         VALUES (%s, %s, %s, %s, 'in_progress', %s, %s)
-                    """, (user_id, 7283636452, user_id, user_id, self.player_hp[user_id], 100))
+                    """, (
+                        user_id,                  # challenger_id
+                        7283636452,               # opponent_id (assuming this is the bot's ID)
+                        user_id,                  # group_id (may need to verify if this is intended)
+                        user_id,                  # current_turn (starting with the user)
+                        self.player_hp.get(user_id, 100),  # challenger_hp (default to 100 if not set)
+                        100                       # opponent_hp
+                    ))
                     db.commit()
-
                     battle_id = cursor.lastrowid
+                    logger.info(f"New battle record created with Battle ID {battle_id} for User {user_id}.")
 
-                    # Initialize user_data for combat
+                    # **c. Initialize Combat-related User Data**
                     context.user_data['challenger_energy'] = 50
                     context.user_data['opponent_energy'] = 50
                     context.user_data['battle_id'] = battle_id
+                    logger.debug(f"Combat energy initialized for User {user_id} with Battle ID {battle_id}.")
 
-                # **Generate Narrative for Combat Initiation**
+                # **6. Generate Narrative for Combat Initiation**
                 narrative_prompt = f"""
                 Generate a brief narrative explaining why the player is now engaged in combat.
-                Current scene: {self.current_scene[user_id]}
+                Current scene: {self.current_scene.get(user_id, 'Unknown Scene')}
                 Opponent: {opponent}
 
                 The narrative should:
@@ -1949,26 +1988,49 @@ class ZenQuest:
                 4. Be concise, around 2-3 sentences
                 """
                 combat_narrative = await self.generate_response(narrative_prompt)
+                logger.debug(f"Combat narrative generated for User {user_id}: {combat_narrative}")
 
-                # **Send the Narrative to the User**
-                await context.bot.send_message(chat_id=user_id, text=combat_narrative, parse_mode='Markdown')
+                # **7. Send the Narrative to the User**
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=combat_narrative,
+                    parse_mode='Markdown'
+                )
+                logger.info(f"Combat narrative sent to User {user_id}.")
 
-                # **Send Game Rules to Both Users**
+                # **8. Send Game Rules to Both Users**
                 await send_game_rules(context, user_id, 7283636452)
+                logger.debug(f"Game rules sent to User {user_id} and Opponent {7283636452}.")
 
-                # **Send Combat Move Options**
+                # **9. Send Combat Move Options**
                 await context.bot.send_message(
                     chat_id=user_id,
                     text="Choose your move:",
                     reply_markup=generate_pvp_move_buttons(user_id)
                 )
+                logger.info(f"Combat move options sent to User {user_id}.")
+
             except mysql.connector.Error as e:
-                logger.error(f"Database error in initiate_combat: {e}")
-                await context.bot.send_message(chat_id=user_id, text="An error occurred while setting up combat. Please try again.")
+                logger.error(f"Database error in initiate_combat for User {user_id}: {e}")
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text="An error occurred while setting up combat. Please try again."
+                )
+                # **10. Reset Combat State on Error**
+                self.in_combat.pop(user_id, None)
+                logger.debug(f"Combat state reset for User {user_id} due to database error.")
             finally:
                 db.close()
+                logger.debug(f"Database connection closed for combat initiation of User {user_id}.")
         else:
-            await context.bot.send_message(chat_id=user_id, text="Unable to connect to the database. Please try again later.")
+            logger.error(f"Unable to connect to the database for combat initiation of User {user_id}.")
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="Unable to connect to the database. Please try again later."
+            )
+            # **11. Reset Combat State on DB Connection Failure**
+            self.in_combat.pop(user_id, None)
+            logger.debug(f"Combat state reset for User {user_id} due to database connection failure.")
 
     async def end_pvp_battle(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, battle_id: int):
         try:
@@ -2255,9 +2317,11 @@ class ZenQuest:
 
     async def end_quest(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, reason: str):
         try:
-            self.quest_active[user_id] = False
-            self.in_combat[user_id] = False
+            # Remove the user from quest_active and in_combat
+            self.quest_active.pop(user_id, None)
+            self.in_combat.pop(user_id, None)
 
+            # Generate a zen-like conclusion
             conclusion_prompt = f"""
             Generate a brief, zen-like conclusion for a {'successful' if victory else 'failed'} quest that ended at stage {self.current_stage.get(user_id, 0)}.
             Include:
@@ -2268,19 +2332,28 @@ class ZenQuest:
             """
             conclusion = await self.generate_response(conclusion_prompt)
 
+            # Send the conclusion message
             message = f"{reason}\n\n{conclusion}"
-
             await context.bot.send_message(chat_id=user_id, text=message)
 
+            # Update and notify Zen points
             zen_points = random.randint(30, 50) if victory else -random.randint(10, 20)
             zen_message = f"You have {'earned' if victory else 'lost'} {abs(zen_points)} Zen points!"
-
             await context.bot.send_message(chat_id=user_id, text=zen_message)
             await add_zen_points(context, user_id, zen_points)  # Ensure this function accepts context and user_id
 
-            # Clean up user state
-            for attr in ['player_hp', 'current_stage', 'current_scene', 'quest_state', 'quest_goal', 'in_combat', 'riddles', 'total_stages']:
+            # Clean up all per-user state attributes
+            per_user_attributes = [
+                'player_hp', 'current_stage', 'total_stages', 'current_scene',
+                'quest_state', 'quest_goal', 'player_karma',
+                'current_opponent', 'riddles'
+            ]
+
+            for attr in per_user_attributes:
                 self.__dict__[attr].pop(user_id, None)
+
+            # Optional: Log the quest termination
+            logger.info(f"Quest ended for User {user_id}. Victory: {victory}. Reason: {reason}")
 
         except Exception as e:
             logger.error(f"Error ending quest for user {user_id}: {e}")
