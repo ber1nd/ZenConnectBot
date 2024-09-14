@@ -2289,6 +2289,7 @@ class ZenQuest:
 
         if not battle_id:
             await update.message.reply_text("You are not currently in a battle.")
+            logger.warning(f"User {user_id} attempted to surrender without an active battle.")
             return
 
         # Update the battle status to 'surrendered' in the database
@@ -2296,7 +2297,7 @@ class ZenQuest:
         if db:
             try:
                 cursor = db.cursor(dictionary=True, buffered=True)
-                # **Corrected Column Name: Changed 'battle_id' to 'id'**
+                # **Ensure 'surrendered' is an allowed status**
                 cursor.execute("""
                     UPDATE pvp_battles SET status = 'surrendered' WHERE id = %s
                 """, (battle_id,))
@@ -2311,12 +2312,14 @@ class ZenQuest:
                 db.close()
         else:
             await update.message.reply_text("Unable to connect to the database. Please try again later.")
+            logger.error(f"Database connection failed while User {user_id} attempted to surrender.")
             return
 
         # End the quest
         await self.end_quest(context, user_id, victory=False, reason="You have surrendered from combat.")
 
         await update.message.reply_text("You have surrendered from combat. Your quest has ended.")
+        logger.info(f"User {user_id} has surrendered and their quest has been ended.")
 
     async def initiate_riddle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
