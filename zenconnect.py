@@ -15,7 +15,6 @@ import re
 from dotenv import load_dotenv
 from collections import defaultdict
 import random
-from zenconnect import zen_quest 
 # Set up logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,6 +28,33 @@ rate_limit_dict = defaultdict(list)
 
 # Telegram payment provider token
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN")
+
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
+ # Import the instance
+
+async def start_zenquest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await zen_quest.start_quest(update, context)
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await zen_quest.handle_input(update, context)
+
+async def get_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await zen_quest.get_quest_status(update, context)
+
+async def meditate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await zen_quest.meditate(update, context)
+
+# Initialize the bot
+application = ApplicationBuilder().token('YOUR_TELEGRAM_BOT_TOKEN').build()
+
+# Add handlers
+application.add_handler(CommandHandler('zenquest', start_zenquest))
+application.add_handler(CommandHandler('status', get_status))
+application.add_handler(CommandHandler('meditate', meditate))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+# Start the bot
+application.run_polling()
 
 def get_db_connection():
     max_retries = 3
@@ -1641,7 +1667,7 @@ logging.basicConfig(level=logging.INFO)  # Ensure logging is configured
 #     pass
 
 # def get_db_connection():
-#     pass
+#    
 
 class ZenQuest:
     def __init__(self):
