@@ -2036,9 +2036,10 @@ class ZenQuest:
         try:
             assert battle_id is not None, "battle_id is missing in end_pvp_battle"
 
-            if user_id != 7283636452:  # Only update karma for real players, not the bot
+            if user_id != 7283636452:  # Assuming 7283636452 is the bot's ID
                 karma_change = 10 if victory else -5
-                self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
+                self.player_karma[user_id] = max(0, min(100, self.player_karma.get(user_id, 0) + karma_change))
+                logger.debug(f"User {user_id}'s karma changed by {karma_change}. New karma: {self.player_karma[user_id]}.")
 
             battle_outcome = "victory" if victory else "defeat"
             prompt = f"""
@@ -2059,7 +2060,7 @@ class ZenQuest:
 
                 # Ensure combat state is cleared before progressing the story
                 self.in_combat[user_id] = False
-                logger.info(f"Combat state cleared for User {user_id}")
+                logger.info(f"Combat state cleared for User {user_id}.")
 
                 if victory:
                     # Continue the quest with narrative
@@ -2067,8 +2068,6 @@ class ZenQuest:
                 else:
                     # End the quest with a message
                     await self.end_quest(context, user_id, victory=False, reason="You have been defeated in combat.")
-
-            logger.info(f"PvP battle {battle_id} ended. User {user_id} {'won' if victory else 'lost'}.")
         except AssertionError as ae:
             logger.error(f"AssertionError in end_pvp_battle: {ae}")
             await context.bot.send_message(
@@ -2076,15 +2075,15 @@ class ZenQuest:
                 text="An internal error occurred while concluding the battle. Your quest will continue, but some details may be inconsistent."
             )
         except Exception as e:
-            logger.error(f"Error in end_pvp_battle: {e}")
+            logger.error(f"Error in end_pvp_battle for User {user_id}: {e}")
             await context.bot.send_message(
                 chat_id=user_id,
                 text="An error occurred while concluding the battle. Your quest will continue, but some details may be inconsistent."
             )
         finally:
             # Ensure combat state is cleared
-            self.in_combat[user_id] = False
-            logger.info(f"Combat state cleared for User {user_id}")
+            self.in_combat.pop(user_id, None)
+            logger.info(f"Combat state forcibly cleared for User {user_id} in end_pvp_battle.")
 
     async def handle_combat_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -2104,24 +2103,39 @@ class ZenQuest:
         db = get_db_connection()
         if not db:
             await query.answer("Unable to process move. Please try again.")
+            logger.error(f"Database connection failed while processing combat move for User {user_id}.")
             return
 
         try:
             with db.cursor(dictionary=True) as cursor:
                 battle_id = context.user_data.get('battle_id')
-                
+
+                if not battle_id:
+                    await query.answer("No active battle found.")
+                    logger.warning(f"User {user_id} attempted to make a move without an active battle.")
+                    self.in_combat.pop(user_id, None)
+                    return
+
                 cursor.execute("SELECT * FROM pvp_battles WHERE id = %s", (battle_id,))
                 battle = cursor.fetchone()
 
-                if not battle or battle['status'] != 'in_progress':
-                    await query.answer("This battle has ended or doesn't exist.")
-                    self.in_combat[user_id] = False
+                if not battle:
+                    await query.answer("This battle does not exist.")
+                    logger.warning(f"Battle ID {battle_id} not found for User {user_id}.")
+                    self.in_combat.pop(user_id, None)
+                    return
+
+                if battle['status'] != 'in_progress':
+                    await query.answer("This battle has ended.")
+                    logger.info(f"User {user_id} attempted to make a move in a battle with status '{battle['status']}'.")
+                    self.in_combat.pop(user_id, None)
                     return
 
                 is_challenger = battle['challenger_id'] == user_id
                 player_key = 'challenger' if is_challenger else 'opponent'
                 opponent_key = 'opponent' if is_challenger else 'challenger'
 
+                # **Perform the Action**
                 result = await perform_action(
                     move, 
                     battle[f'{player_key}_hp'], 
@@ -2136,34 +2150,54 @@ class ZenQuest:
 
                 if not result:
                     await query.answer("Invalid move or not enough energy.")
+                    logger.warning(f"User {user_id} performed an invalid move '{move}' or lacked energy.")
                     return
 
-                result_message, new_player_hp, new_opponent_hp, new_player_energy, damage, heal, energy_cost, energy_gain, synergy_effect = result
+                (result_message, new_player_hp, new_opponent_hp, new_player_energy,
+                damage, heal, energy_cost, energy_gain, synergy_effect) = result
 
+                # **Update Battle Status in Database**
                 cursor.execute(f"""
                     UPDATE pvp_battles 
                     SET {player_key}_hp = %s, {opponent_key}_hp = %s, current_turn = %s 
                     WHERE id = %s
-                """, (new_player_hp, new_opponent_hp, battle[f'{opponent_key}_id'], battle_id))
+                """, (
+                    new_player_hp, 
+                    new_opponent_hp, 
+                    battle[f'{opponent_key}_id'], 
+                    battle_id
+                ))
                 db.commit()
+                logger.debug(f"Battle {battle_id} updated: {player_key}_hp={new_player_hp}, {opponent_key}_hp={new_opponent_hp}, current_turn={battle[f'{opponent_key}_id']}.")
 
+                # **Update User Energy**
                 context.user_data[f'{player_key}_energy'] = new_player_energy
+                logger.debug(f"User {user_id}'s {player_key}_energy updated to {new_player_energy}.")
 
+                # **Check for Victory or Defeat**
                 if new_player_hp <= 0 or new_opponent_hp <= 0:
                     winner_id = user_id if new_opponent_hp <= 0 else battle[f'{opponent_key}_id']
-                    await self.end_pvp_battle(context, user_id, new_opponent_hp <= 0, battle_id)
+                    victory = new_opponent_hp <= 0
+                    await self.end_pvp_battle(context, user_id, victory, battle_id)
+                    logger.info(f"Combat ended for User {user_id}. Victory: {victory}. Battle ID: {battle_id}.")
                 else:
+                    # **Update Battle State Message**
                     battle_state = f"Your HP: {new_player_hp}, Energy: {new_player_energy}\nOpponent HP: {new_opponent_hp}"
-                    await query.edit_message_text(f"{battle_state}\n\nChoose your next move:", reply_markup=generate_pvp_move_buttons(user_id))
+                    await query.edit_message_text(
+                        f"{battle_state}\n\nChoose your next move:",
+                        reply_markup=generate_pvp_move_buttons(user_id)
+                    )
+                    logger.debug(f"Battle state updated for User {user_id}: {battle_state}.")
 
+                    # **AI Opponent's Move (If Applicable)**
                     if battle[f'{opponent_key}_id'] == 7283636452:
                         await self.ai_combat_move(update, context, battle_id)
-
         except Exception as e:
-            logger.error(f"Error in process_combat_move: {e}", exc_info=True)
+            logger.error(f"Error in process_combat_move for User {user_id}: {e}", exc_info=True)
             await query.answer("An error occurred. Please try again.")
         finally:
             db.close()
+            logger.debug(f"Database connection closed after processing combat move for User {user_id}.")
 
     async def ai_combat_move(self, update: Update, context: ContextTypes.DEFAULT_TYPE, battle_id: int):
         db = get_db_connection()
@@ -2262,17 +2296,22 @@ class ZenQuest:
         if db:
             try:
                 cursor = db.cursor(dictionary=True, buffered=True)
+                # **Corrected Column Name: Changed 'battle_id' to 'id'**
                 cursor.execute("""
-                    UPDATE pvp_battles SET status = 'surrendered' WHERE battle_id = %s
+                    UPDATE pvp_battles SET status = 'surrendered' WHERE id = %s
                 """, (battle_id,))
                 db.commit()
-            except Exception as e:
+                logger.info(f"Battle {battle_id} for User {user_id} marked as surrendered.")
+            except mysql.connector.Error as e:
                 logger.error(f"Error updating battle status on surrender: {e}")
                 await update.message.reply_text("An error occurred while surrendering. Please try again.")
                 return
             finally:
                 cursor.close()
                 db.close()
+        else:
+            await update.message.reply_text("Unable to connect to the database. Please try again later.")
+            return
 
         # End the quest
         await self.end_quest(context, user_id, victory=False, reason="You have surrendered from combat.")
@@ -2317,11 +2356,12 @@ class ZenQuest:
 
     async def end_quest(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, victory: bool, reason: str):
         try:
-            # Remove the user from quest_active and in_combat
+            # **Remove the user from quest_active and in_combat**
             self.quest_active.pop(user_id, None)
             self.in_combat.pop(user_id, None)
+            logger.info(f"User {user_id} removed from active quests and combat states.")
 
-            # Generate a zen-like conclusion
+            # **Generate a Zen-like Conclusion**
             conclusion_prompt = f"""
             Generate a brief, zen-like conclusion for a {'successful' if victory else 'failed'} quest that ended at stage {self.current_stage.get(user_id, 0)}.
             Include:
@@ -2331,18 +2371,21 @@ class ZenQuest:
             Keep it concise, around 3-4 sentences.
             """
             conclusion = await self.generate_response(conclusion_prompt)
+            logger.debug(f"Quest conclusion generated for User {user_id}: {conclusion}")
 
-            # Send the conclusion message
+            # **Compose and Send the Conclusion Message**
             message = f"{reason}\n\n{conclusion}"
             await context.bot.send_message(chat_id=user_id, text=message)
+            logger.info(f"Quest conclusion message sent to User {user_id}.")
 
-            # Update and notify Zen points
+            # **Update and Notify Zen Points**
             zen_points = random.randint(30, 50) if victory else -random.randint(10, 20)
             zen_message = f"You have {'earned' if victory else 'lost'} {abs(zen_points)} Zen points!"
             await context.bot.send_message(chat_id=user_id, text=zen_message)
-            await add_zen_points(context, user_id, zen_points)  # Ensure this function accepts context and user_id
+            await self.add_zen_points(context, user_id, zen_points)  # Ensure this function accepts context and user_id
+            logger.debug(f"User {user_id}'s Zen points updated by {zen_points}.")
 
-            # Clean up all per-user state attributes
+            # **Clean Up All Per-User State Attributes**
             per_user_attributes = [
                 'player_hp', 'current_stage', 'total_stages', 'current_scene',
                 'quest_state', 'quest_goal', 'player_karma',
@@ -2351,9 +2394,7 @@ class ZenQuest:
 
             for attr in per_user_attributes:
                 self.__dict__[attr].pop(user_id, None)
-
-            # Optional: Log the quest termination
-            logger.info(f"Quest ended for User {user_id}. Victory: {victory}. Reason: {reason}")
+                logger.debug(f"User {user_id}'s attribute '{attr}' cleared.")
 
         except Exception as e:
             logger.error(f"Error ending quest for user {user_id}: {e}")
