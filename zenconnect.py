@@ -4,6 +4,7 @@ import logging
 import random
 from datetime import datetime, timedelta
 from collections import defaultdict
+import re
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo # type: ignore
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes # type: ignore
@@ -210,11 +211,17 @@ class ZenQuest:
         action_result = await self.process_action(user_id, user_input)
         await update.message.reply_text(action_result)
 
-        # Check for quest completion or failure
+        # Check for quest completion, failure, or other significant events
         if "QUEST_COMPLETE" in action_result:
             await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
         elif "QUEST_FAIL" in action_result:
             await self.end_quest(update, context, victory=False, reason="Your quest has come to an unfortunate end.")
+        elif "MORAL_CHOICE" in action_result:
+            await self.present_moral_choice(update, context)
+        elif "COMBAT_START" in action_result:
+            await self.initiate_combat(update, context)
+        elif "RIDDLE_START" in action_result:
+            await self.initiate_riddle(update, context)
         else:
             await self.progress_story(update, context, user_input)
 
@@ -224,8 +231,148 @@ class ZenQuest:
         elif self.is_action_failure(user_input):
             return "QUEST_FAIL: Your choice leads to an unfortunate end."
         
-        action_result = await self.generate_action_result(user_id, user_input)
+        character = self.characters[user_id]
+        current_scene = self.current_scene[user_id]
+        quest_state = self.quest_state[user_id]
+        karma = self.player_karma[user_id]
+        
+        prompt = f"""
+        Current scene: {current_scene}
+        Character class: {character.class_name}
+        Quest state: {quest_state}
+        Player karma: {karma}
+        Player action: "{user_input}"
+
+        Generate a brief result (3-4 sentences) for the player's action. Include:
+        1. The immediate outcome of the action
+        2. Any changes to the environment or situation
+        3. A new challenge, opportunity, or decision point
+        4. A subtle Zen teaching or insight related to the action and its consequences
+
+        If the action leads to combat, include "COMBAT_START" in the response.
+        If the action triggers a riddle or puzzle, include "RIDDLE_START" in the response.
+        If the action completes the quest, include "QUEST_COMPLETE" in the response.
+        If the action fails the quest, include "QUEST_FAIL" in the response.
+        If the action presents a significant moral choice, include "MORAL_CHOICE" in the response.
+
+        Consider the player's karma when determining outcomes. Lower karma should increase the likelihood of negative consequences.
+
+        Keep the response under 100 words.
+        """
+        action_result = await self.generate_response(prompt)
+        
+        # Update karma based on the action
+        karma_change = await self.evaluate_karma_change(user_input, action_result)
+        self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
+        
         return action_result
+
+    async def evaluate_karma_change(self, user_input: str, action_result: str):
+        prompt = f"""
+        Player action: "{user_input}"
+        Action result: "{action_result}"
+
+        Evaluate the karmic impact of this action and its result. Consider:
+        1. Alignment with Zen principles (non-violence, compassion, mindfulness)
+        2. Impact on others and the environment
+        3. Intentions behind the action
+        4. Consequences of the action
+
+        Provide a karma change value between -10 and 10, where:
+        - Negative values indicate a decrease in karma (unethical or harmful actions)
+        - Positive values indicate an increase in karma (ethical or beneficial actions)
+        - 0 indicates a neutral action
+
+        Return only the numeric value.
+        """
+        karma_change_str = await self.generate_response(prompt)
+        try:
+            return int(karma_change_str)
+        except ValueError:
+            logger.error(f"Invalid karma change value: {karma_change_str}")
+            return 0
+
+    async def present_moral_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        current_scene = self.current_scene[user_id]
+        
+        prompt = f"""
+        Based on the current scene:
+        "{current_scene}"
+
+        Generate a moral dilemma for the player. Include:
+        1. A brief description of the situation (2-3 sentences)
+        2. Two distinct choices, each with potential positive and negative consequences
+        3. How each choice relates to Zen principles or teachings
+
+        Format the response as:
+        Situation: [situation description]
+        Choice A: [description of choice A]
+        Choice B: [description of choice B]
+        """
+        dilemma = await self.generate_response(prompt)
+        
+        # Parse the dilemma
+        parts = dilemma.split('\n')
+        situation = parts[0].split(': ', 1)[1]
+        choice_a = parts[1].split(': ', 1)[1]
+        choice_b = parts[2].split(': ', 1)[1]
+        
+        # Present the choice to the player
+        message = f"{situation}\n\nYou must choose:\nA) {choice_a}\nB) {choice_b}\n\nReply with 'A' or 'B' to make your choice."
+        await update.message.reply_text(message)
+        
+        # Store the dilemma for later reference
+        self.moral_dilemmas[user_id] = {
+            'situation': situation,
+            'choice_a': choice_a,
+            'choice_b': choice_b
+        }
+
+    async def handle_moral_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        choice = update.message.text.upper()
+        
+        if choice not in ['A', 'B']:
+            await update.message.reply_text("Please choose 'A' or 'B' for your moral decision.")
+            return
+        
+        dilemma = self.moral_dilemmas.get(user_id)
+        if not dilemma:
+            await update.message.reply_text("There is no active moral dilemma to resolve.")
+            return
+        
+        chosen_option = dilemma['choice_a'] if choice == 'A' else dilemma['choice_b']
+        
+        prompt = f"""
+        Situation: {dilemma['situation']}
+        Player's choice: {chosen_option}
+
+        Generate the outcome of this moral choice (3-4 sentences). Include:
+        1. The immediate consequences of the choice
+        2. How it affects the player's quest and surrounding environment
+        3. A Zen teaching or insight related to this decision
+        4. A hint at future implications of this choice
+
+        Also, provide a karma change value between -10 and 10 based on the choice and its alignment with Zen principles.
+        """
+        outcome = await self.generate_response(prompt)
+        
+        # Extract karma change from the outcome
+        karma_change_match = re.search(r'Karma change: (-?\d+)', outcome)
+        karma_change = int(karma_change_match.group(1)) if karma_change_match else 0
+        
+        # Update player's karma
+        self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + karma_change))
+        
+        # Send the outcome to the player
+        await update.message.reply_text(outcome)
+        
+        # Clear the stored dilemma
+        del self.moral_dilemmas[user_id]
+        
+        # Continue the quest
+        await self.progress_story(update, context, f"made a moral choice: {chosen_option}")
 
     async def generate_action_result(self, user_id: int, user_input: str):
         character = self.characters[user_id]
