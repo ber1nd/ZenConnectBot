@@ -5,13 +5,13 @@ import random
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
-from openai import AsyncOpenAI
-import mysql.connector
-from mysql.connector import Error, errorcode
-from aiohttp import web
-from dotenv import load_dotenv
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo # type: ignore
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes # type: ignore
+from openai import AsyncOpenAI # type: ignore
+import mysql.connector # type: ignore
+from mysql.connector import Error, errorcode # type: ignore
+from aiohttp import web # type: ignore
+from dotenv import load_dotenv # type: ignore
 
 # Load environment variables
 load_dotenv()
