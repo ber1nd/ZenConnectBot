@@ -644,7 +644,7 @@ class ZenQuest:
         try:
             max_tokens = 300 if elaborate else 150
             response = await client.chat.completions.create(
-                model="gpt-4-mini",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "You are a wise Zen master guiding a quest. Maintain realism for human capabilities. Actions should have logical consequences. Provide challenging moral dilemmas and opportunities for growth."},
                     {"role": "user", "content": prompt}
