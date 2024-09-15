@@ -207,7 +207,6 @@ class ZenQuest:
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         user_id = update.effective_user.id
-        chat_id = update.effective_chat.id
 
         try:
             morality_check = await self.check_action_morality(user_input)
@@ -249,7 +248,7 @@ class ZenQuest:
                 return
             else:
                 self.current_stage[user_id] += 1
-                await self.update_quest_state(user_id)  # Add this line
+                await self.update_quest_state(user_id)
                 await self.send_scene(update, context)
 
             self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + random.randint(-3, 3)))
@@ -265,7 +264,6 @@ class ZenQuest:
 
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
-        chat_id = update.effective_chat.id
         
         if not self.quest_active.get(user_id):
             await update.message.reply_text("You are not currently on an active quest. Use /zenquest to start a new journey.")
@@ -276,12 +274,45 @@ class ZenQuest:
             return
 
         self.in_combat[user_id] = True
-        self.current_opponent[user_id] = await self.generate_opponent()
+        opponent = await self.generate_opponent(self.current_scene[user_id])
+        self.current_opponent[user_id] = opponent['name']
 
-        combat_intro = f"You encounter {self.current_opponent[user_id]}! Prepare for battle!"
+        combat_intro = await self.generate_combat_intro(self.current_scene[user_id], opponent['name'])
         await update.message.reply_text(combat_intro)
 
         await self.send_combat_options(update, context)
+
+    async def generate_opponent(self, current_scene):
+        prompt = f"""
+        Based on the current scene:
+        "{current_scene}"
+        
+        Generate a suitable opponent for combat. Provide:
+        1. Name: A name for the opponent
+        2. Description: A brief description of the opponent (1-2 sentences)
+        3. Difficulty: Easy, Medium, or Hard
+        
+        The opponent should fit thematically with the current scene and the overall Zen quest theme.
+        """
+        response = await self.generate_response(prompt)
+        lines = response.split('\n')
+        return {
+            'name': lines[0].split(': ')[1],
+            'description': lines[1].split(': ')[1],
+            'difficulty': lines[2].split(': ')[1]
+        }
+
+    async def generate_combat_intro(self, current_scene, opponent_name):
+        prompt = f"""
+        Based on the current scene:
+        "{current_scene}"
+        
+        Generate a brief combat introduction (3-4 sentences) for the encounter with {opponent_name}. The introduction should:
+        1. Describe how the opponent appears or is encountered
+        2. Explain why combat is necessary or unavoidable
+        3. Set the tone for the battle, incorporating Zen themes of balance and mindfulness
+        """
+        return await self.generate_response(prompt)
 
     async def handle_combat_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -367,8 +398,29 @@ class ZenQuest:
     async def initiate_riddle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         riddle = await self.generate_riddle()
-        self.riddles[user_id] = {'riddle': riddle['riddle'], 'answer': riddle['answer'], 'active': True, 'attempts': 0}
-        await update.message.reply_text(f"Solve this riddle:\n\n{riddle['riddle']}\n\nYou have 3 attempts. Type your answer.")
+        self.riddles[user_id] = {
+            'riddle': riddle['riddle'],
+            'answer': riddle['answer'],
+            'active': True,
+            'attempts': 0
+        }
+        
+        # Generate a narrative introduction for the riddle
+        intro = await self.generate_riddle_intro(self.current_scene[user_id])
+        
+        await update.message.reply_text(f"{intro}\n\n{riddle['riddle']}\n\nYou have 3 attempts. Type your answer.")
+
+    async def generate_riddle_intro(self, current_scene):
+        prompt = f"""
+        Based on the current scene:
+        "{current_scene}"
+        
+        Generate a brief narrative introduction (2-3 sentences) for a riddle challenge. The introduction should:
+        1. Seamlessly blend with the current scene
+        2. Introduce a character or object presenting the riddle
+        3. Explain why solving the riddle is important for the quest's progress
+        """
+        return await self.generate_response(prompt)
 
     async def handle_riddle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         user_id = update.effective_user.id
@@ -376,19 +428,45 @@ class ZenQuest:
         riddle_info['attempts'] += 1
 
         if user_input.lower() == riddle_info['answer'].lower():
-            await update.message.reply_text("Correct! You have solved the riddle.")
+            success_message = await self.generate_riddle_success(self.current_scene[user_id])
+            await update.message.reply_text(success_message)
             self.player_karma[user_id] = min(100, self.player_karma[user_id] + 5)
             await self.progress_story(update, context, "solved the riddle")
         elif riddle_info['attempts'] >= 3:
-            await update.message.reply_text(f"You've used all your attempts. The correct answer was: {riddle_info['answer']}")
+            failure_message = await self.generate_riddle_failure(self.current_scene[user_id], riddle_info['answer'])
+            await update.message.reply_text(failure_message)
             self.player_karma[user_id] = max(0, self.player_karma[user_id] - 5)
             await self.progress_story(update, context, "failed to solve the riddle")
         else:
             remaining_attempts = 3 - riddle_info['attempts']
-            await update.message.reply_text(f"That's not correct. You have {remaining_attempts} attempts left.")
+            await update.message.reply_text(f"That's not correct. You have {remaining_attempts} attempts left. Meditate on the question and try again.")
 
         riddle_info['active'] = riddle_info['attempts'] < 3
 
+    async def generate_riddle_success(self, current_scene):
+        prompt = f"""
+        Based on the current scene:
+        "{current_scene}"
+        
+        Generate a brief success message (2-3 sentences) for solving the riddle. The message should:
+        1. Describe the immediate positive effect of solving the riddle
+        2. Hint at how this success contributes to the overall quest
+        3. Include a small Zen wisdom or insight gained from the experience
+        """
+        return await self.generate_response(prompt)
+
+    async def generate_riddle_failure(self, current_scene, answer):
+        prompt = f"""
+        Based on the current scene:
+        "{current_scene}"
+        
+        Generate a brief failure message (2-3 sentences) for not solving the riddle. The message should:
+        1. Describe the immediate consequence of failing to solve the riddle
+        2. Provide the correct answer: "{answer}"
+        3. Include a small Zen lesson about failure and perseverance
+        """
+        return await self.generate_response(prompt)
+    
     async def generate_riddle(self):
         prompt = """
         Generate a Zen-themed riddle with its answer. The riddle should be challenging but solvable.
