@@ -92,15 +92,16 @@ class Character:
 
 class ZenQuest:
     def __init__(self):
-        self.quest_active = {}
+        # Initialize all necessary dictionaries with default values
+        self.quest_active = defaultdict(bool)
         self.characters = {}
-        self.current_stage = {}
-        self.total_stages = {}
+        self.current_stage = defaultdict(int)
+        self.total_stages = defaultdict(int)
         self.current_scene = {}
-        self.in_combat = {}
+        self.in_combat = defaultdict(bool)
         self.quest_state = {}
         self.quest_goal = {}
-        self.player_karma = {}
+        self.player_karma = defaultdict(lambda: 100)
         self.current_opponent = {}
         self.riddles = {}
         self.moral_dilemmas = {}
@@ -350,8 +351,8 @@ class ZenQuest:
 
         event_type = random.choices(
             ["normal", "challenge", "reward", "meditation", "npc_encounter", "moral_dilemma",
-             "spiritual_trial", "natural_obstacle", "mystical_phenomenon", "combat", "riddle"],  # Added missing items
-            weights=[30, 15, 5, 5, 5, 10, 5, 5, 5, 10, 5],
+             "spiritual_trial", "natural_obstacle", "mystical_phenomenon", "combat", "riddle"],
+            weights=[15, 15, 10, 5, 10, 10, 5, 5, 5, 15, 5],
             k=1
         )[0]
 
@@ -369,26 +370,16 @@ class ZenQuest:
         Progress: {progress:.2f}%
         Event type: {event_type}
 
-        Generate the next scene of the Zen-themed quest. Include:
-        1. A vivid description of the new situation or environment (2-3 sentences)
-        2. The outcome of the user's previous action and its impact (1-2 sentences)
-        3. A new challenge, obstacle, or decision point (1-2 sentences)
-        4. Three distinct, non-trivial choices for the player (1 sentence each)
-        5. A brief Zen-like insight relevant to the situation (1 sentence)
+        Generate the next engaging and fun scene of the Zen-themed quest, incorporating elements that contribute to a cohesive storyline. Include:
+        1. A vivid description of the new environment or situation (2-3 sentences).
+        2. The outcome of the user's previous action and its impact on the quest (1-2 sentences).
+        3. A new challenge or decision that relates to the overarching quest goal.
+        4. Three meaningful choices for the player, each leading down a different path.
+        5. A Zen teaching or insight that offers depth to the narrative.
 
-        Ensure the scene:
-        - Progresses the quest towards its goal, reflecting the current progress
-        - Presents a real possibility of failure or setback
-        - Incorporates the character's class abilities, strengths, or weaknesses
-        - Maintains a balance between physical adventure and spiritual growth
-        - Incorporates Zen teachings or principles subtly
+        Ensure the scene advances the quest toward its conclusion, especially if progress is over 90%, by introducing climactic events or revelations.
 
-        If the event type is "combat", include "COMBAT_START" in the scene.
-        If it's a riddle event, include "RIDDLE_START" in the scene.
-        If it's a moral dilemma, include "MORAL_CHOICE" in the scene.
-        If the quest is nearing completion (progress > 90%), hint at a final challenge.
-
-        Keep the total response under 200 words.
+        Keep the total response under 300 words.
         """
         next_scene = await self.generate_response(prompt)
         return next_scene
@@ -563,34 +554,37 @@ class ZenQuest:
         character = self.characters[user_id]
         opponent = self.current_opponent[user_id]
         
+        # Extract character details
+        character_abilities = character.abilities
+        character_strengths = character.strengths
+        character_weaknesses = character.weaknesses
+
+        # Update the prompt to include character class influence
         prompt = f"""
         Character: {character.name} (HP: {character.current_hp}/{character.max_hp}, Energy: {character.current_energy}/{character.max_energy})
+        Abilities: {', '.join(character_abilities)}
+        Strengths: {', '.join(character_strengths)}
+        Weaknesses: {', '.join(character_weaknesses)}
         Opponent: {opponent}
         Action: {action}
 
-        Generate a brief combat result (2-3 sentences) based on the character's action.
-        Include any changes to HP or energy, and the opponent's reaction.
+        Generate a combat outcome that is influenced by the character's class, abilities, strengths, and weaknesses.
+        Include changes to HP or energy, and the opponent's reaction.
         If the combat ends, state whether the character won or lost.
-        Keep the response under 100 words.
+        Keep the response under 200 words.
         """
         
         combat_result = await self.generate_response(prompt)
         await self.send_message(update, combat_result)
         
+        # Determine if combat has ended
         if "won" in combat_result.lower() or "lost" in combat_result.lower():
             self.in_combat[user_id] = False
             self.current_opponent.pop(user_id, None)
             await self.progress_story(update, context, "combat ended")
         else:
             # Present combat options again
-            keyboard = [
-                [InlineKeyboardButton("Attack", callback_data="combat_attack"),
-                 InlineKeyboardButton("Defend", callback_data="combat_defend")],
-                [InlineKeyboardButton("Use ability", callback_data="combat_ability"),
-                 InlineKeyboardButton("Resolve peacefully", callback_data="combat_peace")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await self.send_message(update, "What will you do next?", reply_markup=reply_markup)
+            await self.present_combat_options(update)
 
     async def initiate_riddle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -611,21 +605,16 @@ class ZenQuest:
     def is_action_failure(self, action):
         return any(word in action.lower() for word in self.failure_actions)
 
-    async def generate_response(self, prompt, max_tokens=150):
+    async def generate_response(self, prompt, max_tokens=500):
         try:
-            client = openai.OpenAI(api_key=os.getenv("API_KEY"))
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: client.chat.completions.create(
-                    model="gpt-4o-mini",  # or "gpt-3.5-turbo", depending on your preference and access
-                    messages=[
-                        {"role": "system", "content": "You are a wise Zen master guiding a quest. Maintain realism for human capabilities. Actions should have logical consequences. Provide challenging moral dilemmas and opportunities for growth."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    max_tokens=max_tokens,
-                    temperature=0.7
-                )
+            response = await openai.ChatCompletion.acreate(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a wise Zen master guiding a quest. Maintain realism for human capabilities. Actions should have logical consequences. Provide challenging moral dilemmas and opportunities for growth."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=max_tokens,
+                temperature=0.7
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
@@ -674,6 +663,16 @@ class ZenQuest:
             # perhaps using inline keyboard buttons
         else:
             await self.send_message(update, "You're not in combat right now.")
+
+    async def present_combat_options(self, update: Update):
+        keyboard = [
+            [InlineKeyboardButton("Attack", callback_data="combat_attack"),
+             InlineKeyboardButton("Defend", callback_data="combat_defend")],
+            [InlineKeyboardButton("Use Ability", callback_data="combat_ability"),
+             InlineKeyboardButton("Resolve Peacefully", callback_data="combat_peace")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await self.send_message(update, "What will you do next?", reply_markup=reply_markup)
 
 # Instantiate the ZenQuest class
 zen_quest = ZenQuest()
