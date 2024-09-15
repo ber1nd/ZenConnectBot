@@ -175,6 +175,11 @@ class ZenQuest:
         await query.edit_message_text(start_message)
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        logger.info(f"Received input: {user_input}")
+        logger.info(f"Quest active: {self.quest_active.get(user_id, False)}")
+        logger.info(f"In combat: {self.in_combat.get(user_id, False)}")
+        logger.info(f"Riddle active: {user_id in self.riddles and self.riddles[user_id]['active']}")
+                
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
         user_input = update.message.text.lower()
@@ -208,6 +213,7 @@ class ZenQuest:
                 await update.message.reply_text("Unknown command. Available commands: /meditate, /status, /interrupt")
             return
 
+        logger.info(f"Processing action for user {user_id}: {user_input}")
         # Process regular input
         action_result = await self.process_action(user_id, user_input)
         await update.message.reply_text(action_result)
@@ -227,6 +233,7 @@ class ZenQuest:
             await self.progress_story(update, context, user_input)
 
     async def process_action(self, user_id: int, user_input: str):
+        logger.info(f"Starting process_action for user {user_id} with input: {user_input}")
         if self.is_action_unfeasible(user_input):
             return "That action is not possible in this realm. Please choose a different path."
         elif self.is_action_failure(user_input):
@@ -982,6 +989,7 @@ class ZenQuest:
         except Exception as e:
             logger.error(f"Error generating response: {type(e).__name__}: {str(e)}")
             return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later."
+
 
     async def add_zen_points(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, points: int):
         db = get_db_connection()
