@@ -614,14 +614,18 @@ class ZenQuest:
     async def generate_response(self, prompt, max_tokens=150):
         try:
             client = openai.OpenAI(api_key=os.getenv("API_KEY"))
-            response = await client.chat.completions.create(
-                model="gpt-4",  # or "gpt-3.5-turbo", depending on your preference and access
-                messages=[
-                    {"role": "system", "content": "You are a wise Zen master guiding a quest. Maintain realism for human capabilities. Actions should have logical consequences. Provide challenging moral dilemmas and opportunities for growth."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=max_tokens,
-                temperature=0.7
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.chat.completions.create(
+                    model="gpt-4",  # or "gpt-3.5-turbo", depending on your preference and access
+                    messages=[
+                        {"role": "system", "content": "You are a wise Zen master guiding a quest. Maintain realism for human capabilities. Actions should have logical consequences. Provide challenging moral dilemmas and opportunities for growth."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=max_tokens,
+                    temperature=0.7
+                )
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
