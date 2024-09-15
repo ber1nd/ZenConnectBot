@@ -224,9 +224,11 @@ class ZenQuest:
                 await self.get_quest_status(update, context)
             elif command == 'interrupt':
                 await self.interrupt_quest(update, context)
+            elif command == 'hint':
+                await self.handle_hint(update, context)
             else:
                 await update.message.reply_text(
-                    "Unknown command. Available commands: /meditate, /status, /interrupt"
+                    "Unknown command. Available commands: /meditate, /status, /interrupt, /hint"
                 )
             return
 
@@ -391,7 +393,217 @@ class ZenQuest:
         next_scene = await self.generate_response(prompt)
         return next_scene
 
-    # Implement other methods as needed (combat, riddles, etc.)
+    async def generate_quest_goal(self, class_name):
+        prompt = f"""
+        Generate a quest goal for a {class_name} in a Zen-themed adventure.
+        The goal should be challenging, spiritual in nature, and relate to self-improvement.
+        Keep it concise, about 2-3 sentences.
+        """
+        return await self.generate_response(prompt)
+
+    async def generate_initial_scene(self, quest_goal, class_name):
+        prompt = f"""
+        Quest goal: {quest_goal}
+        Character class: {class_name}
+
+        Generate an initial scene for the quest. Include:
+        1. A brief description of the starting location
+        2. An introduction to the quest's first challenge
+        3. Three possible actions for the player
+
+        Keep the response under 150 words.
+        """
+        return await self.generate_response(prompt)
+
+    async def handle_riddle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
+        user_id = update.effective_user.id
+        riddle = self.riddles[user_id]
+        
+        if user_input.lower() == riddle['answer'].lower():
+            await self.send_message(update, "Correct! You have solved the riddle.")
+            self.riddles[user_id]['active'] = False
+            await self.progress_story(update, context, "solved riddle")
+        else:
+            await self.send_message(update, "That's not correct. Try again or use /hint for a clue.")
+
+    async def handle_self_harm(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
+        support_message = (
+            "I'm concerned about what you've said. Remember, you're valuable and your life matters. "
+            "If you're having thoughts of self-harm, please reach out for help. "
+            "Here are some resources:\n"
+            "- Crisis Text Line: Text HOME to 741741\n"
+            "- National Suicide Prevention Lifeline: 1-800-273-8255\n"
+            "- International helplines: https://www.befrienders.org"
+        )
+        await self.send_message(update, support_message)
+
+    async def meditate(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if not self.quest_active.get(user_id, False):
+            await self.send_message(update, "You must be on a quest to meditate.")
+            return
+
+        character = self.characters[user_id]
+        meditation_result = await self.generate_response(
+            f"Generate a brief meditation outcome for a {character.name} in their current quest state. "
+            "Include a small health and energy boost, and a Zen insight. Keep it under 100 words."
+        )
+        
+        character.current_hp = min(character.max_hp, character.current_hp + 10)
+        character.current_energy = min(character.max_energy, character.current_energy + 10)
+        
+        await self.send_message(update, meditation_result)
+
+    async def get_quest_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if not self.quest_active.get(user_id, False):
+            await self.send_message(update, "You are not currently on a quest.")
+            return
+
+        character = self.characters[user_id]
+        progress = (self.current_stage[user_id] / self.total_stages[user_id]) * 100
+        
+        status_message = (
+            f"Quest Progress: {progress:.1f}%\n"
+            f"Character: {character.name}\n"
+            f"HP: {character.current_hp}/{character.max_hp}\n"
+            f"Energy: {character.current_energy}/{character.max_energy}\n"
+            f"Karma: {self.player_karma[user_id]}\n"
+            f"Current State: {self.quest_state[user_id].capitalize()}\n"
+            f"Goal: {self.quest_goal[user_id]}"
+        )
+        await self.send_message(update, status_message)
+
+    async def interrupt_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if not self.quest_active.get(user_id, False):
+            await self.send_message(update, "You are not currently on a quest.")
+            return
+
+        await self.end_quest(update, context, victory=False, reason="Quest interrupted by user.")
+
+    async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
+        user_id = update.effective_user.id
+        if not self.quest_active.get(user_id, False):
+            return
+
+        character = self.characters[user_id]
+        progress = (self.current_stage[user_id] / self.total_stages[user_id]) * 100
+        
+        end_message = (
+            f"Your quest has ended.\n"
+            f"Reason: {reason}\n"
+            f"Victory: {'Yes' if victory else 'No'}\n"
+            f"Progress: {progress:.1f}%\n"
+            f"Final Karma: {self.player_karma[user_id]}\n"
+            f"Character: {character.name}\n"
+            f"HP: {character.current_hp}/{character.max_hp}\n"
+            f"Energy: {character.current_energy}/{character.max_energy}\n"
+        )
+        
+        await self.send_message(update, end_message)
+        
+        # Reset user's quest data
+        self.quest_active[user_id] = False
+        self.characters.pop(user_id, None)
+        self.current_stage.pop(user_id, None)
+        self.total_stages.pop(user_id, None)
+        self.current_scene.pop(user_id, None)
+        self.in_combat.pop(user_id, None)
+        self.quest_state.pop(user_id, None)
+        self.quest_goal.pop(user_id, None)
+        self.player_karma.pop(user_id, None)
+        self.current_opponent.pop(user_id, None)
+        self.riddles.pop(user_id, None)
+        self.moral_dilemmas.pop(user_id, None)
+
+    async def present_moral_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        prompt = (
+            "Generate a moral dilemma for the player's Zen quest. "
+            "Present two choices, each with potential consequences. "
+            "Keep the description and choices under 150 words total."
+        )
+        dilemma = await self.generate_response(prompt)
+        self.moral_dilemmas[user_id] = {'active': True, 'dilemma': dilemma}
+        await self.send_message(update, dilemma)
+
+    async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        character = self.characters[user_id]
+        
+        opponent_prompt = f"Generate a challenging opponent for a {character.name} in a Zen-themed quest. Include name, brief description, and two unique abilities. Keep it under 50 words."
+        opponent = await self.generate_response(opponent_prompt)
+        
+        self.current_opponent[user_id] = opponent
+        self.in_combat[user_id] = True
+        
+        combat_start_message = (
+            f"You encounter {opponent}\n"
+            f"Prepare for combat!\n"
+            f"Your options:\n"
+            f"1. Attack\n"
+            f"2. Defend\n"
+            f"3. Use ability\n"
+            f"4. Attempt to resolve peacefully"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("Attack", callback_data="combat_attack"),
+             InlineKeyboardButton("Defend", callback_data="combat_defend")],
+            [InlineKeyboardButton("Use ability", callback_data="combat_ability"),
+             InlineKeyboardButton("Resolve peacefully", callback_data="combat_peace")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await self.send_message(update, combat_start_message, reply_markup=reply_markup)
+
+    async def handle_combat_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, action: str):
+        user_id = update.effective_user.id
+        character = self.characters[user_id]
+        opponent = self.current_opponent[user_id]
+        
+        prompt = f"""
+        Character: {character.name} (HP: {character.current_hp}/{character.max_hp}, Energy: {character.current_energy}/{character.max_energy})
+        Opponent: {opponent}
+        Action: {action}
+
+        Generate a brief combat result (2-3 sentences) based on the character's action.
+        Include any changes to HP or energy, and the opponent's reaction.
+        If the combat ends, state whether the character won or lost.
+        Keep the response under 100 words.
+        """
+        
+        combat_result = await self.generate_response(prompt)
+        await self.send_message(update, combat_result)
+        
+        if "won" in combat_result.lower() or "lost" in combat_result.lower():
+            self.in_combat[user_id] = False
+            self.current_opponent.pop(user_id, None)
+            await self.progress_story(update, context, "combat ended")
+        else:
+            # Present combat options again
+            keyboard = [
+                [InlineKeyboardButton("Attack", callback_data="combat_attack"),
+                 InlineKeyboardButton("Defend", callback_data="combat_defend")],
+                [InlineKeyboardButton("Use ability", callback_data="combat_ability"),
+                 InlineKeyboardButton("Resolve peacefully", callback_data="combat_peace")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await self.send_message(update, "What will you do next?", reply_markup=reply_markup)
+
+    async def initiate_riddle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        prompt = "Generate a Zen-themed riddle with its answer. The riddle should be challenging but solvable. Keep it under 50 words."
+        riddle_and_answer = await self.generate_response(prompt)
+        
+        # Assuming the response is in the format "Riddle: ... Answer: ..."
+        riddle, answer = riddle_and_answer.split("Answer:")
+        riddle = riddle.replace("Riddle:", "").strip()
+        answer = answer.strip()
+        
+        self.riddles[user_id] = {'active': True, 'riddle': riddle, 'answer': answer}
+        await self.send_message(update, f"Solve this riddle:\n\n{riddle}")
 
     def is_action_unfeasible(self, action):
         return any(word in action.lower() for word in self.unfeasible_actions)
@@ -434,9 +646,34 @@ class ZenQuest:
         else:
             self.quest_state[user_id] = "end"
 
-    # Other methods (combat, riddles, meditation, etc.) should be implemented similarly.
+    async def handle_hint(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if user_id in self.riddles and self.riddles[user_id]['active']:
+            hint = await self.generate_response(f"Generate a hint for the riddle: {self.riddles[user_id]['riddle']}. Keep it subtle and under 30 words.")
+            await self.send_message(update, f"Hint: {hint}")
+        else:
+            await self.send_message(update, "There is no active riddle to hint for.")
 
-    # For brevity, I'm not including all methods here, but ensure they're properly implemented.
+    async def handle_moral_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE, choice: str):
+        user_id = update.effective_user.id
+        if user_id in self.moral_dilemmas and self.moral_dilemmas[user_id]['active']:
+            consequence = await self.generate_response(f"Generate a consequence for the moral choice: {choice}. Relate it to the dilemma: {self.moral_dilemmas[user_id]['dilemma']}. Keep it under 100 words.")
+            self.moral_dilemmas[user_id]['active'] = False
+            await self.send_message(update, consequence)
+            await self.progress_story(update, context, f"made moral choice: {choice}")
+        else:
+            await self.send_message(update, "There is no active moral dilemma to respond to.")
+
+    async def use_ability(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if self.in_combat.get(user_id, False):
+            character = self.characters[user_id]
+            abilities = ", ".join(character.abilities)
+            await self.send_message(update, f"Choose an ability to use: {abilities}")
+            # You'd need to implement a way for the user to select an ability,
+            # perhaps using inline keyboard buttons
+        else:
+            await self.send_message(update, "You're not in combat right now.")
 
 # Instantiate the ZenQuest class
 zen_quest = ZenQuest()
