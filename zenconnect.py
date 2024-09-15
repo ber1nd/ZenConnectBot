@@ -123,6 +123,7 @@ class ZenQuest:
         self.player_karma = {}
         self.current_opponent = {}
         self.riddles = {}
+        self.moral_dilemmas = {}
         self.unfeasible_actions = [
             "fly", "teleport", "time travel", "breathe underwater", "become invisible",
             "read minds", "shoot lasers", "transform", "resurrect", "conjure",
@@ -1024,7 +1025,10 @@ async def interrupt_quest_command(update: Update, context: ContextTypes.DEFAULT_
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if zen_quest.quest_active.get(user_id, False):
-        await zen_quest.handle_input(update, context)
+        if user_id in zen_quest.moral_dilemmas:
+            await zen_quest.handle_moral_choice(update, context)
+        else:
+            await zen_quest.handle_input(update, context)
     else:
         await update.message.reply_text("You're not on a quest. Use /zenquest to start one!")
 
