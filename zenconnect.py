@@ -182,10 +182,7 @@ class ZenQuest:
             return
 
         if self.in_combat.get(user_id, False):
-            if user_input == '/surrender':
-                await self.surrender(update, context)
-            else:
-                await update.message.reply_text("You are in combat. Use the provided buttons to choose your action.")
+            await update.message.reply_text("You are in combat. Use the provided buttons to choose your action.")
             return
 
         if user_id in self.riddles and self.riddles[user_id]['active']:
@@ -196,14 +193,65 @@ class ZenQuest:
             await self.handle_self_harm(update, context, user_input)
             return
 
-        if self.is_action_unfeasible(user_input):
-            await self.handle_unfeasible_action(update, context)
-            return
-        elif self.is_action_failure(user_input):
-            await self.handle_failure_action(update, context)
+        # Check for special commands
+        if user_input.startswith('/'):
+            command = user_input[1:]
+            if command == 'meditate':
+                await self.meditate(update, context)
+            elif command == 'status':
+                await self.get_quest_status(update, context)
+            elif command == 'interrupt':
+                await self.interrupt_quest(update, context)
+            else:
+                await update.message.reply_text("Unknown command. Available commands: /meditate, /status, /interrupt")
             return
 
-        await self.progress_story(update, context, user_input)
+        # Process regular input
+        action_result = await self.process_action(user_id, user_input)
+        await update.message.reply_text(action_result)
+
+        # Check for quest completion or failure
+        if "QUEST_COMPLETE" in action_result:
+            await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+        elif "QUEST_FAIL" in action_result:
+            await self.end_quest(update, context, victory=False, reason="Your quest has come to an unfortunate end.")
+        else:
+            await self.progress_story(update, context, user_input)
+
+    async def process_action(self, user_id: int, user_input: str):
+        if self.is_action_unfeasible(user_input):
+            return "That action is not possible in this realm. Please choose a different path."
+        elif self.is_action_failure(user_input):
+            return "QUEST_FAIL: Your choice leads to an unfortunate end."
+        
+        action_result = await self.generate_action_result(user_id, user_input)
+        return action_result
+
+    async def generate_action_result(self, user_id: int, user_input: str):
+        character = self.characters[user_id]
+        current_scene = self.current_scene[user_id]
+        quest_state = self.quest_state[user_id]
+        
+        prompt = f"""
+        Current scene: {current_scene}
+        Character class: {character.class_name}
+        Quest state: {quest_state}
+        Player action: "{user_input}"
+
+        Generate a brief result (3-4 sentences) for the player's action. Include:
+        1. The immediate outcome of the action
+        2. Any changes to the environment or situation
+        3. A new challenge, opportunity, or decision point
+        4. A subtle Zen teaching or insight related to the action and its consequences
+
+        If the action leads to combat, include "COMBAT_START" in the response.
+        If the action triggers a riddle or puzzle, include "RIDDLE_START" in the response.
+        If the action completes the quest, include "QUEST_COMPLETE" in the response.
+        If the action fails the quest, include "QUEST_FAIL" in the response.
+
+        Keep the response under 100 words.
+        """
+        return await self.generate_response(prompt)
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         user_id = update.effective_user.id
@@ -264,6 +312,7 @@ class ZenQuest:
 
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
         
         if not self.quest_active.get(user_id):
             await update.message.reply_text("You are not currently on an active quest. Use /zenquest to start a new journey.")
@@ -275,44 +324,36 @@ class ZenQuest:
 
         self.in_combat[user_id] = True
         opponent = await self.generate_opponent(self.current_scene[user_id])
-        self.current_opponent[user_id] = opponent['name']
+        self.current_opponent[user_id] = opponent
 
         combat_intro = await self.generate_combat_intro(self.current_scene[user_id], opponent['name'])
         await update.message.reply_text(combat_intro)
 
         await self.send_combat_options(update, context)
 
-    async def generate_opponent(self, current_scene):
-        prompt = f"""
-        Based on the current scene:
-        "{current_scene}"
+    async def send_combat_options(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        character = self.characters[user_id]
+        opponent = self.current_opponent[user_id]
         
-        Generate a suitable opponent for combat. Provide:
-        1. Name: A name for the opponent
-        2. Description: A brief description of the opponent (1-2 sentences)
-        3. Difficulty: Easy, Medium, or Hard
+        keyboard = [
+            [InlineKeyboardButton("Attack", callback_data="combat_attack")],
+            [InlineKeyboardButton("Defend", callback_data="combat_defend")]
+        ]
+        for ability in character.abilities:
+            keyboard.append([InlineKeyboardButton(ability, callback_data=f"combat_{ability}")])
         
-        The opponent should fit thematically with the current scene and the overall Zen quest theme.
-        """
-        response = await self.generate_response(prompt)
-        lines = response.split('\n')
-        return {
-            'name': lines[0].split(': ')[1],
-            'description': lines[1].split(': ')[1],
-            'difficulty': lines[2].split(': ')[1]
-        }
-
-    async def generate_combat_intro(self, current_scene, opponent_name):
-        prompt = f"""
-        Based on the current scene:
-        "{current_scene}"
+        reply_markup = InlineKeyboardMarkup(keyboard)
         
-        Generate a brief combat introduction (3-4 sentences) for the encounter with {opponent_name}. The introduction should:
-        1. Describe how the opponent appears or is encountered
-        2. Explain why combat is necessary or unavoidable
-        3. Set the tone for the battle, incorporating Zen themes of balance and mindfulness
-        """
-        return await self.generate_response(prompt)
+        status_message = f"Your HP: {character.current_hp}/{character.max_hp}\n"
+        status_message += f"Your Energy: {character.current_energy}/{character.max_energy}\n"
+        status_message += f"Opponent HP: {opponent['hp']}/{opponent['max_hp']}\n"
+        status_message += "Choose your combat action:"
+        
+        if update.callback_query:
+            await update.callback_query.edit_message_text(status_message, reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(status_message, reply_markup=reply_markup)
 
     async def handle_combat_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -326,14 +367,17 @@ class ZenQuest:
 
         if self.characters[user_id].current_hp <= 0:
             await self.end_quest(update, context, victory=False, reason="You have been defeated in combat.")
-        elif not self.in_combat[user_id]:
+        elif self.current_opponent[user_id]['hp'] <= 0:
+            victory_message = await self.generate_combat_victory(self.current_scene[user_id], self.current_opponent[user_id]['name'])
+            await update.message.reply_text(victory_message)
+            self.in_combat[user_id] = False
             await self.progress_story(update, context, "defeated the opponent")
         else:
             await self.send_combat_options(update, context)
 
     async def resolve_combat_action(self, user_id: int, action: str):
         character = self.characters[user_id]
-        opponent_hp = 100  # Simplified opponent HP
+        opponent = self.current_opponent[user_id]
 
         if action in character.abilities:
             ability = action
@@ -341,13 +385,13 @@ class ZenQuest:
             if character.current_energy >= energy_cost:
                 character.current_energy -= energy_cost
                 damage = random.randint(15, 25)
-                opponent_hp -= damage
+                opponent['hp'] -= damage
                 result = f"You use {ability}, dealing {damage} damage to the opponent."
             else:
                 result = f"You don't have enough energy to use {ability}."
         elif action == "attack":
             damage = random.randint(10, 20)
-            opponent_hp -= damage
+            opponent['hp'] -= damage
             result = f"You attack and deal {damage} damage to the opponent."
         elif action == "defend":
             character.current_hp = min(character.max_hp, character.current_hp + 10)
@@ -357,43 +401,70 @@ class ZenQuest:
             result = "Invalid action."
 
         # Opponent's turn
-        if opponent_hp > 0:
+        if opponent['hp'] > 0:
             opponent_damage = random.randint(5, 15)
             character.current_hp = max(0, character.current_hp - opponent_damage)
             result += f"\n\nThe opponent strikes back, dealing {opponent_damage} damage to you."
 
-        if opponent_hp <= 0:
-            self.in_combat[user_id] = False
-            result += f"\n\nYou have defeated {self.current_opponent[user_id]}!"
+        if opponent['hp'] <= 0:
+            result += f"\n\nYou have defeated {opponent['name']}!"
         elif character.current_hp <= 0:
             result += "\n\nYou have been defeated in combat."
 
         result += f"\n\nYour HP: {character.current_hp}/{character.max_hp}"
         result += f"\nYour Energy: {character.current_energy}/{character.max_energy}"
+        result += f"\nOpponent HP: {opponent['hp']}/{opponent['max_hp']}"
 
         return result
 
-    async def send_combat_options(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        character = self.characters[user_id]
+    async def generate_opponent(self, current_scene):
+        prompt = f"""
+        Based on the current scene:
+        "{current_scene}"
         
-        keyboard = [
-            [InlineKeyboardButton("Attack", callback_data="combat_attack")],
-            [InlineKeyboardButton("Defend", callback_data="combat_defend")]
-        ]
-        for ability in character.abilities:
-            keyboard.append([InlineKeyboardButton(ability, callback_data=f"combat_{ability}")])
+        Generate a suitable opponent for combat. Provide:
+        1. Name: A name for the opponent
+        2. Description: A brief description of the opponent (1-2 sentences)
+        3. Difficulty: Easy, Medium, or Hard
+        4. HP: A number between 50 and 200 based on the difficulty
+        5. Abilities: A list of 2-3 special abilities the opponent can use
         
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        The opponent should fit thematically with the current scene and the overall Zen quest theme.
+        """
+        response = await self.generate_response(prompt)
+        opponent_data = {}
+        for line in response.split('\n'):
+            key, value = line.split(': ', 1)
+            opponent_data[key.lower()] = value
+
+        opponent_data['max_hp'] = int(opponent_data['hp'])
+        return opponent_data
+
+    async def generate_combat_intro(self, current_scene, opponent_name):
+        prompt = f"""
+        Based on the current scene:
+        "{current_scene}"
         
-        status_message = f"Your HP: {character.current_hp}/{character.max_hp}\n"
-        status_message += f"Your Energy: {character.current_energy}/{character.max_energy}\n"
-        status_message += "Choose your combat action:"
+        Generate a brief combat introduction (3-4 sentences) for the encounter with {opponent_name}. The introduction should:
+        1. Describe how the opponent appears or is encountered
+        2. Explain why combat is necessary or unavoidable
+        3. Set the tone for the battle, incorporating Zen themes of balance and mindfulness
+        """
+        return await self.generate_response(prompt)
+
+    async def generate_combat_victory(self, current_scene, opponent_name):
+        prompt = f"""
+        Based on the current scene:
+        "{current_scene}"
         
-        if update.callback_query:
-            await update.callback_query.edit_message_text(status_message, reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(status_message, reply_markup=reply_markup)
+        Generate a brief victory message (3-4 sentences) for defeating {opponent_name} in combat. The message should:
+        1. Describe the final moments of the battle
+        2. Reflect on the lessons learned or wisdom gained from the encounter
+        3. Hint at how this victory contributes to the overall quest
+        4. Include a small Zen insight related to the nature of conflict and resolution
+        """
+        return await self.generate_response(prompt)
+        
 
     async def initiate_riddle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -478,33 +549,62 @@ class ZenQuest:
         riddle_parts = response.split("Answer:")
         return {'riddle': riddle_parts[0].replace("Riddle:", "").strip(), 'answer': riddle_parts[1].strip()}
 
+    
     async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
         user_id = update.effective_user.id
         self.quest_active[user_id] = False
         self.in_combat[user_id] = False
 
-        conclusion = await self.generate_quest_conclusion(victory, self.current_stage.get(user_id, 0))
+        conclusion = await self.generate_quest_conclusion(victory, self.current_stage.get(user_id, 0), self.quest_goal.get(user_id, ''))
         message = f"{reason}\n\n{conclusion}"
         await update.message.reply_text(message)
 
-        zen_points = random.randint(30, 50) if victory else -random.randint(10, 20)
-        await update.message.reply_text(f"You have {'earned' if victory else 'lost'} {abs(zen_points)} Zen points!")
-        await self.add_zen_points(context, user_id, zen_points)
+        zen_points = random.randint(30, 50) if victory else random.randint(10, 20)
+        await update.message.reply_text(f"You have {'earned' if victory else 'lost'} {zen_points} Zen points!")
+        await self.add_zen_points(context, user_id, zen_points if victory else -zen_points)
+
+        # Update user stats
+        await self.update_user_stats(user_id, victory)
 
         # Clean up user-specific data
         for attr in ['characters', 'current_stage', 'total_stages', 'current_scene', 'quest_state', 'quest_goal', 'player_karma', 'current_opponent', 'riddles']:
             self.__dict__[attr].pop(user_id, None)
 
-    async def generate_quest_conclusion(self, victory: bool, stage: int):
+    async def generate_quest_conclusion(self, victory: bool, stage: int, quest_goal: str):
         prompt = f"""
         Generate a brief, zen-like conclusion for a {'successful' if victory else 'failed'} quest that ended at stage {stage}.
+        Quest goal: {quest_goal}
         Include:
-        1. A reflection on the journey and {'growth' if victory else 'lessons from failure'}
-        2. A subtle zen teaching or insight gained
-        3. {'Encouragement for future quests' if victory else 'Gentle encouragement to try again'}
-        Keep it concise, around 3-4 sentences.
+        1. A reflection on the journey and {'accomplishment of the goal' if victory else 'lessons from failure'}
+        2. The impact of the quest on the character's spiritual growth
+        3. A significant Zen teaching or insight gained from the entire journey
+        4. {'Encouragement for future quests' if victory else 'Gentle encouragement to try again, emphasizing the value of the attempt'}
+        5. A hint at how this quest has changed the world or the character
+        Keep it concise, around 4-5 sentences.
         """
         return await self.generate_response(prompt)
+
+    async def update_user_stats(self, user_id: int, victory: bool):
+        db = get_db_connection()
+        if db:
+            try:
+                with db.cursor() as cursor:
+                    cursor.execute("""
+                        UPDATE users 
+                        SET total_quests = total_quests + 1,
+                            successful_quests = successful_quests + %s,
+                            level = GREATEST(1, level + %s)
+                        WHERE user_id = %s
+                    """, (1 if victory else 0, 1 if victory else 0, user_id))
+                    db.commit()
+                    logger.info(f"User {user_id}'s stats updated after quest completion.")
+            except mysql.connector.Error as e:
+                logger.error(f"Database error in update_user_stats for User {user_id}: {e}")
+            finally:
+                db.close()
+        else:
+            logger.error(f"Database connection failed while updating stats for User {user_id}.")
+    
 
     async def interrupt_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
