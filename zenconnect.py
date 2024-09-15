@@ -249,7 +249,7 @@ class ZenQuest:
                 return
             else:
                 self.current_stage[user_id] += 1
-                await self.update_quest_state(user_id)
+                await self.update_quest_state(user_id)  # Add this line
                 await self.send_scene(update, context)
 
             self.player_karma[user_id] = max(0, min(100, self.player_karma[user_id] + random.randint(-3, 3)))
@@ -557,6 +557,20 @@ class ZenQuest:
             consequence_type = "affliction"
         
         return {"type": consequence_type, "description": response}
+    
+    async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        scene = self.current_scene[user_id]
+        await update.message.reply_text(scene)
+    
+    async def update_quest_state(self, user_id: int):
+        progress = self.current_stage[user_id] / self.total_stages[user_id]
+        if progress < 0.33:
+            self.quest_state[user_id] = "beginning"
+        elif progress < 0.66:
+            self.quest_state[user_id] = "middle"
+        else:
+            self.quest_state[user_id] = "end"
 
     async def generate_initial_scene(self, quest_goal, class_name):
         prompt = f"""
