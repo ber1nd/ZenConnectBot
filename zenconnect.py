@@ -406,7 +406,7 @@ class ZenQuest:
                 None,
                 openai.ChatCompletion.create,
                 {
-                    "model": "gpt-3.5-turbo",
+                    "model": "gpt-4o-mini",
                     "messages": [
                         {"role": "system", "content": "You are a wise Zen master guiding a quest. Maintain realism for human capabilities. Actions should have logical consequences. Provide challenging moral dilemmas and opportunities for growth."},
                         {"role": "user", "content": prompt}
