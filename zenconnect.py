@@ -520,6 +520,18 @@ class ZenQuest:
         4. A hint at physical and spiritual challenges
         """
         return await self.generate_response(prompt, elaborate=False)
+    
+    async def check_action_morality(self, action: str):
+        prompt = f"""
+        Evaluate the following action in the context of Zen teachings and general morality:
+        "{action}"
+        Is this action against Zen principles or morally wrong? Respond with 'Yes' or 'No' and provide a brief explanation (1-2 sentences).
+        Consider not just violence, but also actions that promote greed, hatred, or delusion.
+        """
+        response = await self.generate_response(prompt)
+        is_immoral = response.lower().startswith("yes")
+        reason = response.split(":", 1)[1].strip() if ":" in response else response
+        return {"is_immoral": is_immoral, "reason": reason}
 
     async def generate_initial_scene(self, quest_goal, class_name):
         prompt = f"""
