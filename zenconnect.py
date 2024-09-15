@@ -532,6 +532,31 @@ class ZenQuest:
         is_immoral = response.lower().startswith("yes")
         reason = response.split(":", 1)[1].strip() if ":" in response else response
         return {"is_immoral": is_immoral, "reason": reason}
+    
+    async def generate_severe_consequence(self, reason: str, current_scene: str):
+        prompt = f"""
+        The player has committed a severely immoral or unethical act: {reason}
+        Current scene: {current_scene}
+
+        Generate a severe consequence for this action. It should be one of:
+        1. Immediate quest failure due to a complete violation of Zen principles
+        2. Confrontation with powerful spiritual guardians leading to combat
+        3. A karmic curse or spiritual affliction that greatly hinders the player's progress
+
+        Provide a vivid description of the consequence (3-4 sentences) and specify the type ('quest_fail', 'combat', or 'affliction').
+        The consequence should be severe and directly tied to the player's action, emphasizing the importance of moral choices in the quest.
+        It should also fit within the mystical and spiritual theme of the quest.
+        """
+        response = await self.generate_response(prompt)
+        
+        if "quest_fail" in response.lower():
+            consequence_type = "quest_fail"
+        elif "combat" in response.lower():
+            consequence_type = "combat"
+        else:
+            consequence_type = "affliction"
+        
+        return {"type": consequence_type, "description": response}
 
     async def generate_initial_scene(self, quest_goal, class_name):
         prompt = f"""
