@@ -9,7 +9,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Labeled
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes, PreCheckoutQueryHandler
 from datetime import time, timezone, datetime, timedelta
 import mysql.connector
-from mysql.connector import Error
+from mysql.connector import Error, errorcode
 from aiohttp import web
 from telegram.error import BadRequest
 from telegram import WebAppInfo
@@ -34,29 +34,27 @@ rate_limit_dict = defaultdict(list)
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN")
 
 def get_db_connection():
-    max_retries = 3
-    retry_delay = 1  # seconds
-
-    for attempt in range(max_retries):
-        try:
-            connection = mysql.connector.connect(
-                host=os.getenv("MYSQLHOST"),
-                user=os.getenv("MYSQLUSER"),
-                password=os.getenv("MYSQLPASSWORD"),
-                database=os.getenv("MYSQL_DATABASE"),
-                port=int(os.getenv("MYSQLPORT", 3306))
-            )
-            logger.info("Database connection established successfully.")
-            return connection
-        except mysql.connector.Error as e:
-            logger.error(f"Attempt {attempt + 1} failed: Error connecting to MySQL database: {e}")
-            if attempt < max_retries - 1:
-                logger.info(f"Retrying in {retry_delay} seconds...")
-                time.sleep(retry_delay)
-                retry_delay *= 2  # Exponential backoff
-            else:
-                logger.error("Max retries reached. Unable to establish database connection.")
-                return None
+    try:
+        port=int(os.getenv("MYSQLPORT", 3306))  # Moved this line up
+        connection = mysql.connector.connect(
+            user=os.getenv("MYSQLUSER"),
+            password=os.getenv("MYSQLPASSWORD"),
+            host=os.getenv("MYSQLHOST"),
+            database=os.getenv("MYSQL_DATABASE"),
+            port=port,  # Include the port here
+            raise_on_warnings=True
+        )
+        logger.info("Database connection established successfully.")
+        return connection
+    except mysql.connector.Error as err:
+        if err.errno == mysql.connector.errorcode.ER_ACCESS_DENIED_ERROR:
+            logger.error("Something is wrong with your user name or password.")
+        elif err.errno == mysql.connector.errorcode.ER_BAD_DB_ERROR:
+            logger.error("Database does not exist.")
+        else:
+            logger.error(err)
+        return None
+    
 
 def with_database_connection(func):
     @functools.wraps(func)
@@ -88,6 +86,7 @@ def setup_database():
     if connection:
         try:
             with connection.cursor() as cursor:
+                # Create users table
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -102,6 +101,7 @@ def setup_database():
                 )
                 """)
                 
+                # Create user_memory table
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_memory (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -112,6 +112,7 @@ def setup_database():
                 )
                 """)
                 
+                # Create group_memberships table
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS group_memberships (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -122,6 +123,7 @@ def setup_database():
                 )
                 """)
                 
+                # Create subscriptions table
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS subscriptions (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -133,7 +135,7 @@ def setup_database():
                 )
                 """)
                 
-                # Table for PvP battles
+                # Create pvp_battles table
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS pvp_battles (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -150,16 +152,54 @@ def setup_database():
                 )
                 """)
                 
-                # Check if 'winner_id' column exists, and if not, add it
+                # Add winner_id column if it doesn't exist
                 cursor.execute("SHOW COLUMNS FROM pvp_battles LIKE 'winner_id'")
                 result = cursor.fetchone()
                 if not result:
                     cursor.execute("ALTER TABLE pvp_battles ADD COLUMN winner_id BIGINT NULL")
                     logger.info("Added 'winner_id' column to 'pvp_battles' table.")
                 
-            connection.commit()
-            logger.info("Database setup completed successfully.")
-        except Error as e:
+                # **Ensure 'status' column includes 'surrendered' and 'defeat'**
+                # Fetch current status column definition
+                cursor.execute("SHOW COLUMNS FROM pvp_battles LIKE 'status'")
+                status_column = cursor.fetchone()
+                
+                if status_column:
+                    column_type = status_column['Type'].lower()
+                    if 'enum' in column_type:
+                        # Extract existing ENUM values
+                        existing_values = [val.strip().strip("'") for val in column_type.replace('enum(', '').replace(')', '').split(',')]
+                        required_values = ['surrendered', 'defeat']
+                        updated = False
+                        for val in required_values:
+                            if val not in existing_values:
+                                existing_values.append(val)
+                                updated = True
+                        if updated:
+                            # Reconstruct ENUM definition
+                            enum_values = "', '".join(existing_values)
+                            alter_enum_query = f"ALTER TABLE pvp_battles MODIFY status ENUM('{enum_values}') NOT NULL DEFAULT 'pending';"
+                            cursor.execute(alter_enum_query)
+                            logger.info("Updated 'status' ENUM to include 'surrendered' and 'defeat'.")
+                        else:
+                            logger.info("'status' ENUM already includes 'surrendered' and 'defeat'.")
+                    elif 'varchar' in column_type:
+                        # Extract current VARCHAR length
+                        current_length = int(column_type.replace('varchar(', '').replace(')', '').strip())
+                        if current_length < 20:
+                            alter_varchar_query = "ALTER TABLE pvp_battles MODIFY status VARCHAR(20) NOT NULL DEFAULT 'pending';"
+                            cursor.execute(alter_varchar_query)
+                            logger.info("Increased 'status' column length to VARCHAR(20).")
+                        else:
+                            logger.info("'status' column length is sufficient.")
+                    else:
+                        logger.error(f"Unhandled 'status' column type: {column_type}")
+                else:
+                    logger.error("The 'status' column does not exist in 'pvp_battles' table.")
+                
+                connection.commit()
+                logger.info("Database setup completed successfully.")
+        except mysql.connector.Error as e:
             logger.error(f"Error setting up database: {e}")
         finally:
             connection.close()
@@ -487,25 +527,32 @@ def setup_zenquest_handlers(application):
     ))
 
 
-@with_database_connection
-async def add_zen_points(context: ContextTypes.DEFAULT_TYPE, user_id: int, zen_points: int):
+async def add_zen_points(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, points: int):
     try:
+        # Assuming there's a 'users' table with a 'zen_points' column
         db = get_db_connection()
         if db:
-            try:
-                cursor = db.cursor()
+            with db.cursor() as cursor:
+                # Update Zen points with proper bounds (0-100)
                 cursor.execute("""
-                    UPDATE users SET zen_points = zen_points + %s WHERE user_id = %s
-                """, (zen_points, user_id))
+                    UPDATE users 
+                    SET zen_points = GREATEST(0, LEAST(100, zen_points + %s)) 
+                    WHERE user_id = %s
+                """, (points, user_id))
                 db.commit()
-                logger.info(f"Updated Zen points for user {user_id} by {zen_points}.")
-            except mysql.connector.Error as e:
-                logger.error(f"Database error while updating Zen points for user {user_id}: {e}")
-            finally:
-                cursor.close()
-                db.close()
+                logger.info(f"User {user_id}'s Zen points updated by {points}.")
+        else:
+            logger.error(f"Database connection failed while updating Zen points for User {user_id}.")
+    except mysql.connector.Error as e:
+        logger.error(f"Database error in add_zen_points for User {user_id}: {e}")
+        await context.bot.send_message(chat_id=user_id, text="An error occurred while updating your Zen points.")
     except Exception as e:
-        logger.error(f"Unexpected error in add_zen_points: {e}")
+        logger.error(f"Unexpected error in add_zen_points for User {user_id}: {e}")
+        await context.bot.send_message(chat_id=user_id, text="An unexpected error occurred while updating your Zen points.")
+    finally:
+        if db:
+            db.close()
+            logger.debug(f"Database connection closed after updating Zen points for User {user_id}.")
 
 # PvP Functionality
 
@@ -2068,6 +2115,7 @@ class ZenQuest:
                 else:
                     # End the quest with a message
                     await self.end_quest(context, user_id, victory=False, reason="You have been defeated in combat.")
+                    logger.info(f"Quest ended for User {user_id} due to defeat.")
         except AssertionError as ae:
             logger.error(f"AssertionError in end_pvp_battle: {ae}")
             await context.bot.send_message(
@@ -2159,7 +2207,7 @@ class ZenQuest:
                 # **Update Battle Status in Database**
                 cursor.execute(f"""
                     UPDATE pvp_battles 
-                    SET {player_key}_hp = %s, {opponent_key}_hp = %s, current_turn = %s 
+                    SET {player_key}_hp = %s, {opponent_key}_hp = %s, current_turn = %s, last_move_timestamp = NOW()
                     WHERE id = %s
                 """, (
                     new_player_hp, 
@@ -2169,14 +2217,13 @@ class ZenQuest:
                 ))
                 db.commit()
                 logger.debug(f"Battle {battle_id} updated: {player_key}_hp={new_player_hp}, {opponent_key}_hp={new_opponent_hp}, current_turn={battle[f'{opponent_key}_id']}.")
-
+        
                 # **Update User Energy**
                 context.user_data[f'{player_key}_energy'] = new_player_energy
                 logger.debug(f"User {user_id}'s {player_key}_energy updated to {new_player_energy}.")
 
                 # **Check for Victory or Defeat**
                 if new_player_hp <= 0 or new_opponent_hp <= 0:
-                    winner_id = user_id if new_opponent_hp <= 0 else battle[f'{opponent_key}_id']
                     victory = new_opponent_hp <= 0
                     await self.end_pvp_battle(context, user_id, victory, battle_id)
                     logger.info(f"Combat ended for User {user_id}. Victory: {victory}. Battle ID: {battle_id}.")
@@ -2297,7 +2344,7 @@ class ZenQuest:
         if db:
             try:
                 cursor = db.cursor(dictionary=True, buffered=True)
-                # **Ensure 'surrendered' is an allowed status**
+                # Ensure 'surrendered' is an allowed status
                 cursor.execute("""
                     UPDATE pvp_battles SET status = 'surrendered' WHERE id = %s
                 """, (battle_id,))
@@ -2398,6 +2445,8 @@ class ZenQuest:
             for attr in per_user_attributes:
                 self.__dict__[attr].pop(user_id, None)
                 logger.debug(f"User {user_id}'s attribute '{attr}' cleared.")
+
+            logger.info(f"Quest successfully ended for User {user_id}.")
 
         except Exception as e:
             logger.error(f"Error ending quest for user {user_id}: {e}")
