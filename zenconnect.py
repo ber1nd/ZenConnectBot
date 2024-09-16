@@ -1,7 +1,7 @@
-import asyncio
 import os
 import logging
 import random
+from dotenv import load_dotenv
 import mysql.connector # Ensure this is installed
 from mysql.connector import errorcode
 from datetime import datetime
@@ -12,8 +12,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ContextTypes, filters
 )
-import openai
-from dotenv import load_dotenv
+from openai import AsyncOpenAI
 
 # Load environment variables
 load_dotenv()
@@ -26,7 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client
-openai.api_key = os.getenv("API_KEY")
+client = AsyncOpenAI(api_key=os.getenv("API_KEY"))
 
 # Rate limiting parameters
 RATE_LIMIT = 5  # Number of messages
@@ -611,7 +610,7 @@ class ZenQuest:
                 {"role": "system", "content": "You are a wise Zen master guiding a quest. Maintain realism for human capabilities. Actions should have logical consequences. Provide challenging moral dilemmas and opportunities for growth."},
                 {"role": "user", "content": prompt}
             ]
-            response = await openai.ChatCompletion.acreate(
+            response = await client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=messages,
                 max_tokens=max_tokens,
