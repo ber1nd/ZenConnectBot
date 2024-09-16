@@ -427,12 +427,25 @@ class ZenQuest:
         chat_id = update.effective_chat.id
         riddle = self.riddles[chat_id]
         
+        riddle['attempts'] += 1
+        
         if user_input.lower() == riddle['answer'].lower():
-            await self.send_message(update, "Correct! You have solved the riddle.")
+            success_message = await self.generate_response(
+                f"Generate a brief success message for solving the riddle: {riddle['riddle']}. "
+                f"Include a small reward or positive outcome for the {self.characters[chat_id].name}. "
+                f"Keep it under 100 words."
+            )
+            await self.send_message(update, success_message)
             self.riddles[chat_id]['active'] = False
             await self.progress_story(update, context, "solved riddle")
+        elif riddle['attempts'] >= self.max_riddle_attempts:
+            failure_consequence = await self.generate_riddle_failure_consequence(chat_id)
+            await self.send_message(update, failure_consequence)
+            self.riddles[chat_id]['active'] = False
+            await self.progress_story(update, context, "failed riddle")
         else:
-            await self.send_message(update, "That's not correct. Try again or use /hint for a clue.")
+            remaining_attempts = self.max_riddle_attempts - riddle['attempts']
+            await self.send_message(update, f"That's not correct. You have {remaining_attempts} attempts remaining. Use /hint for a clue.")
 
     async def handle_self_harm(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         support_message = (
@@ -647,16 +660,59 @@ class ZenQuest:
 
     async def initiate_riddle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
-        prompt = "Generate a Zen-themed riddle with its answer. The riddle should be challenging but solvable. Keep it under 50 words."
-        riddle_and_answer = await self.generate_response(prompt)
+        character = self.characters[chat_id]
+        prompt = f"Generate a Zen-themed riddle related to {character.name}'s quest. Include the riddle, its answer, and three hints of increasing clarity. Format as JSON."
+        riddle_json = await self.generate_response(prompt)
+        riddle_data = json.loads(riddle_json)
         
-        # Assuming the response is in the format "Riddle: ... Answer: ..."
-        riddle, answer = riddle_and_answer.split("Answer:")
-        riddle = riddle.replace("Riddle:", "").strip()
-        answer = answer.strip()
+        self.riddles[chat_id] = {
+            'active': True,
+            'riddle': riddle_data['riddle'],
+            'answer': riddle_data['answer'],
+            'hints': riddle_data['hints'],
+            'attempts': 0,
+            'hints_used': 0
+        }
         
-        self.riddles[chat_id] = {'active': True, 'riddle': riddle, 'answer': answer}
-        await self.send_message(update, f"Solve this riddle:\n\n{riddle}")
+        riddle_message = (
+            f"As you progress on your journey, you encounter a mystical challenge:\n\n"
+            f"{riddle_data['riddle']}\n\n"
+            f"Solve this riddle to continue your quest. You have {self.max_riddle_attempts} attempts. "
+            f"Use /hint for a clue (up to 3 times)."
+        )
+        await self.send_message(update, riddle_message)
+
+    async def handle_hint(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        if chat_id in self.riddles and self.riddles[chat_id]['active']:
+            riddle = self.riddles[chat_id]
+            if riddle['hints_used'] < len(riddle['hints']):
+                hint = riddle['hints'][riddle['hints_used']]
+                riddle['hints_used'] += 1
+                await self.send_message(update, f"Hint: {hint}")
+            else:
+                await self.send_message(update, "You've used all available hints. Try to solve the riddle or face the consequences of failure.")
+        else:
+            await self.send_message(update, "There is no active riddle to hint for.")
+
+    async def generate_riddle_failure_consequence(self, chat_id: int):
+        character = self.characters[chat_id]
+        consequence_type = random.choice(["combat", "karma_loss", "hp_loss"])
+        
+        if consequence_type == "combat":
+            self.in_combat[chat_id] = True
+            opponent_prompt = f"Generate a challenging opponent for a {character.name} as a consequence of failing to solve a riddle. Include name, brief description, HP, and two unique abilities. Format as JSON."
+            opponent_json = await self.generate_response(opponent_prompt)
+            self.current_opponent[chat_id] = json.loads(opponent_json)
+            return f"Your failure to solve the riddle has summoned {self.current_opponent[chat_id]['name']}! Prepare for combat!"
+        elif consequence_type == "karma_loss":
+            karma_loss = random.randint(10, 20)
+            self.player_karma[chat_id] = max(0, self.player_karma[chat_id] - karma_loss)
+            return f"Your failure to solve the riddle has disturbed the cosmic balance. You lose {karma_loss} karma points."
+        else:  # hp_loss
+            hp_loss = random.randint(10, 20)
+            character.current_hp = max(0, character.current_hp - hp_loss)
+            return f"The mystical energies of the unsolved riddle lash out at you. You lose {hp_loss} HP."
 
     def is_action_unfeasible(self, action):
         return any(word in action.lower() for word in self.unfeasible_actions)
@@ -695,35 +751,6 @@ class ZenQuest:
         else:
             self.quest_state[chat_id] = "end"
 
-    async def handle_hint(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        chat_id = update.effective_chat.id
-        if chat_id in self.riddles and self.riddles[chat_id]['active']:
-            hint = await self.generate_response(f"Generate a hint for the riddle: {self.riddles[chat_id]['riddle']}. Keep it subtle and under 30 words.")
-            await self.send_message(update, f"Hint: {hint}")
-        else:
-            await self.send_message(update, "There is no active riddle to hint for.")
-
-    async def handle_moral_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE, choice: str):
-        chat_id = update.effective_chat.id
-        if chat_id in self.moral_dilemmas and self.moral_dilemmas[chat_id]['active']:
-            consequence = await self.generate_response(f"Generate a consequence for the moral choice: {choice}. Relate it to the dilemma: {self.moral_dilemmas[chat_id]['dilemma']}. Keep it under 100 words.")
-            self.moral_dilemmas[chat_id]['active'] = False
-            await self.send_message(update, consequence)
-            await self.progress_story(update, context, f"made moral choice: {choice}")
-        else:
-            await self.send_message(update, "There is no active moral dilemma to respond to.")
-
-    async def use_ability(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        chat_id = update.effective_chat.id
-        if self.in_combat.get(chat_id, False):
-            character = self.characters[chat_id]
-            abilities = ", ".join(character.abilities)
-            await self.send_message(update, f"Choose an ability to use: {abilities}")
-            # You'd need to implement a way for the user to select an ability,
-            # perhaps using inline keyboard buttons
-        else:
-            await self.send_message(update, "You're not in combat right now.")
-
 # Instantiate the ZenQuest class
 zen_quest = ZenQuest()
 
@@ -742,6 +769,9 @@ async def meditate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def interrupt_quest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await zen_quest.interrupt_quest(update, context)
+
+async def hint_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await zen_quest.handle_hint(update, context)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -786,6 +816,7 @@ def main():
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("meditate", meditate_command))
     application.add_handler(CommandHandler("interrupt", interrupt_quest_command))
+    application.add_handler(CommandHandler("hint", hint_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
