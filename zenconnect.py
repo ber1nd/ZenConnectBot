@@ -255,18 +255,23 @@ class ZenQuest:
         await self.send_message(update, action_result)
 
         # Handle special events
-        if "QUEST_COMPLETE" in action_result:
-            await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
-        elif "QUEST_FAIL" in action_result:
-            await self.end_quest(update, context, victory=False, reason="Your quest has come to an unfortunate end.")
-        elif "MORAL_CHOICE" in action_result:
-            await self.present_moral_choice(update, context)
-        elif "COMBAT_START" in action_result:
+        if "[COMBAT_START]" in action_result:
             await self.initiate_combat(update, context)
-        elif "RIDDLE_START" in action_result:
+        elif "[RIDDLE_START]" in action_result:
             await self.initiate_riddle(update, context)
+        elif "[QUEST_COMPLETE]" in action_result:
+            await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+        elif "[QUEST_FAIL]" in action_result:
+            await self.end_quest(update, context, victory=False, reason="Your quest has come to an unfortunate end.")
+        elif "[MORAL_CHOICE]" in action_result:
+            await self.present_moral_choice(update, context)
         else:
-            await self.progress_story(update, context, user_input)
+            # Remove the tag if present and send the message
+            clean_result = action_result.replace("[COMBAT_START]", "").replace("[RIDDLE_START]", "").replace("[QUEST_COMPLETE]", "").replace("[QUEST_FAIL]", "").replace("[MORAL_CHOICE]", "").strip()
+            await self.send_message(update, clean_result)
+            self.current_scene[chat_id] = clean_result
+            self.current_stage[chat_id] += 1
+            await self.update_quest_state(chat_id)
 
     async def send_message(self, update: Update, text: str, reply_markup=None):
         if update.message:
@@ -284,7 +289,7 @@ class ZenQuest:
         if self.is_action_unfeasible(user_input):
             return "That action is not possible in this realm. Please choose a different path."
         elif self.is_action_failure(user_input):
-            return "QUEST_FAIL: Your choice leads to an unfortunate end."
+            return "[QUEST_FAIL]: Your choice leads to an unfortunate end."
 
         prompt = f"""
         Current scene: {current_scene}
@@ -293,21 +298,17 @@ class ZenQuest:
         Player karma: {karma}
         Player action: "{user_input}"
 
-        Generate a brief result (3-4 sentences) for the player's action. Include:
+        Generate a concise result (4-5 sentences) for the player's action. Include:
         1. The immediate outcome of the action
         2. Any changes to the environment or situation
         3. A new challenge, opportunity, or decision point
         4. A subtle Zen teaching or insight related to the action and its consequences
+        5. Three numbered options for the player's next action
 
-        If the action leads to combat, include "COMBAT_START" in the response.
-        If the action triggers a riddle or puzzle, include "RIDDLE_START" in the response.
-        If the action completes the quest, include "QUEST_COMPLETE" in the response.
-        If the action fails the quest, include "QUEST_FAIL" in the response.
-        If the action presents a significant moral choice, include "MORAL_CHOICE" in the response.
+        If applicable, include one of the following tags at the end of the response:
+        [COMBAT_START], [RIDDLE_START], [QUEST_COMPLETE], [QUEST_FAIL], or [MORAL_CHOICE]
 
-        Consider the player's karma when determining outcomes. Lower karma should increase the likelihood of negative consequences.
-
-        Keep the response under 150 words.
+        Keep the entire response under 200 words.
         """
         action_result = await self.generate_response(prompt)
 
@@ -338,19 +339,21 @@ class ZenQuest:
         next_scene = await self.generate_next_scene(chat_id, user_input)
         self.current_scene[chat_id] = next_scene
 
-        # Check for special events in the next scene
-        if "COMBAT_START" in next_scene:
+        # Send the scene and handle special events in one step
+        if "[COMBAT_START]" in next_scene:
             await self.initiate_combat(update, context)
-        elif "RIDDLE_START" in next_scene:
+        elif "[RIDDLE_START]" in next_scene:
             await self.initiate_riddle(update, context)
-        elif "QUEST_COMPLETE" in next_scene:
+        elif "[QUEST_COMPLETE]" in next_scene:
             await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
-        elif "QUEST_FAIL" in next_scene:
+        elif "[QUEST_FAIL]" in next_scene:
             await self.end_quest(update, context, victory=False, reason="Your quest has come to an unfortunate end.")
         else:
+            # Remove the tag if present and send the message
+            clean_scene = next_scene.replace("[COMBAT_START]", "").replace("[RIDDLE_START]", "").replace("[QUEST_COMPLETE]", "").replace("[QUEST_FAIL]", "").strip()
+            await self.send_message(update, clean_scene)
             self.current_stage[chat_id] += 1
             await self.update_quest_state(chat_id)
-            await self.send_scene(update, context)
 
         # Update karma and check for quest failure due to low karma
         self.player_karma[chat_id] = max(0, min(100, self.player_karma[chat_id] + random.randint(-3, 3)))
@@ -387,16 +390,18 @@ class ZenQuest:
         Progress: {progress:.2f}%
         Event type: {event_type}
 
-        Generate the next engaging and fun scene of the Zen-themed quest, incorporating elements that contribute to a cohesive storyline. Include:
-        1. A vivid description of the new environment or situation (2-3 sentences).
-        2. The outcome of the user's previous action and its impact on the quest (1-2 sentences).
+        Generate the next engaging and concise scene of the Zen-themed quest, incorporating elements that contribute to a cohesive storyline. Include:
+        1. A brief description of the new environment or situation (1-2 sentences).
+        2. The outcome of the user's previous action and its impact on the quest (1 sentence).
         3. A new challenge or decision that relates to the overarching quest goal.
-        4. Three meaningful choices for the player, each leading down a different path. Format these as numbered options (1, 2, 3).
-        5. A Zen teaching or insight that offers depth to the narrative.
+        4. A Zen teaching or insight that offers depth to the narrative.
+        5. Three numbered options for the player's next action.
 
-        Ensure the scene advances the quest toward its conclusion, especially if progress is over 90%, by introducing climactic events or revelations.
+        If applicable, include one of the following tags at the end of the response:
+        [COMBAT_START], [RIDDLE_START], [QUEST_COMPLETE], or [QUEST_FAIL]
 
-        Keep the total response under 300 words.
+        Ensure the scene advances the quest toward its conclusion, especially if progress is over 90%.
+        Keep the entire response under 200 words.
         """
         next_scene = await self.generate_response(prompt)
         return next_scene
