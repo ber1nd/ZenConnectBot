@@ -1,3 +1,4 @@
+import json
 import os
 import logging
 import random
@@ -88,6 +89,20 @@ class Character:
         self.abilities = abilities
         self.strengths = strengths
         self.weaknesses = weaknesses
+
+class CombatSystem:
+    def __init__(self):
+        self.turn_order = []
+        self.current_turn = 0
+
+    def initialize_combat(self, players, opponents):
+        self.turn_order = players + opponents
+        random.shuffle(self.turn_order)
+        self.current_turn = 0
+
+    def next_turn(self):
+        self.current_turn = (self.current_turn + 1) % len(self.turn_order)
+        return self.turn_order[self.current_turn]
 
 class ZenQuest:
     def __init__(self):
@@ -375,7 +390,7 @@ class ZenQuest:
         1. A vivid description of the new environment or situation (2-3 sentences).
         2. The outcome of the user's previous action and its impact on the quest (1-2 sentences).
         3. A new challenge or decision that relates to the overarching quest goal.
-        4. Three meaningful choices for the player, each leading down a different path.
+        4. Three meaningful choices for the player, each leading down a different path. Format these as numbered options (1, 2, 3).
         5. A Zen teaching or insight that offers depth to the narrative.
 
         Ensure the scene advances the quest toward its conclusion, especially if progress is over 90%, by introducing climactic events or revelations.
@@ -513,8 +528,9 @@ class ZenQuest:
         chat_id = update.effective_chat.id
         prompt = (
             "Generate a moral dilemma for the player's Zen quest. "
-            "Present two choices, each with potential consequences. "
-            "Keep the description and choices under 150 words total."
+            "Present three choices, each with potential consequences. "
+            "Format the choices as numbered options (1, 2, 3). "
+            "Keep the description and choices under 200 words total."
         )
         dilemma = await self.generate_response(prompt)
         self.moral_dilemmas[chat_id] = {'active': True, 'dilemma': dilemma}
@@ -524,68 +540,104 @@ class ZenQuest:
         chat_id = update.effective_chat.id
         character = self.characters[chat_id]
         
-        opponent_prompt = f"Generate a challenging opponent for a {character.name} in a Zen-themed quest. Include name, brief description, and two unique abilities. Keep it under 50 words."
-        opponent = await self.generate_response(opponent_prompt)
+        opponent_prompt = f"Generate a challenging opponent for a {character.name} in a Zen-themed quest. Include name, brief description, HP, and two unique abilities. Format as JSON."
+        opponent_json = await self.generate_response(opponent_prompt)
+        opponent = json.loads(opponent_json)
         
         self.current_opponent[chat_id] = opponent
         self.in_combat[chat_id] = True
         
+        self.combat_system = CombatSystem()
+        self.combat_system.initialize_combat([character], [opponent])
+        
         combat_start_message = (
-            f"You encounter {opponent}\n"
+            f"You encounter {opponent['name']}!\n"
+            f"{opponent['description']}\n"
             f"Prepare for combat!\n"
-            f"Your options:\n"
-            f"1. Attack\n"
-            f"2. Defend\n"
-            f"3. Use ability\n"
-            f"4. Attempt to resolve peacefully"
+            f"Combat order: {', '.join([c.name if hasattr(c, 'name') else c['name'] for c in self.combat_system.turn_order])}\n"
         )
         
-        keyboard = [
-            [InlineKeyboardButton("Attack", callback_data="combat_attack"),
-             InlineKeyboardButton("Defend", callback_data="combat_defend")],
-            [InlineKeyboardButton("Use ability", callback_data="combat_ability"),
-             InlineKeyboardButton("Resolve peacefully", callback_data="combat_peace")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        await self.send_message(update, combat_start_message)
+        await self.present_combat_options(update, context)
+
+    async def present_combat_options(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        current_character = self.combat_system.turn_order[self.combat_system.current_turn]
         
-        await self.send_message(update, combat_start_message, reply_markup=reply_markup)
+        if hasattr(current_character, 'name'):  # Player's turn
+            character = self.characters[chat_id]
+            options = [
+                "1. Basic Attack",
+                "2. Defend (+20% damage reduction next turn)",
+                f"3. Use {character.abilities[0]}",
+                f"4. Use {character.abilities[1]}",
+                "5. Attempt to flee"
+            ]
+            await self.send_message(update, f"{character.name}'s turn!\nChoose your action:\n" + "\n".join(options))
+        else:  # Opponent's turn
+            await self.handle_opponent_turn(update, context)
 
     async def handle_combat_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, action: str):
         chat_id = update.effective_chat.id
         character = self.characters[chat_id]
         opponent = self.current_opponent[chat_id]
         
-        # Extract character details
-        character_abilities = character.abilities
-        character_strengths = character.strengths
-        character_weaknesses = character.weaknesses
-
-        # Update the prompt to include character class influence
-        prompt = f"""
-        Character: {character.name} (HP: {character.current_hp}/{character.max_hp}, Energy: {character.current_energy}/{character.max_energy})
-        Abilities: {', '.join(character_abilities)}
-        Strengths: {', '.join(character_strengths)}
-        Weaknesses: {', '.join(character_weaknesses)}
-        Opponent: {opponent}
-        Action: {action}
-
-        Generate a combat outcome that is influenced by the character's class, abilities, strengths, and weaknesses.
-        Include changes to HP or energy, and the opponent's reaction.
-        If the combat ends, state whether the character won or lost.
-        Keep the response under 200 words.
-        """
+        action_result = await self.resolve_combat_action(character, opponent, action)
+        await self.send_message(update, action_result)
         
-        combat_result = await self.generate_response(prompt)
-        await self.send_message(update, combat_result)
-        
-        # Determine if combat has ended
-        if "won" in combat_result.lower() or "lost" in combat_result.lower():
+        if "combat ended" in action_result.lower():
             self.in_combat[chat_id] = False
             self.current_opponent.pop(chat_id, None)
             await self.progress_story(update, context, "combat ended")
         else:
-            # Present combat options again
-            await self.present_combat_options(update)
+            self.combat_system.next_turn()
+            await self.present_combat_options(update, context)
+
+    async def handle_opponent_turn(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        opponent = self.current_opponent[chat_id]
+        character = self.characters[chat_id]
+        
+        action_prompt = f"Generate a strategic combat action for {opponent['name']} against {character.name}. Consider the opponent's abilities and the character's strengths/weaknesses. Keep it under 50 words."
+        action = await self.generate_response(action_prompt)
+        
+        result = await self.resolve_combat_action(opponent, character, action)
+        await self.send_message(update, f"{opponent['name']}'s turn:\n{result}")
+        
+        if "combat ended" in result.lower():
+            self.in_combat[chat_id] = False
+            self.current_opponent.pop(chat_id, None)
+            await self.progress_story(update, context, "combat ended")
+        else:
+            self.combat_system.next_turn()
+            await self.present_combat_options(update, context)
+
+    async def resolve_combat_action(self, attacker, defender, action):
+        prompt = f"""
+        Attacker: {attacker.name if hasattr(attacker, 'name') else attacker['name']}
+        Attacker's abilities: {', '.join(attacker.abilities) if hasattr(attacker, 'abilities') else ', '.join(attacker['abilities'])}
+        Defender: {defender.name if hasattr(defender, 'name') else defender['name']}
+        Action: {action}
+
+        Resolve the combat action, considering the attacker's abilities and the defender's strengths/weaknesses.
+        Include any damage dealt, status effects applied, or other relevant outcomes.
+        If the combat ends, clearly state whether the attacker or defender won.
+        Keep the response under 100 words.
+        """
+        result = await self.generate_response(prompt)
+        
+        # Update HP based on the result
+        if hasattr(attacker, 'current_hp'):
+            attacker.current_hp = max(0, attacker.current_hp - random.randint(5, 15))
+        else:
+            attacker['current_hp'] = max(0, attacker['current_hp'] - random.randint(5, 15))
+        
+        if hasattr(defender, 'current_hp'):
+            defender.current_hp = max(0, defender.current_hp - random.randint(5, 15))
+        else:
+            defender['current_hp'] = max(0, defender['current_hp'] - random.randint(5, 15))
+        
+        return result
 
     async def initiate_riddle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
@@ -666,16 +718,6 @@ class ZenQuest:
         else:
             await self.send_message(update, "You're not in combat right now.")
 
-    async def present_combat_options(self, update: Update):
-        keyboard = [
-            [InlineKeyboardButton("Attack", callback_data="combat_attack"),
-             InlineKeyboardButton("Defend", callback_data="combat_defend")],
-            [InlineKeyboardButton("Use Ability", callback_data="combat_ability"),
-             InlineKeyboardButton("Resolve Peacefully", callback_data="combat_peace")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await self.send_message(update, "What will you do next?", reply_markup=reply_markup)
-
 # Instantiate the ZenQuest class
 zen_quest = ZenQuest()
 
@@ -699,13 +741,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     chat_type = update.effective_chat.type
 
-    # Only process messages if there's an active quest in the chat
     if not zen_quest.quest_active.get(chat_id, False):
         if chat_type == 'private' and update.message.text and not update.message.text.startswith('/'):
             await update.message.reply_text("You're not on a quest. Use /zenquest to start one!")
         return
 
-    await zen_quest.handle_input(update, context)
+    if zen_quest.in_combat.get(chat_id, False):
+        await zen_quest.handle_combat_input(update, context, update.message.text)
+    else:
+        await zen_quest.handle_input(update, context)
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Exception while handling an update: {context.error}")
@@ -713,17 +757,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(
             "An error occurred while processing your request. Please try again later."
         )
-
-async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    data = query.data
-
-    if data.startswith("class_"):
-        await zen_quest.select_character_class(update, context)
-    elif data.startswith("combat_"):
-        await zen_quest.handle_combat_input(update, context, data)
-    else:
-        await query.answer("Unknown action.")
 
 def main():
     # Set up the application
@@ -737,7 +770,6 @@ def main():
     application.add_handler(CommandHandler("meditate", meditate_command))
     application.add_handler(CommandHandler("interrupt", interrupt_quest_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(handle_callback_query))
     application.add_error_handler(error_handler)
 
     # Set up the database
