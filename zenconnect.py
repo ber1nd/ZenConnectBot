@@ -607,15 +607,23 @@ class ZenQuest:
 
     async def generate_response(self, prompt, max_tokens=500):
         try:
-            response = await openai.ChatCompletion.acreate(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a wise Zen master guiding a quest. Maintain realism for human capabilities. Actions should have logical consequences. Provide challenging moral dilemmas and opportunities for growth."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=max_tokens,
-                temperature=0.7
+            messages = [
+                {"role": "system", "content": "You are a wise Zen master guiding a quest. Maintain realism for human capabilities. Actions should have logical consequences. Provide challenging moral dilemmas and opportunities for growth."},
+                {"role": "user", "content": prompt}
+            ]
+
+            # Use the synchronous 'create' method within an executor
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: openai.ChatCompletion.create(
+                    model="gpt-4o-mini",
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=0.7
+                )
             )
+
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.error(f"Error generating response: {e}")
@@ -694,6 +702,14 @@ async def interrupt_quest_command(update: Update, context: ContextTypes.DEFAULT_
     await zen_quest.interrupt_quest(update, context)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_type = update.effective_chat.type
+
+    # Only process messages in private chats or if the user is on a quest in group chats
+    if chat_type != 'private' and not zen_quest.quest_active.get(user_id, False):
+        if not update.message.text or not update.message.text.startswith('/'):
+            return  # Ignore non-command messages in group chats if the user is not on a quest
+
     await zen_quest.handle_input(update, context)
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
