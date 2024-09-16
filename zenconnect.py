@@ -159,11 +159,8 @@ class ZenQuest:
             )
             return
 
-        # Offer character class selection
-        keyboard = [[
-            InlineKeyboardButton(class_name, callback_data=f"class_{class_name}")
-            for class_name in self.character_classes.keys()
-        ]]
+        keyboard = [[InlineKeyboardButton(class_name, callback_data=f"class_{class_name.lower()}") 
+                     for class_name in self.character_classes.keys()]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
             "Choose your character class to begin your Zen journey:",
@@ -174,7 +171,11 @@ class ZenQuest:
         query = update.callback_query
         await query.answer()
         chat_id = update.effective_chat.id
-        class_name = query.data.split('_')[1]
+        class_name = query.data.split('_')[1].capitalize()
+
+        if class_name not in self.character_classes:
+            await query.edit_message_text("Invalid class selection. Please choose a valid class.")
+            return
 
         self.characters[chat_id] = self.character_classes[class_name]
         self.quest_active[chat_id] = True
@@ -566,24 +567,29 @@ class ZenQuest:
         
         if hasattr(current_character, 'name'):  # Player's turn
             character = self.characters[chat_id]
-            options = [
-                "1. Basic Attack",
-                "2. Defend (+20% damage reduction next turn)",
-                f"3. Use {character.abilities[0]}",
-                f"4. Use {character.abilities[1]}",
-                "5. Attempt to flee"
+            keyboard = [
+                [InlineKeyboardButton("Basic Attack", callback_data="combat_basic_attack")],
+                [InlineKeyboardButton("Defend", callback_data="combat_defend")],
+                [InlineKeyboardButton(f"Use {character.abilities[0]}", callback_data=f"combat_ability_{character.abilities[0]}")],
+                [InlineKeyboardButton(f"Use {character.abilities[1]}", callback_data=f"combat_ability_{character.abilities[1]}")],
+                [InlineKeyboardButton("Attempt to flee", callback_data="combat_flee")]
             ]
-            await self.send_message(update, f"{character.name}'s turn!\nChoose your action:\n" + "\n".join(options))
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await self.send_message(update, f"{character.name}'s turn!\nChoose your action:", reply_markup=reply_markup)
         else:  # Opponent's turn
             await self.handle_opponent_turn(update, context)
 
-    async def handle_combat_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, action: str):
+    async def handle_combat_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
         chat_id = update.effective_chat.id
+        action = query.data.split('_', 1)[1]  # Remove 'combat_' prefix
+        
         character = self.characters[chat_id]
         opponent = self.current_opponent[chat_id]
         
         action_result = await self.resolve_combat_action(character, opponent, action)
-        await self.send_message(update, action_result)
+        await query.edit_message_text(action_result)
         
         if "combat ended" in action_result.lower():
             self.in_combat[chat_id] = False
@@ -758,6 +764,17 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
             "An error occurred while processing your request. Please try again later."
         )
 
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+
+    if data.startswith("class_"):
+        await zen_quest.select_character_class(update, context)
+    elif data.startswith("combat_"):
+        await zen_quest.handle_combat_input(update, context)
+    else:
+        await query.answer("Unknown action.")
+
 def main():
     # Set up the application
     token = os.getenv("TELEGRAM_TOKEN")
@@ -771,6 +788,9 @@ def main():
     application.add_handler(CommandHandler("interrupt", interrupt_quest_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
+
+    # Add callback query handler
+    application.add_handler(CallbackQueryHandler(handle_callback_query))
 
     # Set up the database
     setup_database()
