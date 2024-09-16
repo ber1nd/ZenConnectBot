@@ -611,19 +611,12 @@ class ZenQuest:
                 {"role": "system", "content": "You are a wise Zen master guiding a quest. Maintain realism for human capabilities. Actions should have logical consequences. Provide challenging moral dilemmas and opportunities for growth."},
                 {"role": "user", "content": prompt}
             ]
-
-            # Use the synchronous 'create' method within an executor
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: openai.ChatCompletion.create(
-                    model="gpt-4o-mini",
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=0.7
-                )
+            response = await openai.ChatCompletion.acreate(
+                model="gpt-4o-mini",
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.7
             )
-
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.error(f"Error generating response: {e}")
