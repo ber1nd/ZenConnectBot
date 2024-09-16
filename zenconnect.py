@@ -252,26 +252,35 @@ class ZenQuest:
 
         # Process action
         action_result = await self.process_action(chat_id, user_input)
-        await self.send_message(update, action_result)
 
-        # Handle special events
+        # Handle special events without sending additional messages
         if "[COMBAT_START]" in action_result:
+            clean_result = action_result.replace("[COMBAT_START]", "").strip()
+            await self.send_message(update, clean_result)
             await self.initiate_combat(update, context)
         elif "[RIDDLE_START]" in action_result:
+            clean_result = action_result.replace("[RIDDLE_START]", "").strip()
+            await self.send_message(update, clean_result)
             await self.initiate_riddle(update, context)
         elif "[QUEST_COMPLETE]" in action_result:
+            clean_result = action_result.replace("[QUEST_COMPLETE]", "").strip()
+            await self.send_message(update, clean_result)
             await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
         elif "[QUEST_FAIL]" in action_result:
+            clean_result = action_result.replace("[QUEST_FAIL]", "").strip()
+            await self.send_message(update, clean_result)
             await self.end_quest(update, context, victory=False, reason="Your quest has come to an unfortunate end.")
         elif "[MORAL_CHOICE]" in action_result:
-            await self.present_moral_choice(update, context)
-        else:
-            # Remove the tag if present and send the message
-            clean_result = action_result.replace("[COMBAT_START]", "").replace("[RIDDLE_START]", "").replace("[QUEST_COMPLETE]", "").replace("[QUEST_FAIL]", "").replace("[MORAL_CHOICE]", "").strip()
+            clean_result = action_result.replace("[MORAL_CHOICE]", "").strip()
             await self.send_message(update, clean_result)
-            self.current_scene[chat_id] = clean_result
-            self.current_stage[chat_id] += 1
-            await self.update_quest_state(chat_id)
+            # Don't call present_moral_choice here, wait for user input
+        else:
+            await self.send_message(update, action_result)
+
+        # Update quest state
+        self.current_scene[chat_id] = action_result
+        self.current_stage[chat_id] += 1
+        await self.update_quest_state(chat_id)
 
     async def send_message(self, update: Update, text: str, reply_markup=None):
         if update.message:
@@ -741,11 +750,6 @@ class ZenQuest:
         except Exception as e:
             logger.error(f"Error generating response: {e}")
             return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later."
-
-    async def send_scene(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        chat_id = update.effective_chat.id
-        scene = self.current_scene[chat_id]
-        await self.send_message(update, scene)
 
     async def update_quest_state(self, chat_id: int):
         progress = self.current_stage[chat_id] / self.total_stages[chat_id]
