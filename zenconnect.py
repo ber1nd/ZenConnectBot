@@ -1380,18 +1380,21 @@ def main():
     # Set up the database
     setup_database()
 
-    # Start the bot in a separate thread
-    from threading import Thread
+    # Start Uvicorn in a separate process
+    import multiprocessing
 
-    def run_bot():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        application.run_polling()
+    def run_uvicorn():
+        uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 
-    Thread(target=run_bot).start()
+    p = multiprocessing.Process(target=run_uvicorn)
+    p.start()
 
-    # Start the FastAPI app
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    # Run the bot in the main process
+    application.run_polling()
+
+    # When bot stops, terminate the web server
+    p.terminate()
+    p.join()
 
 
 if __name__ == "__main__":
