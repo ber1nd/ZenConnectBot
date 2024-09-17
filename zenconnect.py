@@ -42,10 +42,32 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client
-openai_api_key = os.getenv("OPENAI_API_KEY")
+def get_openai_api_key():
+    # First, try to get the API key from the environment variable
+    api_key = os.getenv("OPENAI_API_KEY")
+    
+    # If not found in environment, try to get it from the database
+    if not api_key:
+        connection = get_db_connection()
+        if connection:
+            try:
+                cursor = connection.cursor(dictionary=True)
+                cursor.execute("SELECT value FROM settings WHERE key = 'API_KEY'")
+                result = cursor.fetchone()
+                if result:
+                    api_key = result['value']
+            except mysql.connector.Error as e:
+                logger.error(f"Error retrieving API key from database: {e}")
+            finally:
+                cursor.close()
+                connection.close()
+    
+    return api_key
+
+openai_api_key = get_openai_api_key()
 if not openai_api_key:
-    logger.error("OPENAI_API_KEY environment variable is not set. Please set it and restart the application.")
-    raise ValueError("OPENAI_API_KEY is not set")
+    logger.error("OpenAI API key not found in environment variables or database. Please set OPENAI_API_KEY environment variable or add it to the database.")
+    raise ValueError("OpenAI API key is not set")
 
 try:
     client = AsyncOpenAI(api_key=openai_api_key)
