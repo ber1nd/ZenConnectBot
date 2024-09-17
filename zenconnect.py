@@ -2,20 +2,32 @@ import json
 import os
 import logging
 import random
+import asyncio
 from dotenv import load_dotenv
-import mysql.connector # Ensure this is installed
-from mysql.connector import errorcode
+import mysql.connector
 from datetime import datetime
 from collections import defaultdict
 import math
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    ContextTypes, filters
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    WebAppInfo,
 )
-from openai import AsyncOpenAI
-from flask import Flask, jsonify, request, render_template
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    filters,
+)
+import openai
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.templating import Jinja2Templates
+import uvicorn
 import aiohttp
 
 # Load environment variables
@@ -23,26 +35,30 @@ load_dotenv()
 
 # Set up logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))  # Use OPENAI_API_KEY instead of API_KEY
+openai.api_key = os.getenv("OPENAI_API_KEY")
+from concurrent.futures import ThreadPoolExecutor
 
-# Initialize Flask app
-app = Flask(__name__, template_folder=os.path.abspath('.'))
+executor = ThreadPoolExecutor(max_workers=5)
+
+# Initialize FastAPI app
+app = FastAPI()
+templates = Jinja2Templates(directory="templates")
 
 # Rate limiting parameters
 RATE_LIMIT = 5  # Number of messages
 RATE_TIME_WINDOW = 60  # Time window in seconds
-from asyncio import Lock
-rate_limit_lock = Lock()
+rate_limit_lock = asyncio.Lock()
 chat_message_times = defaultdict(list)
 
 # OpenAI Moderation Endpoint
 MODERATION_URL = "https://api.openai.com/v1/moderations"
+
 
 def get_db_connection():
     try:
@@ -50,9 +66,9 @@ def get_db_connection():
             user=os.getenv("MYSQLUSER"),
             password=os.getenv("MYSQLPASSWORD"),
             host=os.getenv("MYSQLHOST"),
-            database=os.getenv("MYSQLDATABASE"),  # Corrected variable name
+            database=os.getenv("MYSQLDATABASE"),
             port=int(os.getenv("MYSQLPORT", 3306)),
-            raise_on_warnings=True
+            raise_on_warnings=True,
         )
         logger.info("Database connection established successfully.")
         return connection
@@ -60,25 +76,28 @@ def get_db_connection():
         logger.error(f"Database connection error: {err}")
         return None
 
+
 def setup_database():
     connection = get_db_connection()
     if connection:
         try:
             cursor = connection.cursor()
             # Create users table
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
-                username VARCHAR(255),
-                first_name VARCHAR(255),
-                last_name VARCHAR(255),
-                chat_type ENUM('private', 'group') DEFAULT 'private',
-                total_minutes INT DEFAULT 0,
-                zen_points INT DEFAULT 0,
-                level INT DEFAULT 0,
-                subscription_status BOOLEAN DEFAULT FALSE
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    username VARCHAR(255),
+                    first_name VARCHAR(255),
+                    last_name VARCHAR(255),
+                    chat_type ENUM('private', 'group') DEFAULT 'private',
+                    total_minutes INT DEFAULT 0,
+                    zen_points INT DEFAULT 0,
+                    level INT DEFAULT 0,
+                    subscription_status BOOLEAN DEFAULT FALSE
+                )
+                """
             )
-            """)
             # Other table creation statements...
             connection.commit()
             logger.info("Database setup completed successfully.")
@@ -89,6 +108,7 @@ def setup_database():
             connection.close()
     else:
         logger.error("Failed to connect to the database for setup.")
+
 
 class Character:
     def __init__(self, name, hp, energy, abilities, strengths, weaknesses):
@@ -116,9 +136,12 @@ class Character:
         self.status_effects.append({"effect": effect, "duration": duration})
 
     def update_status_effects(self):
-        self.status_effects = [effect for effect in self.status_effects if effect["duration"] > 0]
+        self.status_effects = [
+            effect for effect in self.status_effects if effect["duration"] > 0
+        ]
         for effect in self.status_effects:
             effect["duration"] -= 1
+
 
 class CombatSystem:
     def __init__(self):
@@ -127,7 +150,11 @@ class CombatSystem:
 
     def initialize_combat(self, players, opponents):
         all_combatants = players + opponents
-        self.turn_order = sorted(all_combatants, key=lambda x: random.randint(1, 20) + (x.dexterity - 10) // 2, reverse=True)
+        self.turn_order = sorted(
+            all_combatants,
+            key=lambda x: random.randint(1, 20) + (x.dexterity - 10) // 2,
+            reverse=True,
+        )
         self.current_turn = 0
 
     def next_turn(self):
@@ -142,6 +169,7 @@ class CombatSystem:
         if isinstance(defender, Character):
             damage -= (defender.constitution - 10) // 4
         return max(1, math.floor(damage))  # Minimum 1 damage
+
 
 class ZenQuest:
     def __init__(self):
@@ -159,74 +187,100 @@ class ZenQuest:
         self.riddles = {}
         self.moral_dilemmas = {}
         self.unfeasible_actions = [
-            "fly", "teleport", "time travel", "breathe underwater", "become invisible",
-            "read minds", "shoot lasers", "transform", "resurrect", "conjure",
-            "summon creatures", "control weather", "phase through walls"
+            "fly",
+            "teleport",
+            "time travel",
+            "breathe underwater",
+            "become invisible",
+            "read minds",
+            "shoot lasers",
+            "transform",
+            "resurrect",
+            "conjure",
+            "summon creatures",
+            "control weather",
+            "phase through walls",
         ]
         self.failure_actions = [
-            "give up", "abandon quest", "betray", "surrender",
-            "destroy sacred artifact", "harm innocent", "break vow", "ignore warning",
-            "consume poison", "jump off cliff", "attack ally", "steal from temple"
+            "give up",
+            "abandon quest",
+            "betray",
+            "surrender",
+            "destroy sacred artifact",
+            "harm innocent",
+            "break vow",
+            "ignore warning",
+            "consume poison",
+            "jump off cliff",
+            "attack ally",
+            "steal from temple",
         ]
         self.character_classes = {
             "Monk": Character(
-                "Monk", 100, 100,
+                "Monk",
+                100,
+                100,
                 ["Meditate", "Chi Strike", "Healing Touch", "Spirit Ward"],
                 ["spiritual challenges", "endurance"],
-                ["physical combat", "technology"]
+                ["physical combat", "technology"],
             ),
             "Samurai": Character(
-                "Samurai", 120, 80,
+                "Samurai",
+                120,
+                80,
                 ["Katana Slash", "Bushido Stance", "Focused Strike", "Honor Guard"],
                 ["physical combat", "honor-based challenges"],
-                ["spiritual challenges", "deception"]
+                ["spiritual challenges", "deception"],
             ),
             "Shaman": Character(
-                "Shaman", 90, 110,
+                "Shaman",
+                90,
+                110,
                 ["Nature's Wrath", "Spirit Link", "Elemental Shield", "Ancestral Guidance"],
                 ["nature-based challenges", "spiritual insight"],
-                ["urban environments", "technology"]
-            )
+                ["urban environments", "technology"],
+            ),
         }
         self.min_stages = 10
         self.max_stages = 20
         self.group_quests = {}
-        self.skill_check_difficulty = {
-            "easy": 10,
-            "medium": 15,
-            "hard": 20
-        }
-        # Add max_riddle_attempts
+        self.skill_check_difficulty = {"easy": 10, "medium": 15, "hard": 20}
         self.max_riddle_attempts = 3
-        # Initialize puzzles dictionary
         self.puzzles = {}
+        self.combat_systems = {}
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
-        
+
         if self.quest_active.get(chat_id, False):
             await update.message.reply_text(
                 "A quest is already active in this chat. Use /status to check progress or /interrupt to end the current quest."
             )
             return
 
-        if update.effective_chat.type in ['group', 'supergroup']:
+        if update.effective_chat.type in ["group", "supergroup"]:
             await self.start_group_quest(update, context)
         else:
-            keyboard = [[InlineKeyboardButton(class_name, callback_data=f"class_{class_name.lower()}") 
-                         for class_name in self.character_classes.keys()]]
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        class_name, callback_data=f"class_{class_name.lower()}"
+                    )
+                    for class_name in self.character_classes.keys()
+                ]
+            ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
                 "Choose your character class to begin your Zen journey:",
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
             )
 
     async def start_group_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         self.group_quests[chat_id] = {
-            'players': {},
-            'ready': False,
-            'current_player': None
+            "players": {},
+            "ready": False,
+            "current_player": None,
         }
         await update.message.reply_text(
             "A group quest is starting! Each player should use /join to select their class. "
@@ -236,49 +290,62 @@ class ZenQuest:
     async def join_group_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
-        
+
         if chat_id not in self.group_quests:
-            await update.message.reply_text("There is no active group quest. Use /zenquest to start one.")
+            await update.message.reply_text(
+                "There is no active group quest. Use /zenquest to start one."
+            )
             return
 
-        if user_id in self.group_quests[chat_id]['players']:
+        if user_id in self.group_quests[chat_id]["players"]:
             await update.message.reply_text("You have already joined the quest.")
             return
 
-        keyboard = [[InlineKeyboardButton(class_name, callback_data=f"group_class_{class_name.lower()}") 
-                     for class_name in self.character_classes.keys()]]
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    class_name, callback_data=f"group_class_{class_name.lower()}"
+                )
+                for class_name in self.character_classes.keys()
+            ]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "Choose your character class for the group quest:",
-            reply_markup=reply_markup
+            "Choose your character class for the group quest:", reply_markup=reply_markup
         )
 
-    async def select_group_character_class(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def select_group_character_class(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
         query = update.callback_query
         await query.answer()
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
-        class_name = query.data.split('_')[2].capitalize()
+        data_parts = query.data.split("_")
+        if len(data_parts) < 3:
+            await query.edit_message_text("Invalid class selection. Please try again.")
+            return
+        class_name = data_parts[2].capitalize()
 
         if class_name not in self.character_classes:
             await query.edit_message_text("Invalid class selection. Please choose a valid class.")
             return
 
-        self.group_quests[chat_id]['players'][user_id] = self.character_classes[class_name]
+        self.group_quests[chat_id]["players"][user_id] = self.character_classes[class_name]
         await query.edit_message_text(f"You have joined the quest as a {class_name}.")
 
     async def start_group_journey(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
-        
-        if chat_id not in self.group_quests or self.group_quests[chat_id]['ready']:
+
+        if chat_id not in self.group_quests or self.group_quests[chat_id]["ready"]:
             await update.message.reply_text("There is no group quest waiting to start.")
             return
 
-        if len(self.group_quests[chat_id]['players']) < 2:
+        if len(self.group_quests[chat_id]["players"]) < 2:
             await update.message.reply_text("At least two players are needed to start the group quest.")
             return
 
-        self.group_quests[chat_id]['ready'] = True
+        self.group_quests[chat_id]["ready"] = True
         self.quest_active[chat_id] = True
         self.current_stage[chat_id] = 0
         self.total_stages[chat_id] = random.randint(self.min_stages, self.max_stages)
@@ -289,6 +356,10 @@ class ZenQuest:
         self.quest_goal[chat_id] = await self.generate_group_quest_goal(chat_id)
         self.current_scene[chat_id] = await self.generate_group_initial_scene(chat_id)
 
+        # Set the first player to act
+        players = list(self.group_quests[chat_id]["players"].keys())
+        self.group_quests[chat_id]["current_player"] = players[0]
+
         start_message = (
             f"Your group quest begins!\n\n"
             f"{self.quest_goal[chat_id]}\n\n"
@@ -297,7 +368,9 @@ class ZenQuest:
         await update.message.reply_text(start_message)
 
     async def generate_group_quest_goal(self, chat_id: int):
-        classes = [character.name for character in self.group_quests[chat_id]['players'].values()]
+        classes = [
+            character.name for character in self.group_quests[chat_id]["players"].values()
+        ]
         prompt = f"""
         Generate a quest goal for a group of {', '.join(classes)} in a Zen-themed adventure.
         The goal should be challenging, spiritual in nature, and relate to self-improvement and teamwork.
@@ -306,7 +379,9 @@ class ZenQuest:
         return await self.generate_response(prompt)
 
     async def generate_group_initial_scene(self, chat_id: int):
-        classes = [character.name for character in self.group_quests[chat_id]['players'].values()]
+        classes = [
+            character.name for character in self.group_quests[chat_id]["players"].values()
+        ]
         prompt = f"""
         Quest goal: {self.quest_goal[chat_id]}
         Group composition: {', '.join(classes)}
@@ -324,7 +399,11 @@ class ZenQuest:
         query = update.callback_query
         await query.answer()
         chat_id = update.effective_chat.id
-        class_name = query.data.split('_')[1].capitalize()
+        data_parts = query.data.split("_")
+        if len(data_parts) < 2:
+            await query.edit_message_text("Invalid class selection. Please try again.")
+            return
+        class_name = data_parts[1].capitalize()
 
         if class_name not in self.character_classes:
             await query.edit_message_text("Invalid class selection. Please choose a valid class.")
@@ -362,7 +441,9 @@ class ZenQuest:
             chat_times.append(current_time)
             chat_message_times[chat_id] = chat_times
             if len(chat_times) > RATE_LIMIT:
-                await update.message.reply_text("This chat is sending messages too quickly. Please slow down.")
+                await update.message.reply_text(
+                    "This chat is sending messages too quickly. Please slow down."
+                )
                 return
 
         if update.message and update.message.text:
@@ -370,15 +451,15 @@ class ZenQuest:
         else:
             return  # Non-text message received
 
-        if update.effective_chat.type in ['group', 'supergroup']:
-            if not self.group_quests.get(chat_id, {}).get('ready', False):
+        if update.effective_chat.type in ["group", "supergroup"]:
+            if not self.group_quests.get(chat_id, {}).get("ready", False):
                 return
-            if self.group_quests[chat_id]['current_player'] != user_id:
+            if self.group_quests[chat_id]["current_player"] != user_id:
                 await update.message.reply_text("It's not your turn to act.")
                 return
 
         if not self.quest_active.get(chat_id, False):
-            if update.effective_chat.type == 'private':
+            if update.effective_chat.type == "private":
                 await update.message.reply_text("You're not on a quest. Use /zenquest to start one!")
             return
 
@@ -386,24 +467,27 @@ class ZenQuest:
             await update.message.reply_text("You're in combat! Use the combat options provided.")
             return
 
-        if chat_id in self.riddles and self.riddles[chat_id]['active']:
+        if chat_id in self.riddles and self.riddles[chat_id]["active"]:
             await self.handle_riddle_input(update, context, user_input)
             return
 
-        if any(word in user_input.lower() for word in ["hurt myself", "self-harm", "suicide", "kill myself", "cut"]):
+        if any(
+            word in user_input.lower()
+            for word in ["hurt myself", "self-harm", "suicide", "kill myself", "cut"]
+        ):
             await self.handle_self_harm(update, context, user_input)
             return
 
         # Check for special commands
-        if user_input.startswith('/'):
+        if user_input.startswith("/"):
             command = user_input[1:].split()[0]
-            if command == 'meditate':
+            if command == "meditate":
                 await self.meditate(update, context)
-            elif command == 'status':
+            elif command == "status":
                 await self.get_quest_status(update, context)
-            elif command == 'interrupt':
+            elif command == "interrupt":
                 await self.interrupt_quest(update, context)
-            elif command == 'hint':
+            elif command == "hint":
                 await self.handle_hint(update, context)
             else:
                 await update.message.reply_text(
@@ -426,15 +510,19 @@ class ZenQuest:
         elif "[QUEST_COMPLETE]" in action_result:
             clean_result = action_result.replace("[QUEST_COMPLETE]", "").strip()
             await self.send_message(update, clean_result)
-            await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+            await self.end_quest(
+                update, context, victory=True, reason="You have completed your journey!"
+            )
         elif "[QUEST_FAIL]" in action_result:
             clean_result = action_result.replace("[QUEST_FAIL]", "").strip()
             await self.send_message(update, clean_result)
-            await self.end_quest(update, context, victory=False, reason="Your quest has come to an unfortunate end.")
+            await self.end_quest(
+                update, context, victory=False, reason="Your quest has come to an unfortunate end."
+            )
         elif "[MORAL_CHOICE]" in action_result:
             clean_result = action_result.replace("[MORAL_CHOICE]", "").strip()
             await self.send_message(update, clean_result)
-            # Don't call present_moral_choice here, wait for user input
+            await self.present_moral_choice(update, context)
         else:
             await self.send_message(update, action_result)
 
@@ -452,9 +540,9 @@ class ZenQuest:
 
     async def process_action(self, chat_id: int, user_input: str):
         if chat_id in self.group_quests:
-            characters = list(self.group_quests[chat_id]['players'].values())
-            current_player = self.group_quests[chat_id]['current_player']
-            current_character = self.group_quests[chat_id]['players'][current_player]
+            characters = list(self.group_quests[chat_id]["players"].values())
+            current_player = self.group_quests[chat_id]["current_player"]
+            current_character = self.group_quests[chat_id]["players"][current_player]
         else:
             characters = [self.characters[chat_id]]
             current_character = characters[0]
@@ -511,7 +599,11 @@ class ZenQuest:
 
     async def progress_story(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         chat_id = update.effective_chat.id
-        character = self.characters[chat_id]
+        if chat_id in self.characters:
+            character = self.characters[chat_id]
+        else:
+            await self.send_message(update, "An error occurred: Character not found.")
+            return
 
         next_scene = await self.generate_next_scene(chat_id, user_input)
         self.current_scene[chat_id] = next_scene
@@ -522,26 +614,44 @@ class ZenQuest:
         elif "[RIDDLE_START]" in next_scene:
             await self.initiate_riddle(update, context)
         elif "[QUEST_COMPLETE]" in next_scene:
-            await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
+            await self.end_quest(
+                update, context, victory=True, reason="You have completed your journey!"
+            )
         elif "[QUEST_FAIL]" in next_scene:
-            await self.end_quest(update, context, victory=False, reason="Your quest has come to an unfortunate end.")
+            await self.end_quest(
+                update, context, victory=False, reason="Your quest has come to an unfortunate end."
+            )
         else:
             # Remove the tag if present and send the message
-            clean_scene = next_scene.replace("[COMBAT_START]", "").replace("[RIDDLE_START]", "").replace("[QUEST_COMPLETE]", "").replace("[QUEST_FAIL]", "").strip()
+            clean_scene = (
+                next_scene.replace("[COMBAT_START]", "")
+                .replace("[RIDDLE_START]", "")
+                .replace("[QUEST_COMPLETE]", "")
+                .replace("[QUEST_FAIL]", "")
+                .strip()
+            )
             await self.send_message(update, clean_scene)
             self.current_stage[chat_id] += 1
 
         # Update quest state and check for quest completion
         await self.update_quest_state(chat_id)
         if self.current_stage[chat_id] >= self.total_stages[chat_id]:
-            await self.end_quest(update, context, victory=True, reason="You have reached the end of your journey!")
+            await self.end_quest(
+                update, context, victory=True, reason="You have reached the end of your journey!"
+            )
 
         # Update karma and check for quest failure due to low karma
-        self.player_karma[chat_id] = max(0, min(100, self.player_karma[chat_id] + random.randint(-3, 3)))
+        self.player_karma[chat_id] = max(
+            0, min(100, self.player_karma[chat_id] + random.randint(-3, 3))
+        )
         if character.current_hp <= 0:
-            await self.end_quest(update, context, victory=False, reason="Your life force has been depleted.")
+            await self.end_quest(
+                update, context, victory=False, reason="Your life force has been depleted."
+            )
         elif self.player_karma[chat_id] <= 0:
-            await self.end_quest(update, context, victory=False, reason="Your karma has fallen too low.")
+            await self.end_quest(
+                update, context, victory=False, reason="Your karma has fallen too low."
+            )
 
     async def generate_next_scene(self, chat_id: int, user_input: str):
         character = self.characters[chat_id]
@@ -551,10 +661,22 @@ class ZenQuest:
         progress = (current_stage / max(1, total_stages)) * 100
 
         event_type = random.choices(
-            ["normal", "challenge", "reward", "meditation", "npc_encounter", "moral_dilemma",
-             "spiritual_trial", "natural_obstacle", "mystical_phenomenon", "combat", "riddle", "puzzle"],
+            [
+                "normal",
+                "challenge",
+                "reward",
+                "meditation",
+                "npc_encounter",
+                "moral_dilemma",
+                "spiritual_trial",
+                "natural_obstacle",
+                "mystical_phenomenon",
+                "combat",
+                "riddle",
+                "puzzle",
+            ],
             weights=[15, 15, 10, 5, 10, 10, 5, 5, 5, 10, 5, 5],
-            k=1
+            k=1,
         )[0]
 
         if event_type == "puzzle":
@@ -617,35 +739,33 @@ class ZenQuest:
     async def handle_riddle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         chat_id = update.effective_chat.id
         riddle = self.riddles[chat_id]
-        
-        riddle['attempts'] += 1
-        
-        if user_input.lower() == riddle['answer'].lower():
+
+        riddle["attempts"] += 1
+
+        if user_input.lower() == riddle["answer"].lower():
             success_message = await self.generate_response(
                 f"Generate a brief success message for solving the riddle: {riddle['riddle']}. "
                 f"Include a small reward or positive outcome for the {self.characters[chat_id].name}. "
                 f"Keep it under 100 words."
             )
             await self.send_message(update, success_message)
-            self.riddles[chat_id]['active'] = False
+            self.riddles[chat_id]["active"] = False
             await self.progress_story(update, context, "solved riddle")
-        elif riddle['attempts'] >= self.max_riddle_attempts:
+        elif riddle["attempts"] >= self.max_riddle_attempts:
             failure_consequence = await self.generate_riddle_failure_consequence(chat_id)
             await self.send_message(update, failure_consequence)
-            self.riddles[chat_id]['active'] = False
+            self.riddles[chat_id]["active"] = False
             await self.progress_story(update, context, "failed riddle")
         else:
-            remaining_attempts = self.max_riddle_attempts - riddle['attempts']
-            await self.send_message(update, f"That's not correct. You have {remaining_attempts} attempts remaining. Use /hint for a clue.")
+            remaining_attempts = self.max_riddle_attempts - riddle["attempts"]
+            await self.send_message(
+                update,
+                f"That's not correct. You have {remaining_attempts} attempts remaining. Use /hint for a clue.",
+            )
 
     async def handle_self_harm(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         support_message = (
-            "I'm concerned about what you've said. Remember, you're valuable and your life matters. "
-            "If you're having thoughts of self-harm, please reach out for help. "
-            "Here are some resources:\n"
-            "- Crisis Text Line: Text HOME to 741741\n"
-            "- National Suicide Prevention Lifeline: 1-800-273-8255\n"
-            "- International helplines: https://www.befrienders.org"
+            "I'm sorry to hear that you're feeling this way. Please consider reaching out to a mental health professional or someone you trust for support."
         )
         await self.send_message(update, support_message)
 
@@ -660,10 +780,10 @@ class ZenQuest:
             f"Generate a brief meditation outcome for a {character.name} in their current quest state. "
             "Include a small health and energy boost, and a Zen insight. Keep it under 100 words."
         )
-        
+
         character.current_hp = min(character.max_hp, character.current_hp + 10)
         character.current_energy = min(character.max_energy, character.current_energy + 10)
-        
+
         await self.send_message(update, meditation_result)
 
     async def get_quest_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -674,7 +794,7 @@ class ZenQuest:
 
         character = self.characters[chat_id]
         progress = (self.current_stage[chat_id] / max(1, self.total_stages[chat_id])) * 100
-        
+
         status_message = (
             f"Quest Progress: {progress:.1f}%\n"
             f"Character: {character.name}\n"
@@ -701,7 +821,7 @@ class ZenQuest:
 
         character = self.characters[chat_id]
         progress = (self.current_stage[chat_id] / max(1, self.total_stages[chat_id])) * 100
-        
+
         end_message = (
             f"Your quest has ended.\n"
             f"Reason: {reason}\n"
@@ -712,9 +832,9 @@ class ZenQuest:
             f"HP: {character.current_hp}/{character.max_hp}\n"
             f"Energy: {character.current_energy}/{character.max_energy}\n"
         )
-        
+
         await self.send_message(update, end_message)
-        
+
         # Reset user's quest data
         self.quest_active[chat_id] = False
         self.characters.pop(chat_id, None)
@@ -728,6 +848,8 @@ class ZenQuest:
         self.current_opponent.pop(chat_id, None)
         self.riddles.pop(chat_id, None)
         self.moral_dilemmas.pop(chat_id, None)
+        self.group_quests.pop(chat_id, None)
+        self.combat_systems.pop(chat_id, None)
 
     async def present_moral_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
@@ -738,51 +860,106 @@ class ZenQuest:
             "Keep the description and choices under 200 words total."
         )
         dilemma = await self.generate_response(prompt)
-        self.moral_dilemmas[chat_id] = {'active': True, 'dilemma': dilemma}
+        self.moral_dilemmas[chat_id] = {"active": True, "dilemma": dilemma}
         await self.send_message(update, dilemma)
 
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
-        
+
         if chat_id in self.group_quests:
-            players = list(self.group_quests[chat_id]['players'].values())
+            players = list(self.group_quests[chat_id]["players"].values())
         else:
             players = [self.characters[chat_id]]
 
         opponent_prompt = f"Generate a challenging opponent or group of opponents for {', '.join([p.name for p in players])} in a Zen-themed quest. Include name(s), brief description(s), HP, and two unique abilities for each. Format as JSON."
         opponent_json = await self.generate_response(opponent_prompt)
-        opponents = json.loads(opponent_json)
-        
+
+        try:
+            opponents_data = json.loads(opponent_json)
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing opponent JSON: {e}")
+            await self.send_message(
+                update,
+                "An error occurred while generating opponents for combat. Please try again later.",
+            )
+            return
+
+        opponents = []
+        if isinstance(opponents_data, list):
+            for opp_data in opponents_data:
+                opponent = Character(
+                    opp_data.get("name", "Unknown Opponent"),
+                    opp_data.get("HP", 50),
+                    0,  # Energy not used for opponents here
+                    opp_data.get("abilities", []),
+                    [],
+                    [],
+                )
+                opponent.description = opp_data.get("description", "")
+                opponents.append(opponent)
+        else:
+            opponent = Character(
+                opponents_data.get("name", "Unknown Opponent"),
+                opponents_data.get("HP", 50),
+                0,
+                opponents_data.get("abilities", []),
+                [],
+                [],
+            )
+            opponent.description = opponents_data.get("description", "")
+            opponents.append(opponent)
+
         self.current_opponent[chat_id] = opponents
         self.in_combat[chat_id] = True
-        
-        self.combat_system = CombatSystem()
-        self.combat_system.initialize_combat(players, opponents)
-        
+
+        # Initialize a combat system for this chat
+        combat_system = CombatSystem()
+        combat_system.initialize_combat(players, opponents)
+        self.combat_systems[chat_id] = combat_system
+
         combat_start_message = (
-            f"You encounter {', '.join([o['name'] for o in opponents])}!\n"
-            f"{' '.join([o['description'] for o in opponents])}\n"
+            f"You encounter {', '.join([o.name for o in opponents])}!\n"
+            f"{' '.join([o.description for o in opponents if hasattr(o, 'description')])}\n"
             f"Prepare for combat!\n"
-            f"Combat order: {', '.join([c.name if isinstance(c, Character) else c['name'] for c in self.combat_system.turn_order])}\n"
+            f"Combat order: {', '.join([c.name for c in combat_system.turn_order])}\n"
         )
-        
+
         await self.send_message(update, combat_start_message)
         await self.present_combat_options(update, context)
 
     async def present_combat_options(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
-        current_character = self.combat_system.turn_order[self.combat_system.current_turn]
-        
+        combat_system = self.combat_systems.get(chat_id)
+        if not combat_system:
+            await self.send_message(update, "Combat system not initialized.")
+            return
+
+        current_character = combat_system.turn_order[combat_system.current_turn]
+
         if isinstance(current_character, Character):  # Player's turn
             keyboard = [
                 [InlineKeyboardButton("Basic Attack", callback_data="combat_basic_attack")],
                 [InlineKeyboardButton("Defend", callback_data="combat_defend")],
-                [InlineKeyboardButton(f"Use {current_character.abilities[0]}", callback_data=f"combat_ability_{current_character.abilities[0]}")],
-                [InlineKeyboardButton(f"Use {current_character.abilities[1]}", callback_data=f"combat_ability_{current_character.abilities[1]}")],
-                [InlineKeyboardButton("Attempt to flee", callback_data="combat_flee")]
+                [
+                    InlineKeyboardButton(
+                        f"Use {current_character.abilities[0]}",
+                        callback_data=f"combat_ability_{current_character.abilities[0]}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        f"Use {current_character.abilities[1]}",
+                        callback_data=f"combat_ability_{current_character.abilities[1]}",
+                    )
+                ],
+                [InlineKeyboardButton("Attempt to flee", callback_data="combat_flee")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await self.send_message(update, f"{current_character.name}'s turn!\nChoose your action:", reply_markup=reply_markup)
+            await self.send_message(
+                update,
+                f"{current_character.name}'s turn!\nChoose your action:",
+                reply_markup=reply_markup,
+            )
         else:  # Opponent's turn
             await self.handle_opponent_turn(update, context)
 
@@ -790,39 +967,58 @@ class ZenQuest:
         query = update.callback_query
         await query.answer()
         chat_id = update.effective_chat.id
-        action = query.data.split('_', 1)[1]  # Remove 'combat_' prefix
-        
-        current_character = self.combat_system.turn_order[self.combat_system.current_turn]
+        data_parts = query.data.split("_", 1)
+        if len(data_parts) < 2:
+            await query.edit_message_text("Invalid combat action.")
+            return
+        action = data_parts[1]  # Remove 'combat_' prefix
+
+        combat_system = self.combat_systems.get(chat_id)
+        if not combat_system:
+            await query.edit_message_text("Combat system not initialized.")
+            return
+
+        current_character = combat_system.turn_order[combat_system.current_turn]
         opponents = self.current_opponent[chat_id]
-        
+
         action_result = await self.resolve_combat_action(current_character, opponents, action)
         await query.edit_message_text(action_result)
-        
+
         if "combat ended" in action_result.lower():
             self.in_combat[chat_id] = False
             self.current_opponent.pop(chat_id, None)
+            self.combat_systems.pop(chat_id, None)
             await self.progress_story(update, context, "combat ended")
         else:
-            self.combat_system.next_turn()
+            combat_system.next_turn()
             await self.present_combat_options(update, context)
 
     async def handle_opponent_turn(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
-        opponent = self.combat_system.turn_order[self.combat_system.current_turn]
-        players = self.group_quests[chat_id]['players'].values() if chat_id in self.group_quests else [self.characters[chat_id]]
-        
-        action_prompt = f"Generate a strategic combat action for {opponent['name']} against {', '.join([p.name for p in players])}. Consider the opponent's abilities and the characters' strengths/weaknesses. Keep it under 50 words."
+        combat_system = self.combat_systems.get(chat_id)
+        if not combat_system:
+            await self.send_message(update, "Combat system not initialized.")
+            return
+
+        opponent = combat_system.turn_order[combat_system.current_turn]
+        if chat_id in self.group_quests:
+            players = list(self.group_quests[chat_id]["players"].values())
+        else:
+            players = [self.characters[chat_id]]
+
+        action_prompt = f"Generate a strategic combat action for {opponent.name} against {', '.join([p.name for p in players])}. Consider the opponent's abilities and the characters' strengths/weaknesses. Keep it under 50 words."
         action = await self.generate_response(action_prompt)
-        
+
         result = await self.resolve_combat_action(opponent, players, action)
-        await self.send_message(update, f"{opponent['name']}'s turn:\n{result}")
-        
+        await self.send_message(update, f"{opponent.name}'s turn:\n{result}")
+
         if "combat ended" in result.lower():
             self.in_combat[chat_id] = False
             self.current_opponent.pop(chat_id, None)
+            self.combat_systems.pop(chat_id, None)
             await self.progress_story(update, context, "combat ended")
         else:
-            self.combat_system.next_turn()
+            combat_system.next_turn()
             await self.present_combat_options(update, context)
 
     async def resolve_combat_action(self, attacker, defenders, action):
@@ -830,10 +1026,10 @@ class ZenQuest:
             attacker_name = attacker.name
             attacker_abilities = attacker.abilities
         else:
-            attacker_name = attacker['name']
-            attacker_abilities = attacker['abilities']
+            attacker_name = attacker.name
+            attacker_abilities = attacker.abilities
 
-        defenders_info = ", ".join([d.name if isinstance(d, Character) else d['name'] for d in defenders])
+        defenders_info = ", ".join([d.name for d in defenders])
 
         prompt = f"""
         Attacker: {attacker_name}
@@ -847,18 +1043,21 @@ class ZenQuest:
         Keep the response under 100 words.
         """
         result = await self.generate_response(prompt)
-        
+
         # Update HP based on the result (simplified for now)
         damage = random.randint(5, 15)
         if isinstance(attacker, Character):
             for defender in defenders:
-                if isinstance(defender, Character):
-                    defender.current_hp = max(0, defender.current_hp - damage)
-                else:
-                    defender['current_hp'] = max(0, defender['current_hp'] - damage)
+                defender.current_hp = max(0, defender.current_hp - damage)
         else:
-            attacker['current_hp'] = max(0, attacker['current_hp'] - damage)
-        
+            attacker.current_hp = max(0, attacker.current_hp - damage)
+
+        # Check for combat end
+        if all(defender.current_hp <= 0 for defender in defenders):
+            result += "\nCombat ended. The attacker is victorious."
+        elif attacker.current_hp <= 0:
+            result += "\nCombat ended. The defenders are victorious."
+
         return result
 
     async def initiate_riddle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -866,17 +1065,26 @@ class ZenQuest:
         character = self.characters[chat_id]
         prompt = f"Generate a Zen-themed riddle related to {character.name}'s quest. Include the riddle, its answer, and three hints of increasing clarity. Format as JSON."
         riddle_json = await self.generate_response(prompt)
-        riddle_data = json.loads(riddle_json)
-        
+
+        try:
+            riddle_data = json.loads(riddle_json)
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing riddle JSON: {e}")
+            await self.send_message(
+                update,
+                "An error occurred while generating the riddle. Please try again later.",
+            )
+            return
+
         self.riddles[chat_id] = {
-            'active': True,
-            'riddle': riddle_data['riddle'],
-            'answer': riddle_data['answer'],
-            'hints': riddle_data['hints'],
-            'attempts': 0,
-            'hints_used': 0
+            "active": True,
+            "riddle": riddle_data["riddle"],
+            "answer": riddle_data["answer"],
+            "hints": riddle_data["hints"],
+            "attempts": 0,
+            "hints_used": 0,
         }
-        
+
         riddle_message = (
             f"As you progress on your journey, you encounter a mystical challenge:\n\n"
             f"{riddle_data['riddle']}\n\n"
@@ -887,27 +1095,49 @@ class ZenQuest:
 
     async def handle_hint(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
-        if chat_id in self.riddles and self.riddles[chat_id]['active']:
+        if chat_id in self.riddles and self.riddles[chat_id]["active"]:
             riddle = self.riddles[chat_id]
-            if riddle['hints_used'] < len(riddle['hints']):
-                hint = riddle['hints'][riddle['hints_used']]
-                riddle['hints_used'] += 1
+            if riddle["hints_used"] < len(riddle["hints"]):
+                hint = riddle["hints"][riddle["hints_used"]]
+                riddle["hints_used"] += 1
                 await self.send_message(update, f"Hint: {hint}")
             else:
-                await self.send_message(update, "You've used all available hints. Try to solve the riddle or face the consequences of failure.")
+                await self.send_message(
+                    update,
+                    "You've used all available hints. Try to solve the riddle or face the consequences of failure.",
+                )
         else:
             await self.send_message(update, "There is no active riddle to hint for.")
 
     async def generate_riddle_failure_consequence(self, chat_id: int):
         character = self.characters[chat_id]
         consequence_type = random.choice(["combat", "karma_loss", "hp_loss"])
-        
+
         if consequence_type == "combat":
             self.in_combat[chat_id] = True
             opponent_prompt = f"Generate a challenging opponent for a {character.name} as a consequence of failing to solve a riddle. Include name, brief description, HP, and two unique abilities. Format as JSON."
             opponent_json = await self.generate_response(opponent_prompt)
-            self.current_opponent[chat_id] = json.loads(opponent_json)
-            return f"Your failure to solve the riddle has summoned {self.current_opponent[chat_id]['name']}! Prepare for combat!"
+            try:
+                opponent_data = json.loads(opponent_json)
+                opponent = Character(
+                    opponent_data.get("name", "Mystical Adversary"),
+                    opponent_data.get("HP", 50),
+                    0,
+                    opponent_data.get("abilities", []),
+                    [],
+                    [],
+                )
+                opponent.description = opponent_data.get("description", "")
+                self.current_opponent[chat_id] = [opponent]
+            except json.JSONDecodeError as e:
+                logger.error(f"Error parsing opponent JSON: {e}")
+                opponent = Character(
+                    "Mystical Adversary", 50, 0, ["Unknown Ability"], [], []
+                )
+                self.current_opponent[chat_id] = [opponent]
+            return (
+                f"Your failure to solve the riddle has summoned {opponent.name}! Prepare for combat!"
+            )
         elif consequence_type == "karma_loss":
             karma_loss = random.randint(10, 20)
             self.player_karma[chat_id] = max(0, self.player_karma[chat_id] - karma_loss)
@@ -915,7 +1145,9 @@ class ZenQuest:
         else:  # hp_loss
             hp_loss = random.randint(10, 20)
             character.current_hp = max(0, character.current_hp - hp_loss)
-            return f"The mystical energies of the unsolved riddle lash out at you. You lose {hp_loss} HP."
+            return (
+                f"The mystical energies of the unsolved riddle lash out at you. You lose {hp_loss} HP."
+            )
 
     def is_action_unfeasible(self, action):
         return any(word in action.lower() for word in self.unfeasible_actions)
@@ -926,14 +1158,22 @@ class ZenQuest:
     async def generate_response(self, prompt, max_tokens=500):
         try:
             messages = [
-                {"role": "system", "content": "You are a wise Zen master guiding a quest. Avoid any disallowed content and maintain appropriate language. Provide challenging moral dilemmas and opportunities for growth."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "You are a wise Zen master guiding a quest. Avoid any disallowed content and maintain appropriate language. Provide challenging moral dilemmas and opportunities for growth.",
+                },
+                {"role": "user", "content": prompt},
             ]
-            response = await client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=0.7
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                executor,
+                openai.ChatCompletion.create,
+                {
+                    "model": "gpt-4o-mini",  # Replace with a valid model name if necessary
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": 0.7,
+                },
             )
             content = response.choices[0].message.content.strip()
 
@@ -949,19 +1189,25 @@ class ZenQuest:
     async def is_disallowed_content(self, content):
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}"
+            "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
         }
-        data = {
-            "input": content
-        }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(MODERATION_URL, headers=headers, json=data) as resp:
-                if resp.status != 200:
-                    logger.error(f"Moderation API request failed with status {resp.status}")
-                    return True  # Assume content is disallowed if API fails
-                result = await resp.json()
-                flagged = result.get("results", [{}])[0].get("flagged", False)
-                return flagged
+        data = {"input": content}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    MODERATION_URL, headers=headers, json=data
+                ) as resp:
+                    if resp.status != 200:
+                        logger.error(
+                            f"Moderation API request failed with status {resp.status}"
+                        )
+                        return False  # Default to not flagged
+                    result = await resp.json()
+                    flagged = result.get("results", [{}])[0].get("flagged", False)
+                    return flagged
+        except Exception as e:
+            logger.error(f"Error during content moderation: {e}")
+            return False  # Default to not flagged
 
     async def update_quest_state(self, chat_id: int):
         progress = self.current_stage[chat_id] / max(1, self.total_stages[chat_id])
@@ -974,10 +1220,32 @@ class ZenQuest:
 
         if chat_id in self.group_quests:
             # Rotate to the next player
-            players = list(self.group_quests[chat_id]['players'].keys())
-            current_index = players.index(self.group_quests[chat_id]['current_player'])
+            players = list(self.group_quests[chat_id]["players"].keys())
+            current_index = players.index(self.group_quests[chat_id]["current_player"])
             next_index = (current_index + 1) % len(players)
-            self.group_quests[chat_id]['current_player'] = players[next_index]
+            self.group_quests[chat_id]["current_player"] = players[next_index]
+
+    def get_character_stats(self, user_id):
+        character = self.characters.get(user_id)
+        if character:
+            return {
+                "name": character.name,
+                "hp": character.current_hp,
+                "max_hp": character.max_hp,
+                "energy": character.current_energy,
+                "max_energy": character.max_energy,
+                "karma": self.player_karma.get(user_id),
+                "abilities": character.abilities,
+                "wisdom": character.wisdom,
+                "intelligence": character.intelligence,
+                "strength": character.strength,
+                "dexterity": character.dexterity,
+                "constitution": character.constitution,
+                "charisma": character.charisma,
+            }
+        else:
+            return None
+
 
 # Instantiate the ZenQuest class
 zen_quest = ZenQuest()
@@ -986,41 +1254,49 @@ zen_quest = ZenQuest()
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Welcome to Zen Warrior Quest! Use /zenquest to start your journey.")
 
+
 async def zenquest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await zen_quest.start_quest(update, context)
+
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await zen_quest.get_quest_status(update, context)
 
+
 async def meditate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await zen_quest.meditate(update, context)
+
 
 async def interrupt_quest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await zen_quest.interrupt_quest(update, context)
 
+
 async def hint_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await zen_quest.handle_hint(update, context)
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     chat_type = update.effective_chat.type
 
     if not zen_quest.quest_active.get(chat_id, False):
-        if chat_type == 'private' and update.message.text and not update.message.text.startswith('/'):
+        if chat_type == "private" and update.message.text and not update.message.text.startswith("/"):
             await update.message.reply_text("You're not on a quest. Use /zenquest to start one!")
         return
 
     if zen_quest.in_combat.get(chat_id, False):
-        await zen_quest.handle_combat_input(update, context, update.message.text)
+        await zen_quest.handle_combat_input(update, context)
     else:
         await zen_quest.handle_input(update, context)
 
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Exception while handling an update: {context.error}")
-    if update and update.effective_message:
+    if update and hasattr(update, "effective_message") and update.effective_message:
         await update.effective_message.reply_text(
             "An error occurred while processing your request. Please try again later."
         )
+
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1034,35 +1310,43 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await zen_quest.select_group_character_class(update, context)
     else:
         await query.answer("Unknown action.")
+        await query.edit_message_text("An unknown action was requested.")
+
 
 async def join_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await zen_quest.join_group_quest(update, context)
 
+
 async def start_journey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await zen_quest.start_group_journey(update, context)
 
+
 async def zenstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    app_url = os.environ.get("RAILWAY_STATIC_URL", "https://your-app-url.com")
+    app_url = os.environ.get("APP_URL", "http://localhost:8000")
     zenstats_url = f"{app_url}/zenstats?user_id={user_id}"
     await update.message.reply_text(
         "View your Zen Warrior stats:",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Open Stats", web_app=WebAppInfo(url=zenstats_url))]])
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Open Stats", web_app=WebAppInfo(url=zenstats_url))]]
+        ),
     )
 
-@app.route('/zenstats')
-def zenstats():
-    user_id = request.args.get('user_id')
-    return render_template('zen_stats.html', user_id=user_id)
 
-@app.route('/api/stats')
-def get_stats():
-    user_id = int(request.args.get('user_id'))
+@app.get("/zenstats")
+async def zenstats(request: Request):
+    user_id = request.query_params.get("user_id")
+    return templates.TemplateResponse("zen_stats.html", {"request": request, "user_id": user_id})
+
+
+@app.get("/api/stats")
+async def get_stats(user_id: int):
     stats = zen_quest.get_character_stats(user_id)
     if stats:
-        return jsonify(stats)
+        return JSONResponse(content=stats)
     else:
-        return jsonify({"error": "Character not found"}), 404
+        return JSONResponse(content={"error": "Character not found"}, status_code=404)
+
 
 def main():
     # Set up the application
@@ -1076,7 +1360,9 @@ def main():
     application.add_handler(CommandHandler("meditate", meditate_command))
     application.add_handler(CommandHandler("interrupt", interrupt_quest_command))
     application.add_handler(CommandHandler("hint", hint_command))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+    )
     application.add_error_handler(error_handler)
 
     # Add callback query handler
@@ -1090,13 +1376,17 @@ def main():
     # Set up the database
     setup_database()
 
-    # Start the Flask app in a separate thread
+    # Start the bot in a separate thread
     from threading import Thread
-    port = int(os.environ.get("PORT", 5000))
-    Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)).start()
 
-    # Start the bot
-    application.run_polling()
+    def run_bot():
+        application.run_polling()
 
-if __name__ == '__main__':
+    Thread(target=run_bot).start()
+
+    # Start the FastAPI app
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+
+
+if __name__ == "__main__":
     main()
