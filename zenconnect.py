@@ -1203,7 +1203,7 @@ class ZenQuest:
                 {"role": "user", "content": prompt},
             ]
             response = await client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o-mini",
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=0.7,
