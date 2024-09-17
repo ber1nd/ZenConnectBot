@@ -24,6 +24,7 @@ from telegram.ext import (
     filters,
 )
 from openai import AsyncOpenAI
+from openai import OpenAIError
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -41,7 +42,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+openai_api_key = os.getenv("OPENAI_API_KEY")
+if not openai_api_key:
+    logger.error("OPENAI_API_KEY environment variable is not set. Please set it and restart the application.")
+    raise ValueError("OPENAI_API_KEY is not set")
+
+try:
+    client = AsyncOpenAI(api_key=openai_api_key)
+except Exception as e:
+    logger.error(f"Error initializing OpenAI client: {e}")
+    raise
+
 from concurrent.futures import ThreadPoolExecutor
 
 executor = ThreadPoolExecutor(max_workers=5)
@@ -1169,7 +1180,7 @@ class ZenQuest:
                 {"role": "user", "content": prompt},
             ]
             response = await client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4",
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=0.7,
