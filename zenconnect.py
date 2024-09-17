@@ -41,6 +41,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Move this function before get_openai_api_key()
+def get_db_connection():
+    database_name = os.getenv("MYSQLDATABASE")
+    if not database_name:
+        logger.error("Environment variable MYSQLDATABASE is not set.")
+        return None
+    try:
+        connection = mysql.connector.connect(
+            user=os.getenv("MYSQLUSER"),
+            password=os.getenv("MYSQLPASSWORD"),
+            host=os.getenv("MYSQLHOST"),
+            database=database_name,
+            port=int(os.getenv("MYSQLPORT", 3306)),
+            raise_on_warnings=True,
+        )
+        logger.info("Database connection established successfully.")
+        return connection
+    except mysql.connector.Error as err:
+        logger.error(f"Database connection error: {err}")
+        return None
+
 # Initialize OpenAI client
 def get_openai_api_key():
     # First, try to get the API key from the environment variable
@@ -91,27 +112,6 @@ chat_message_times = defaultdict(list)
 
 # OpenAI Moderation Endpoint
 MODERATION_URL = "https://api.openai.com/v1/moderations"
-
-
-def get_db_connection():
-    database_name = os.getenv("MYSQLDATABASE")
-    if not database_name:
-        logger.error("Environment variable MYSQLDATABASE is not set.")
-        return None
-    try:
-        connection = mysql.connector.connect(
-            user=os.getenv("MYSQLUSER"),
-            password=os.getenv("MYSQLPASSWORD"),
-            host=os.getenv("MYSQLHOST"),
-            database=database_name,
-            port=int(os.getenv("MYSQLPORT", 3306)),
-            raise_on_warnings=True,
-        )
-        logger.info("Database connection established successfully.")
-        return connection
-    except mysql.connector.Error as err:
-        logger.error(f"Database connection error: {err}")
-        return None
 
 
 def setup_database():
