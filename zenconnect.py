@@ -23,7 +23,7 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-import openai
+from openai import AsyncOpenAI
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -41,7 +41,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 from concurrent.futures import ThreadPoolExecutor
 
 executor = ThreadPoolExecutor(max_workers=5)
@@ -1168,16 +1168,11 @@ class ZenQuest:
                 },
                 {"role": "user", "content": prompt},
             ]
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                executor,
-                openai.ChatCompletion.create,
-                {
-                    "model": "gpt-4",
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                    "temperature": 0.7,
-                },
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.7,
             )
             content = response.choices[0].message.content.strip()
 
@@ -1327,7 +1322,7 @@ async def start_journey_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def zenstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    app_url = os.environ.get("APP_URL", "https://github.com/ber1nd/ZenConnectBot/blob/main/zen_stats.html")
+    app_url = os.environ.get("APP_URL", "https://github.com/ber1nd/ZenConnectBot/blob/main/templates/zen_stats.html")
     zenstats_url = f"{app_url}/zenstats?user_id={user_id}"
     await update.message.reply_text(
         "View your Zen Warrior stats:",
@@ -1389,7 +1384,7 @@ def main():
     p = multiprocessing.Process(target=run_uvicorn)
     p.start()
 
-    # Run the bot in the main process
+    # Run the bot in the main thread
     application.run_polling()
 
     # When bot stops, terminate the web server
