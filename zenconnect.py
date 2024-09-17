@@ -15,6 +15,7 @@ from telegram.ext import (
     ContextTypes, filters
 )
 from openai import AsyncOpenAI
+from flask import Flask, jsonify, request, render_template
 
 # Load environment variables
 load_dotenv()
@@ -28,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client
 client = AsyncOpenAI(api_key=os.getenv("API_KEY"))
+
+# Initialize Flask app
+app = Flask(__name__, template_folder=os.path.abspath('.'))
 
 # Rate limiting parameters
 RATE_LIMIT = 5  # Number of messages
@@ -1003,6 +1007,24 @@ async def join_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_journey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await zen_quest.start_group_journey(update, context)
 
+async def zenstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    app_url = os.environ.get("RAILWAY_STATIC_URL", "https://github.com/ber1nd/ZenConnectBot/blob/main/zen_stats.html")
+    zenstats_url = f"{app_url}/zenstats"
+    await update.message.reply_text(f"View your Zen Warrior stats here: {zenstats_url}")
+
+@app.route('/zenstats')
+def zenstats():
+    return render_template('zen_stats.html')
+
+@app.route('/api/stats')
+def get_stats():
+    chat_id = request.args.get('chat_id')
+    if chat_id:
+        stats = zen_quest.get_character_stats(int(chat_id))
+        return jsonify(stats)
+    else:
+        return jsonify({"error": "Missing chat_id parameter"}), 400
+
 def main():
     # Set up the application
     token = os.getenv("TELEGRAM_TOKEN")
@@ -1024,9 +1046,15 @@ def main():
     # Add new handlers
     application.add_handler(CommandHandler("join", join_command))
     application.add_handler(CommandHandler("start_journey", start_journey_command))
+    application.add_handler(CommandHandler("zenstats", zenstats_command))
 
     # Set up the database
     setup_database()
+
+    # Start the Flask app in a separate thread
+    from threading import Thread
+    port = int(os.environ.get("PORT", 5000))
+    Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)).start()
 
     # Start the bot
     application.run_polling()
