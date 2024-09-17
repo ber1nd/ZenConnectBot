@@ -16,6 +16,7 @@ from telegram.ext import (
 )
 from openai import AsyncOpenAI
 from flask import Flask, jsonify, request, render_template
+import aiohttp
 
 # Load environment variables
 load_dotenv()
@@ -37,6 +38,9 @@ app = Flask(__name__, template_folder=os.path.abspath('.'))
 RATE_LIMIT = 5  # Number of messages
 RATE_TIME_WINDOW = 60  # Time window in seconds
 chat_message_times = defaultdict(list)
+
+# OpenAI Moderation Endpoint
+MODERATION_URL = "https://api.openai.com/v1/moderations"
 
 def get_db_connection():
     try:
@@ -190,6 +194,10 @@ class ZenQuest:
             "medium": 15,
             "hard": 20
         }
+        # Add max_riddle_attempts
+        self.max_riddle_attempts = 3
+        # Initialize puzzles dictionary
+        self.puzzles = {}
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
@@ -915,7 +923,7 @@ class ZenQuest:
     async def generate_response(self, prompt, max_tokens=500):
         try:
             messages = [
-                {"role": "system", "content": "You are a wise Zen master guiding a quest. Maintain realism for human capabilities. Actions should have logical consequences. Provide challenging moral dilemmas and opportunities for growth."},
+                {"role": "system", "content": "You are a wise Zen master guiding a quest. Avoid any disallowed content and maintain appropriate language. Provide challenging moral dilemmas and opportunities for growth."},
                 {"role": "user", "content": prompt}
             ]
             response = await client.chat.completions.create(
@@ -924,10 +932,33 @@ class ZenQuest:
                 max_tokens=max_tokens,
                 temperature=0.7
             )
-            return response.choices[0].message.content.strip()
+            content = response.choices[0].message.content.strip()
+
+            # Perform content moderation
+            if await self.is_disallowed_content(content):
+                logger.warning("Disallowed content detected in the generated response.")
+                return "I'm sorry, but I can't provide a response to that request."
+            return content
         except Exception as e:
             logger.error(f"Error generating response: {e}")
             return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later."
+
+    async def is_disallowed_content(self, content):
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.getenv('API_KEY')}"
+        }
+        data = {
+            "input": content
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(MODERATION_URL, headers=headers, json=data) as resp:
+                if resp.status != 200:
+                    logger.error(f"Moderation API request failed with status {resp.status}")
+                    return True  # Assume content is disallowed if API fails
+                result = await resp.json()
+                flagged = result.get("results", [{}])[0].get("flagged", False)
+                return flagged
 
     async def update_quest_state(self, chat_id: int):
         progress = self.current_stage[chat_id] / max(1, self.total_stages[chat_id])
@@ -1018,12 +1049,12 @@ def zenstats():
 
 @app.route('/api/stats')
 def get_stats():
-    chat_id = request.args.get('chat_id')
-    if chat_id:
-        stats = zen_quest.get_character_stats(int(chat_id))
+    user_id = int(request.args.get('user_id'))
+    stats = zen_quest.get_character_stats(user_id)
+    if stats:
         return jsonify(stats)
     else:
-        return jsonify({"error": "Missing chat_id parameter"}), 400
+        return jsonify({"error": "Character not found"}), 404
 
 def main():
     # Set up the application
