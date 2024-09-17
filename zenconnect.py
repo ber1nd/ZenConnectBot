@@ -43,17 +43,17 @@ logger = logging.getLogger(__name__)
 
 # Move this function before get_openai_api_key()
 def get_db_connection():
-    database_name = os.getenv("MYSQL_DATABASE")
+    database_name = os.getenv("MYSQLDATABASE")
     if not database_name:
-        logger.error("Environment variable MYSQL_DATABASE is not set.")
+        logger.error("Environment variable MYSQLDATABASE is not set.")
         return None
     try:
         connection = mysql.connector.connect(
-            user=os.getenv("MYSQL_USER"),
-            password=os.getenv("MYSQL_PASSWORD"),
-            host=os.getenv("MYSQL_HOST"),
+            user=os.getenv("MYSQLUSER"),
+            password=os.getenv("MYSQLPASSWORD"),
+            host=os.getenv("MYSQLHOST"),
             database=database_name,
-            port=int(os.getenv("MYSQL_PORT", 3306)),
+            port=int(os.getenv("MYSQLPORT", 3306)),
             raise_on_warnings=True,
         )
         logger.info("Database connection established successfully.")
@@ -66,7 +66,7 @@ def get_db_connection():
 # Initialize OpenAI client
 def get_openai_api_key():
     # First, try to get the API key from the environment variable
-    api_key = os.getenv("API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY")
     
     # If not found in environment, try to get it from the database
     if not api_key:
@@ -88,8 +88,8 @@ def get_openai_api_key():
 
 openai_api_key = get_openai_api_key()
 if not openai_api_key:
-    logger.error("OpenAI API key not found in environment variables or database. Please set API_KEY environment variable or add it to the database.")
-    raise ValueError("OpenAI API key is not set")
+    logger.error("OPENAI_API_KEY environment variable is not set. Please set it and restart the application.")
+    raise ValueError("OPENAI_API_KEY is not set")
 
 try:
     client = AsyncOpenAI(api_key=openai_api_key)
@@ -844,36 +844,65 @@ class ZenQuest:
         )
         await self.send_message(update, status_message)
 
-    async def interrupt_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def interrupt_quest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
-        if not self.quest_active.get(chat_id, False):
-            await self.send_message(update, "You are not currently on a quest.")
+        user_id = update.effective_user.id
+
+        if not zen_quest.quest_active.get(chat_id, False):
+            await update.message.reply_text("You are not currently on a quest.")
             return
 
-        await self.end_quest(update, context, victory=False, reason="Quest interrupted by user.")
+        if chat_id in zen_quest.group_quests:
+            # Group quest
+            if user_id not in zen_quest.group_quests[chat_id]['players']:
+                await update.message.reply_text("You are not part of this group quest.")
+                return
+            await zen_quest.end_quest(update, context, victory=False, reason="Quest interrupted by a group member.")
+        else:
+            # Individual quest
+            await zen_quest.end_quest(update, context, victory=False, reason="Quest interrupted by user.")
 
     async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
         chat_id = update.effective_chat.id
         if not self.quest_active.get(chat_id, False):
             return
 
-        character = self.characters[chat_id]
-        progress = (self.current_stage[chat_id] / max(1, self.total_stages[chat_id])) * 100
-
-        end_message = (
-            f"Your quest has ended.\n"
-            f"Reason: {reason}\n"
-            f"Victory: {'Yes' if victory else 'No'}\n"
-            f"Progress: {progress:.1f}%\n"
-            f"Final Karma: {self.player_karma[chat_id]}\n"
-            f"Character: {character.name}\n"
-            f"HP: {character.current_hp}/{character.max_hp}\n"
-            f"Energy: {character.current_energy}/{character.max_energy}\n"
-        )
+        if chat_id in self.group_quests:
+            # Group quest
+            players = self.group_quests[chat_id]['players']
+            end_message = (
+                f"The group quest has ended.\n"
+                f"Reason: {reason}\n"
+                f"Victory: {'Yes' if victory else 'No'}\n"
+                f"Participants: {', '.join([p.name for p in players.values()])}\n"
+            )
+            for user_id, character in players.items():
+                end_message += (
+                    f"\n{character.name}:\n"
+                    f"HP: {character.current_hp}/{character.max_hp}\n"
+                    f"Energy: {character.current_energy}/{character.max_energy}\n"
+                )
+            
+            # Reset group quest data
+            self.group_quests.pop(chat_id, None)
+        else:
+            # Individual quest
+            character = self.characters[chat_id]
+            progress = (self.current_stage[chat_id] / max(1, self.total_stages[chat_id])) * 100
+            end_message = (
+                f"Your quest has ended.\n"
+                f"Reason: {reason}\n"
+                f"Victory: {'Yes' if victory else 'No'}\n"
+                f"Progress: {progress:.1f}%\n"
+                f"Final Karma: {self.player_karma[chat_id]}\n"
+                f"Character: {character.name}\n"
+                f"HP: {character.current_hp}/{character.max_hp}\n"
+                f"Energy: {character.current_energy}/{character.max_energy}\n"
+            )
 
         await self.send_message(update, end_message)
 
-        # Reset user's quest data
+        # Reset quest data
         self.quest_active[chat_id] = False
         self.characters.pop(chat_id, None)
         self.current_stage.pop(chat_id, None)
@@ -886,7 +915,6 @@ class ZenQuest:
         self.current_opponent.pop(chat_id, None)
         self.riddles.pop(chat_id, None)
         self.moral_dilemmas.pop(chat_id, None)
-        self.group_quests.pop(chat_id, None)
         self.combat_systems.pop(chat_id, None)
 
     async def present_moral_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1301,7 +1329,7 @@ async def meditate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def interrupt_quest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await zen_quest.interrupt_quest(update, context)
+    await zen_quest.interrupt_quest_command(update, context)
 
 
 async def hint_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
