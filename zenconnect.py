@@ -61,12 +61,16 @@ MODERATION_URL = "https://api.openai.com/v1/moderations"
 
 
 def get_db_connection():
+    database_name = os.getenv("MYSQLDATABASE")
+    if not database_name:
+        logger.error("Environment variable MYSQLDATABASE is not set.")
+        return None
     try:
         connection = mysql.connector.connect(
             user=os.getenv("MYSQLUSER"),
             password=os.getenv("MYSQLPASSWORD"),
             host=os.getenv("MYSQLHOST"),
-            database=os.getenv("MYSQLDATABASE"),
+            database=database_name,
             port=int(os.getenv("MYSQLPORT", 3306)),
             raise_on_warnings=True,
         )
@@ -1169,7 +1173,7 @@ class ZenQuest:
                 executor,
                 openai.ChatCompletion.create,
                 {
-                    "model": "gpt-4o-mini",  # Replace with a valid model name if necessary
+                    "model": "gpt-4",
                     "messages": messages,
                     "max_tokens": max_tokens,
                     "temperature": 0.7,
@@ -1380,6 +1384,8 @@ def main():
     from threading import Thread
 
     def run_bot():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         application.run_polling()
 
     Thread(target=run_bot).start()
