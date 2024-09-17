@@ -1323,7 +1323,7 @@ async def start_journey_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def zenstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    app_url = os.environ.get("APP_URL", "http://localhost:8000")
+    app_url = os.environ.get("APP_URL", "https://github.com/ber1nd/ZenConnectBot/blob/main/zen_stats.html")
     zenstats_url = f"{app_url}/zenstats?user_id={user_id}"
     await update.message.reply_text(
         "View your Zen Warrior stats:",
