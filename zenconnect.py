@@ -9,7 +9,7 @@ from datetime import datetime
 from collections import defaultdict
 import math
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ContextTypes, filters
@@ -29,7 +29,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client
-client = AsyncOpenAI(api_key=os.getenv("API_KEY"))
+client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))  # Use OPENAI_API_KEY instead of API_KEY
 
 # Initialize Flask app
 app = Flask(__name__, template_folder=os.path.abspath('.'))
@@ -37,6 +37,8 @@ app = Flask(__name__, template_folder=os.path.abspath('.'))
 # Rate limiting parameters
 RATE_LIMIT = 5  # Number of messages
 RATE_TIME_WINDOW = 60  # Time window in seconds
+from asyncio import Lock
+rate_limit_lock = Lock()
 chat_message_times = defaultdict(list)
 
 # OpenAI Moderation Endpoint
@@ -352,15 +354,16 @@ class ZenQuest:
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
 
-        # Rate limiting per chat
-        current_time = datetime.now()
-        chat_times = chat_message_times[chat_id]
-        chat_times = [t for t in chat_times if (current_time - t).seconds < RATE_TIME_WINDOW]
-        chat_times.append(current_time)
-        chat_message_times[chat_id] = chat_times
-        if len(chat_times) > RATE_LIMIT:
-            await update.message.reply_text("This chat is sending messages too quickly. Please slow down.")
-            return
+        # Rate limiting using asyncio.Lock
+        async with rate_limit_lock:
+            current_time = datetime.now()
+            chat_times = chat_message_times[chat_id]
+            chat_times = [t for t in chat_times if (current_time - t).seconds < RATE_TIME_WINDOW]
+            chat_times.append(current_time)
+            chat_message_times[chat_id] = chat_times
+            if len(chat_times) > RATE_LIMIT:
+                await update.message.reply_text("This chat is sending messages too quickly. Please slow down.")
+                return
 
         if update.message and update.message.text:
             user_input = update.message.text.strip()
@@ -946,7 +949,7 @@ class ZenQuest:
     async def is_disallowed_content(self, content):
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {os.getenv('API_KEY')}"
+            "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}"
         }
         data = {
             "input": content
@@ -1039,13 +1042,18 @@ async def start_journey_command(update: Update, context: ContextTypes.DEFAULT_TY
     await zen_quest.start_group_journey(update, context)
 
 async def zenstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    app_url = os.environ.get("RAILWAY_STATIC_URL", "https://github.com/ber1nd/ZenConnectBot/blob/main/zen_stats.html")
-    zenstats_url = f"{app_url}/zenstats"
-    await update.message.reply_text(f"View your Zen Warrior stats here: {zenstats_url}")
+    user_id = update.effective_user.id
+    app_url = os.environ.get("RAILWAY_STATIC_URL", "https://your-app-url.com")
+    zenstats_url = f"{app_url}/zenstats?user_id={user_id}"
+    await update.message.reply_text(
+        "View your Zen Warrior stats:",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Open Stats", web_app=WebAppInfo(url=zenstats_url))]])
+    )
 
 @app.route('/zenstats')
 def zenstats():
-    return render_template('zen_stats.html')
+    user_id = request.args.get('user_id')
+    return render_template('zen_stats.html', user_id=user_id)
 
 @app.route('/api/stats')
 def get_stats():

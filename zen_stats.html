@@ -199,10 +199,12 @@
         const tg = window.Telegram.WebApp;
         tg.expand();
 
+        const userId = "{{ user_id }}";  // Get user_id from Flask
+
         async function fetchStats() {
             try {
-                console.log("Fetching stats for user ID:", tg.initDataUnsafe.user.id);
-                const response = await fetch(`/api/stats?user_id=${tg.initDataUnsafe.user.id}`);
+                console.log("Fetching stats for user ID:", userId);
+                const response = await fetch(`/api/stats?user_id=${userId}`);
                 console.log("Response status:", response.status);
                 if (!response.ok) {
                     const errorText = await response.text();
