@@ -43,17 +43,17 @@ logger = logging.getLogger(__name__)
 
 # Move this function before get_openai_api_key()
 def get_db_connection():
-    database_name = os.getenv("MYSQLDATABASE")
+    database_name = os.getenv("MYSQL_DATABASE")
     if not database_name:
-        logger.error("Environment variable MYSQLDATABASE is not set.")
+        logger.error("Environment variable MYSQL_DATABASE is not set.")
         return None
     try:
         connection = mysql.connector.connect(
-            user=os.getenv("MYSQLUSER"),
-            password=os.getenv("MYSQLPASSWORD"),
-            host=os.getenv("MYSQLHOST"),
+            user=os.getenv("MYSQL_USER"),
+            password=os.getenv("MYSQL_PASSWORD"),
+            host=os.getenv("MYSQL_HOST"),
             database=database_name,
-            port=int(os.getenv("MYSQLPORT", 3306)),
+            port=int(os.getenv("MYSQL_PORT", 3306)),
             raise_on_warnings=True,
         )
         logger.info("Database connection established successfully.")
@@ -62,10 +62,11 @@ def get_db_connection():
         logger.error(f"Database connection error: {err}")
         return None
 
+
 # Initialize OpenAI client
 def get_openai_api_key():
     # First, try to get the API key from the environment variable
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("API_KEY")
     
     # If not found in environment, try to get it from the database
     if not api_key:
@@ -87,7 +88,7 @@ def get_openai_api_key():
 
 openai_api_key = get_openai_api_key()
 if not openai_api_key:
-    logger.error("OpenAI API key not found in environment variables or database. Please set OPENAI_API_KEY environment variable or add it to the database.")
+    logger.error("OpenAI API key not found in environment variables or database. Please set API_KEY environment variable or add it to the database.")
     raise ValueError("OpenAI API key is not set")
 
 try:
@@ -1221,7 +1222,7 @@ class ZenQuest:
     async def is_disallowed_content(self, content):
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
+            "Authorization": f"Bearer {os.getenv('API_KEY')}",
         }
         data = {"input": content}
         try:
@@ -1353,6 +1354,7 @@ async def start_journey_command(update: Update, context: ContextTypes.DEFAULT_TY
     await zen_quest.start_group_journey(update, context)
 
 
+# Update the zenstats_command function
 async def zenstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     app_url = os.environ.get("APP_URL", "https://github.com/ber1nd/ZenConnectBot/blob/main/templates/zen_stats.html")
