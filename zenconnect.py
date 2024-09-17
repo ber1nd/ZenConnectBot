@@ -7,6 +7,7 @@ import mysql.connector # Ensure this is installed
 from mysql.connector import errorcode
 from datetime import datetime
 from collections import defaultdict
+import math
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -80,8 +81,8 @@ def setup_database():
         logger.error("Failed to connect to the database for setup.")
 
 class Character:
-    def __init__(self, class_name, hp, energy, abilities, strengths, weaknesses):
-        self.name = class_name
+    def __init__(self, name, hp, energy, abilities, strengths, weaknesses):
+        self.name = name
         self.max_hp = hp
         self.current_hp = hp
         self.max_energy = energy
@@ -89,6 +90,25 @@ class Character:
         self.abilities = abilities
         self.strengths = strengths
         self.weaknesses = weaknesses
+        # Add D&D-like attributes
+        self.wisdom = random.randint(8, 18)
+        self.intelligence = random.randint(8, 18)
+        self.strength = random.randint(8, 18)
+        self.dexterity = random.randint(8, 18)
+        self.constitution = random.randint(8, 18)
+        self.charisma = random.randint(8, 18)
+        self.status_effects = []
+
+    def roll_skill_check(self, attribute):
+        return random.randint(1, 20) + (getattr(self, attribute) - 10) // 2
+
+    def apply_status_effect(self, effect, duration):
+        self.status_effects.append({"effect": effect, "duration": duration})
+
+    def update_status_effects(self):
+        self.status_effects = [effect for effect in self.status_effects if effect["duration"] > 0]
+        for effect in self.status_effects:
+            effect["duration"] -= 1
 
 class CombatSystem:
     def __init__(self):
@@ -96,13 +116,22 @@ class CombatSystem:
         self.current_turn = 0
 
     def initialize_combat(self, players, opponents):
-        self.turn_order = players + opponents
-        random.shuffle(self.turn_order)
+        all_combatants = players + opponents
+        self.turn_order = sorted(all_combatants, key=lambda x: random.randint(1, 20) + (x.dexterity - 10) // 2, reverse=True)
         self.current_turn = 0
 
     def next_turn(self):
         self.current_turn = (self.current_turn + 1) % len(self.turn_order)
         return self.turn_order[self.current_turn]
+
+    def calculate_damage(self, attacker, defender, base_damage):
+        crit_multiplier = 2 if random.random() < 0.05 else 1  # 5% crit chance
+        damage = base_damage * crit_multiplier
+        if isinstance(attacker, Character):
+            damage += (attacker.strength - 10) // 2
+        if isinstance(defender, Character):
+            damage -= (defender.constitution - 10) // 4
+        return max(1, math.floor(damage))  # Minimum 1 damage
 
 class ZenQuest:
     def __init__(self):
@@ -149,6 +178,14 @@ class ZenQuest:
                 ["urban environments", "technology"]
             )
         }
+        self.min_stages = 10
+        self.max_stages = 20
+        self.group_quests = {}
+        self.skill_check_difficulty = {
+            "easy": 10,
+            "medium": 15,
+            "hard": 20
+        }
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
@@ -159,13 +196,115 @@ class ZenQuest:
             )
             return
 
-        keyboard = [[InlineKeyboardButton(class_name, callback_data=f"class_{class_name.lower()}") 
+        if update.effective_chat.type in ['group', 'supergroup']:
+            await self.start_group_quest(update, context)
+        else:
+            keyboard = [[InlineKeyboardButton(class_name, callback_data=f"class_{class_name.lower()}") 
+                         for class_name in self.character_classes.keys()]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                "Choose your character class to begin your Zen journey:",
+                reply_markup=reply_markup
+            )
+
+    async def start_group_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        self.group_quests[chat_id] = {
+            'players': {},
+            'ready': False,
+            'current_player': None
+        }
+        await update.message.reply_text(
+            "A group quest is starting! Each player should use /join to select their class. "
+            "Use /start_journey when all players are ready."
+        )
+
+    async def join_group_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        
+        if chat_id not in self.group_quests:
+            await update.message.reply_text("There is no active group quest. Use /zenquest to start one.")
+            return
+
+        if user_id in self.group_quests[chat_id]['players']:
+            await update.message.reply_text("You have already joined the quest.")
+            return
+
+        keyboard = [[InlineKeyboardButton(class_name, callback_data=f"group_class_{class_name.lower()}") 
                      for class_name in self.character_classes.keys()]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "Choose your character class to begin your Zen journey:",
+            "Choose your character class for the group quest:",
             reply_markup=reply_markup
         )
+
+    async def select_group_character_class(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        class_name = query.data.split('_')[2].capitalize()
+
+        if class_name not in self.character_classes:
+            await query.edit_message_text("Invalid class selection. Please choose a valid class.")
+            return
+
+        self.group_quests[chat_id]['players'][user_id] = self.character_classes[class_name]
+        await query.edit_message_text(f"You have joined the quest as a {class_name}.")
+
+    async def start_group_journey(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        
+        if chat_id not in self.group_quests or self.group_quests[chat_id]['ready']:
+            await update.message.reply_text("There is no group quest waiting to start.")
+            return
+
+        if len(self.group_quests[chat_id]['players']) < 2:
+            await update.message.reply_text("At least two players are needed to start the group quest.")
+            return
+
+        self.group_quests[chat_id]['ready'] = True
+        self.quest_active[chat_id] = True
+        self.current_stage[chat_id] = 0
+        self.total_stages[chat_id] = random.randint(self.min_stages, self.max_stages)
+        self.quest_state[chat_id] = "beginning"
+        self.in_combat[chat_id] = False
+        self.player_karma[chat_id] = 100
+
+        self.quest_goal[chat_id] = await self.generate_group_quest_goal(chat_id)
+        self.current_scene[chat_id] = await self.generate_group_initial_scene(chat_id)
+
+        start_message = (
+            f"Your group quest begins!\n\n"
+            f"{self.quest_goal[chat_id]}\n\n"
+            f"{self.current_scene[chat_id]}"
+        )
+        await update.message.reply_text(start_message)
+
+    async def generate_group_quest_goal(self, chat_id: int):
+        classes = [character.name for character in self.group_quests[chat_id]['players'].values()]
+        prompt = f"""
+        Generate a quest goal for a group of {', '.join(classes)} in a Zen-themed adventure.
+        The goal should be challenging, spiritual in nature, and relate to self-improvement and teamwork.
+        Keep it concise, about 2-3 sentences.
+        """
+        return await self.generate_response(prompt)
+
+    async def generate_group_initial_scene(self, chat_id: int):
+        classes = [character.name for character in self.group_quests[chat_id]['players'].values()]
+        prompt = f"""
+        Quest goal: {self.quest_goal[chat_id]}
+        Group composition: {', '.join(classes)}
+
+        Generate an initial scene for the group quest. Include:
+        1. A brief description of the starting location
+        2. An introduction to the quest's first challenge
+        3. Three possible actions for the group
+
+        Keep the response under 200 words.
+        """
+        return await self.generate_response(prompt)
 
     async def select_character_class(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -180,7 +319,7 @@ class ZenQuest:
         self.characters[chat_id] = self.character_classes[class_name]
         self.quest_active[chat_id] = True
         self.current_stage[chat_id] = 0
-        self.total_stages[chat_id] = random.randint(10, 20)  # Adjusted for demo purposes
+        self.total_stages[chat_id] = random.randint(self.min_stages, self.max_stages)
         self.quest_state[chat_id] = "beginning"
         self.in_combat[chat_id] = False
         self.player_karma[chat_id] = 100
@@ -215,6 +354,13 @@ class ZenQuest:
             user_input = update.message.text.strip()
         else:
             return  # Non-text message received
+
+        if update.effective_chat.type in ['group', 'supergroup']:
+            if not self.group_quests.get(chat_id, {}).get('ready', False):
+                return
+            if self.group_quests[chat_id]['current_player'] != user_id:
+                await update.message.reply_text("It's not your turn to act.")
+                return
 
         if not self.quest_active.get(chat_id, False):
             if update.effective_chat.type == 'private':
@@ -290,7 +436,14 @@ class ZenQuest:
             await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
 
     async def process_action(self, chat_id: int, user_input: str):
-        character = self.characters[chat_id]
+        if chat_id in self.group_quests:
+            characters = list(self.group_quests[chat_id]['players'].values())
+            current_player = self.group_quests[chat_id]['current_player']
+            current_character = self.group_quests[chat_id]['players'][current_player]
+        else:
+            characters = [self.characters[chat_id]]
+            current_character = characters[0]
+
         current_scene = self.current_scene[chat_id]
         quest_state = self.quest_state[chat_id]
         karma = self.player_karma[chat_id]
@@ -302,7 +455,7 @@ class ZenQuest:
 
         prompt = f"""
         Current scene: {current_scene}
-        Character class: {character.name}
+        Character class: {current_character.name}
         Quest state: {quest_state}
         Player karma: {karma}
         Player action: "{user_input}"
@@ -362,7 +515,11 @@ class ZenQuest:
             clean_scene = next_scene.replace("[COMBAT_START]", "").replace("[RIDDLE_START]", "").replace("[QUEST_COMPLETE]", "").replace("[QUEST_FAIL]", "").strip()
             await self.send_message(update, clean_scene)
             self.current_stage[chat_id] += 1
-            await self.update_quest_state(chat_id)
+
+        # Update quest state and check for quest completion
+        await self.update_quest_state(chat_id)
+        if self.current_stage[chat_id] >= self.total_stages[chat_id]:
+            await self.end_quest(update, context, victory=True, reason="You have reached the end of your journey!")
 
         # Update karma and check for quest failure due to low karma
         self.player_karma[chat_id] = max(0, min(100, self.player_karma[chat_id] + random.randint(-3, 3)))
@@ -376,14 +533,19 @@ class ZenQuest:
         player_karma = self.player_karma[chat_id]
         current_stage = self.current_stage[chat_id]
         total_stages = self.total_stages[chat_id]
-        progress = (current_stage / total_stages) * 100
+        progress = (current_stage / max(1, total_stages)) * 100
 
         event_type = random.choices(
             ["normal", "challenge", "reward", "meditation", "npc_encounter", "moral_dilemma",
-             "spiritual_trial", "natural_obstacle", "mystical_phenomenon", "combat", "riddle"],
-            weights=[15, 15, 10, 5, 10, 10, 5, 5, 5, 15, 5],
+             "spiritual_trial", "natural_obstacle", "mystical_phenomenon", "combat", "riddle", "puzzle"],
+            weights=[15, 15, 10, 5, 10, 10, 5, 5, 5, 10, 5, 5],
             k=1
         )[0]
+
+        if event_type == "puzzle":
+            return await self.generate_puzzle(chat_id)
+        elif event_type == "moral_dilemma":
+            return await self.generate_moral_dilemma(chat_id)
 
         prompt = f"""
         Previous scene: {self.current_scene[chat_id]}
@@ -496,7 +658,7 @@ class ZenQuest:
             return
 
         character = self.characters[chat_id]
-        progress = (self.current_stage[chat_id] / self.total_stages[chat_id]) * 100
+        progress = (self.current_stage[chat_id] / max(1, self.total_stages[chat_id])) * 100
         
         status_message = (
             f"Quest Progress: {progress:.1f}%\n"
@@ -523,7 +685,7 @@ class ZenQuest:
             return
 
         character = self.characters[chat_id]
-        progress = (self.current_stage[chat_id] / self.total_stages[chat_id]) * 100
+        progress = (self.current_stage[chat_id] / max(1, self.total_stages[chat_id])) * 100
         
         end_message = (
             f"Your quest has ended.\n"
@@ -566,23 +728,27 @@ class ZenQuest:
 
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
-        character = self.characters[chat_id]
         
-        opponent_prompt = f"Generate a challenging opponent for a {character.name} in a Zen-themed quest. Include name, brief description, HP, and two unique abilities. Format as JSON."
+        if chat_id in self.group_quests:
+            players = list(self.group_quests[chat_id]['players'].values())
+        else:
+            players = [self.characters[chat_id]]
+
+        opponent_prompt = f"Generate a challenging opponent or group of opponents for {', '.join([p.name for p in players])} in a Zen-themed quest. Include name(s), brief description(s), HP, and two unique abilities for each. Format as JSON."
         opponent_json = await self.generate_response(opponent_prompt)
-        opponent = json.loads(opponent_json)
+        opponents = json.loads(opponent_json)
         
-        self.current_opponent[chat_id] = opponent
+        self.current_opponent[chat_id] = opponents
         self.in_combat[chat_id] = True
         
         self.combat_system = CombatSystem()
-        self.combat_system.initialize_combat([character], [opponent])
+        self.combat_system.initialize_combat(players, opponents)
         
         combat_start_message = (
-            f"You encounter {opponent['name']}!\n"
-            f"{opponent['description']}\n"
+            f"You encounter {', '.join([o['name'] for o in opponents])}!\n"
+            f"{' '.join([o['description'] for o in opponents])}\n"
             f"Prepare for combat!\n"
-            f"Combat order: {', '.join([c.name if hasattr(c, 'name') else c['name'] for c in self.combat_system.turn_order])}\n"
+            f"Combat order: {', '.join([c.name if isinstance(c, Character) else c['name'] for c in self.combat_system.turn_order])}\n"
         )
         
         await self.send_message(update, combat_start_message)
@@ -592,17 +758,16 @@ class ZenQuest:
         chat_id = update.effective_chat.id
         current_character = self.combat_system.turn_order[self.combat_system.current_turn]
         
-        if hasattr(current_character, 'name'):  # Player's turn
-            character = self.characters[chat_id]
+        if isinstance(current_character, Character):  # Player's turn
             keyboard = [
                 [InlineKeyboardButton("Basic Attack", callback_data="combat_basic_attack")],
                 [InlineKeyboardButton("Defend", callback_data="combat_defend")],
-                [InlineKeyboardButton(f"Use {character.abilities[0]}", callback_data=f"combat_ability_{character.abilities[0]}")],
-                [InlineKeyboardButton(f"Use {character.abilities[1]}", callback_data=f"combat_ability_{character.abilities[1]}")],
+                [InlineKeyboardButton(f"Use {current_character.abilities[0]}", callback_data=f"combat_ability_{current_character.abilities[0]}")],
+                [InlineKeyboardButton(f"Use {current_character.abilities[1]}", callback_data=f"combat_ability_{current_character.abilities[1]}")],
                 [InlineKeyboardButton("Attempt to flee", callback_data="combat_flee")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await self.send_message(update, f"{character.name}'s turn!\nChoose your action:", reply_markup=reply_markup)
+            await self.send_message(update, f"{current_character.name}'s turn!\nChoose your action:", reply_markup=reply_markup)
         else:  # Opponent's turn
             await self.handle_opponent_turn(update, context)
 
@@ -612,10 +777,10 @@ class ZenQuest:
         chat_id = update.effective_chat.id
         action = query.data.split('_', 1)[1]  # Remove 'combat_' prefix
         
-        character = self.characters[chat_id]
-        opponent = self.current_opponent[chat_id]
+        current_character = self.combat_system.turn_order[self.combat_system.current_turn]
+        opponents = self.current_opponent[chat_id]
         
-        action_result = await self.resolve_combat_action(character, opponent, action)
+        action_result = await self.resolve_combat_action(current_character, opponents, action)
         await query.edit_message_text(action_result)
         
         if "combat ended" in action_result.lower():
@@ -628,13 +793,13 @@ class ZenQuest:
 
     async def handle_opponent_turn(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
-        opponent = self.current_opponent[chat_id]
-        character = self.characters[chat_id]
+        opponent = self.combat_system.turn_order[self.combat_system.current_turn]
+        players = self.group_quests[chat_id]['players'].values() if chat_id in self.group_quests else [self.characters[chat_id]]
         
-        action_prompt = f"Generate a strategic combat action for {opponent['name']} against {character.name}. Consider the opponent's abilities and the character's strengths/weaknesses. Keep it under 50 words."
+        action_prompt = f"Generate a strategic combat action for {opponent['name']} against {', '.join([p.name for p in players])}. Consider the opponent's abilities and the characters' strengths/weaknesses. Keep it under 50 words."
         action = await self.generate_response(action_prompt)
         
-        result = await self.resolve_combat_action(opponent, character, action)
+        result = await self.resolve_combat_action(opponent, players, action)
         await self.send_message(update, f"{opponent['name']}'s turn:\n{result}")
         
         if "combat ended" in result.lower():
@@ -645,30 +810,39 @@ class ZenQuest:
             self.combat_system.next_turn()
             await self.present_combat_options(update, context)
 
-    async def resolve_combat_action(self, attacker, defender, action):
+    async def resolve_combat_action(self, attacker, defenders, action):
+        if isinstance(attacker, Character):
+            attacker_name = attacker.name
+            attacker_abilities = attacker.abilities
+        else:
+            attacker_name = attacker['name']
+            attacker_abilities = attacker['abilities']
+
+        defenders_info = ", ".join([d.name if isinstance(d, Character) else d['name'] for d in defenders])
+
         prompt = f"""
-        Attacker: {attacker.name if hasattr(attacker, 'name') else attacker['name']}
-        Attacker's abilities: {', '.join(attacker.abilities) if hasattr(attacker, 'abilities') else ', '.join(attacker['abilities'])}
-        Defender: {defender.name if hasattr(defender, 'name') else defender['name']}
+        Attacker: {attacker_name}
+        Attacker's abilities: {', '.join(attacker_abilities)}
+        Defenders: {defenders_info}
         Action: {action}
 
-        Resolve the combat action, considering the attacker's abilities and the defender's strengths/weaknesses.
+        Resolve the combat action, considering the attacker's abilities and the defenders' strengths/weaknesses.
         Include any damage dealt, status effects applied, or other relevant outcomes.
-        If the combat ends, clearly state whether the attacker or defender won.
+        If the combat ends, clearly state whether the attacker or defenders won.
         Keep the response under 100 words.
         """
         result = await self.generate_response(prompt)
         
-        # Update HP based on the result
-        if hasattr(attacker, 'current_hp'):
-            attacker.current_hp = max(0, attacker.current_hp - random.randint(5, 15))
+        # Update HP based on the result (simplified for now)
+        damage = random.randint(5, 15)
+        if isinstance(attacker, Character):
+            for defender in defenders:
+                if isinstance(defender, Character):
+                    defender.current_hp = max(0, defender.current_hp - damage)
+                else:
+                    defender['current_hp'] = max(0, defender['current_hp'] - damage)
         else:
-            attacker['current_hp'] = max(0, attacker['current_hp'] - random.randint(5, 15))
-        
-        if hasattr(defender, 'current_hp'):
-            defender.current_hp = max(0, defender.current_hp - random.randint(5, 15))
-        else:
-            defender['current_hp'] = max(0, defender['current_hp'] - random.randint(5, 15))
+            attacker['current_hp'] = max(0, attacker['current_hp'] - damage)
         
         return result
 
@@ -752,13 +926,20 @@ class ZenQuest:
             return "I apologize, I'm having trouble connecting to my wisdom source right now. Please try again later."
 
     async def update_quest_state(self, chat_id: int):
-        progress = self.current_stage[chat_id] / self.total_stages[chat_id]
+        progress = self.current_stage[chat_id] / max(1, self.total_stages[chat_id])
         if progress < 0.33:
             self.quest_state[chat_id] = "beginning"
         elif progress < 0.66:
             self.quest_state[chat_id] = "middle"
         else:
             self.quest_state[chat_id] = "end"
+
+        if chat_id in self.group_quests:
+            # Rotate to the next player
+            players = list(self.group_quests[chat_id]['players'].keys())
+            current_index = players.index(self.group_quests[chat_id]['current_player'])
+            next_index = (current_index + 1) % len(players)
+            self.group_quests[chat_id]['current_player'] = players[next_index]
 
 # Instantiate the ZenQuest class
 zen_quest = ZenQuest()
@@ -811,8 +992,16 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await zen_quest.select_character_class(update, context)
     elif data.startswith("combat_"):
         await zen_quest.handle_combat_input(update, context)
+    elif data.startswith("group_class_"):
+        await zen_quest.select_group_character_class(update, context)
     else:
         await query.answer("Unknown action.")
+
+async def join_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await zen_quest.join_group_quest(update, context)
+
+async def start_journey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await zen_quest.start_group_journey(update, context)
 
 def main():
     # Set up the application
@@ -831,6 +1020,10 @@ def main():
 
     # Add callback query handler
     application.add_handler(CallbackQueryHandler(handle_callback_query))
+
+    # Add new handlers
+    application.add_handler(CommandHandler("join", join_command))
+    application.add_handler(CommandHandler("start_journey", start_journey_command))
 
     # Set up the database
     setup_database()

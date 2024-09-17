@@ -3,102 +3,196 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zen Stats</title>
+    <title>Zen Warrior Character Sheet</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         body {
-            font-family: Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
+            font-family: 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+            background-color: #f0e6d2;
+            color: #2c2c2c;
             margin: 0;
-            background-color: #111111;
-            color: white;
-        }
-        .container {
-            text-align: center;
-            background-color: #000000;
             padding: 20px;
+            line-height: 1.6;
+        }
+        .character-sheet {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: #fff;
+            border: 2px solid #8b4513;
             border-radius: 10px;
-            box-shadow: 0 0 15px rgba(0,0,0,0.5);
-            width: 80%;
-            max-width: 400px;
-            position: relative;
+            padding: 30px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.2);
         }
-        .container:before,
-        .container:after {
-            content: '';
-            display: block;
-            height: 3px;
-            background-color: white;
-            width: 50%;
-            position: absolute;
-            top: -10px;
-            left: 25%;
-            box-shadow: 0 0 10px rgba(255,255,255,0.5);
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #8b4513;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
         }
-        .container:after {
-            top: unset;
-            bottom: -10px;
+        .header h1 {
+            font-size: 32px;
+            margin: 0;
+            color: #8b4513;
         }
-        .zen-circle {
-            width: 100px;
-            height: 100px;
-            border-radius: 50%;
-            background-color: #000000;
-            margin: 0 auto 20px;
-            position: relative;
-            overflow: hidden;
+        .section {
+            margin-bottom: 30px;
         }
-        .zen-circle img {
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-        }
-        .level-name {
-            font-size: 24px;
+        .section-title {
             font-weight: bold;
-            margin-bottom: 10px;
+            text-transform: uppercase;
+            border-bottom: 1px solid #8b4513;
+            margin-bottom: 15px;
+            padding-bottom: 5px;
+            color: #8b4513;
+        }
+        .attribute {
+            display: inline-block;
+            width: 30%;
+            margin-bottom: 15px;
+        }
+        .attribute-name {
+            font-weight: bold;
+        }
+        .attribute-value {
+            border: 1px solid #8b4513;
+            padding: 5px 10px;
+            display: inline-block;
+            width: 30px;
+            text-align: center;
+            margin-left: 10px;
+            font-weight: bold;
+            background-color: #f0e6d2;
         }
         .progress-bar {
             width: 100%;
-            background-color: #333333;
-            border-radius: 20px;
+            background-color: #d2b48c;
+            border-radius: 5px;
             margin-top: 10px;
             overflow: hidden;
         }
         .progress {
             width: 0%;
             height: 20px;
-            background-color: #4CAF50;
-            border-radius: 20px;
+            background-color: #8b4513;
             transition: width 1.5s ease-in-out;
         }
-        .message {
-            margin-top: 15px;
-            font-style: italic;
-            color: #aaaaaa;
+        .abilities {
+            columns: 2;
+        }
+        .ability {
+            margin-bottom: 10px;
+            background-color: #f0e6d2;
+            padding: 5px 10px;
+            border-radius: 5px;
         }
         #error-message {
-            color: #ff6b6b;
-            margin-top: 10px;
+            color: #ff0000;
+            text-align: center;
+            margin-top: 20px;
+            font-weight: bold;
+        }
+        .stat-block {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .stat-name {
+            font-weight: bold;
+        }
+        .stat-value {
+            background-color: #f0e6d2;
+            padding: 2px 8px;
+            border-radius: 3px;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="zen-circle">
-            <img src="https://github.com/ber1nd/ZenConnectBot/blob/main/assets/monk_image.png?raw=true" alt="Zen Circle">
+    <div class="character-sheet">
+        <div class="header">
+            <h1>Zen Warrior Character Sheet</h1>
         </div>
-        <h1>Your Zen Journey</h1>
-        <p class="level-name" id="level-name"></p>
-        <p id="total-minutes"></p>
-        <p id="zen-points"></p>
-        <div class="progress-bar">
-            <div id="progress" class="progress"></div>
+        <div class="section">
+            <div class="section-title">Character Info</div>
+            <div class="stat-block">
+                <span class="stat-name">Name:</span>
+                <span id="character-name" class="stat-value"></span>
+            </div>
+            <div class="stat-block">
+                <span class="stat-name">Class:</span>
+                <span id="character-class" class="stat-value"></span>
+            </div>
+            <div class="stat-block">
+                <span class="stat-name">Level:</span>
+                <span id="character-level" class="stat-value"></span>
+            </div>
         </div>
-        <p class="message">Keep going! You're on your way to enlightenment.</p>
+        <div class="section">
+            <div class="section-title">Attributes</div>
+            <div class="attribute">
+                <span class="attribute-name">Wisdom</span>
+                <span id="wisdom" class="attribute-value"></span>
+            </div>
+            <div class="attribute">
+                <span class="attribute-name">Intelligence</span>
+                <span id="intelligence" class="attribute-value"></span>
+            </div>
+            <div class="attribute">
+                <span class="attribute-name">Strength</span>
+                <span id="strength" class="attribute-value"></span>
+            </div>
+            <div class="attribute">
+                <span class="attribute-name">Dexterity</span>
+                <span id="dexterity" class="attribute-value"></span>
+            </div>
+            <div class="attribute">
+                <span class="attribute-name">Constitution</span>
+                <span id="constitution" class="attribute-value"></span>
+            </div>
+            <div class="attribute">
+                <span class="attribute-name">Charisma</span>
+                <span id="charisma" class="attribute-value"></span>
+            </div>
+        </div>
+        <div class="section">
+            <div class="section-title">Health and Energy</div>
+            <div class="stat-block">
+                <span class="stat-name">HP:</span>
+                <span class="stat-value"><span id="current-hp"></span>/<span id="max-hp"></span></span>
+            </div>
+            <div class="stat-block">
+                <span class="stat-name">Energy:</span>
+                <span class="stat-value"><span id="current-energy"></span>/<span id="max-energy"></span></span>
+            </div>
+        </div>
+        <div class="section">
+            <div class="section-title">Experience</div>
+            <div class="stat-block">
+                <span class="stat-name">Zen Points:</span>
+                <span id="zen-points" class="stat-value"></span>
+            </div>
+            <div class="stat-block">
+                <span class="stat-name">Total Meditation Time:</span>
+                <span id="total-minutes" class="stat-value"></span> minutes
+            </div>
+            <div class="progress-bar">
+                <div id="progress" class="progress"></div>
+            </div>
+        </div>
+        <div class="section">
+            <div class="section-title">Abilities</div>
+            <div id="abilities" class="abilities"></div>
+        </div>
+        <div class="section">
+            <div class="section-title">Strengths and Weaknesses</div>
+            <div class="stat-block">
+                <span class="stat-name">Strengths:</span>
+                <span id="strengths" class="stat-value"></span>
+            </div>
+            <div class="stat-block">
+                <span class="stat-name">Weaknesses:</span>
+                <span id="weaknesses" class="stat-value"></span>
+            </div>
+        </div>
         <p id="error-message"></p>
     </div>
     <script>
@@ -116,28 +210,51 @@
                 }
                 const stats = await response.json();
                 console.log("Received stats:", stats);
-                document.getElementById('total-minutes').textContent = `Total Meditation Time: ${stats.total_minutes || 0} minutes`;
-                document.getElementById('zen-points').textContent = `Zen Points: ${stats.zen_points || 0}`;
-                const levelName = getLevelName(stats.zen_points || 0);
-                document.getElementById('level-name').textContent = levelName;
-                const progress = ((stats.zen_points || 0) % 100);
-                document.getElementById('progress').style.width = `${progress}%`;
+                updateCharacterSheet(stats);
             } catch (error) {
                 console.error('Error fetching stats:', error);
-                document.getElementById('total-minutes').textContent = 'Unable to fetch meditation time';
-                document.getElementById('zen-points').textContent = 'Unable to fetch Zen points';
-                document.getElementById('level-name').textContent = 'Level: Unknown';
-                document.getElementById('progress').style.width = '0%';
                 document.getElementById('error-message').textContent = `Error: ${error.message}`;
             }
         }
 
-        function getLevelName(points) {
-            if (points < 100) return "Beginner";
-            if (points < 200) return "Novice";
-            if (points < 300) return "Apprentice";
-            if (points < 400) return "Adept";
-            return "Master";
+        function updateCharacterSheet(stats) {
+            document.getElementById('character-name').textContent = stats.name || 'Unknown';
+            document.getElementById('character-class').textContent = stats.class || 'Unknown';
+            document.getElementById('character-level').textContent = stats.level || '1';
+            
+            document.getElementById('wisdom').textContent = stats.wisdom || '-';
+            document.getElementById('intelligence').textContent = stats.intelligence || '-';
+            document.getElementById('strength').textContent = stats.strength || '-';
+            document.getElementById('dexterity').textContent = stats.dexterity || '-';
+            document.getElementById('constitution').textContent = stats.constitution || '-';
+            document.getElementById('charisma').textContent = stats.charisma || '-';
+            
+            document.getElementById('current-hp').textContent = stats.current_hp || '0';
+            document.getElementById('max-hp').textContent = stats.max_hp || '0';
+            document.getElementById('current-energy').textContent = stats.current_energy || '0';
+            document.getElementById('max-energy').textContent = stats.max_energy || '0';
+            
+            document.getElementById('zen-points').textContent = stats.zen_points || '0';
+            document.getElementById('total-minutes').textContent = stats.total_minutes || '0';
+            
+            const progress = ((stats.zen_points || 0) % 100);
+            document.getElementById('progress').style.width = `${progress}%`;
+            
+            const abilitiesContainer = document.getElementById('abilities');
+            abilitiesContainer.innerHTML = '';
+            if (stats.abilities && stats.abilities.length > 0) {
+                stats.abilities.forEach(ability => {
+                    const abilityElement = document.createElement('div');
+                    abilityElement.className = 'ability';
+                    abilityElement.textContent = ability;
+                    abilitiesContainer.appendChild(abilityElement);
+                });
+            } else {
+                abilitiesContainer.textContent = 'No abilities';
+            }
+            
+            document.getElementById('strengths').textContent = stats.strengths ? stats.strengths.join(', ') : 'None';
+            document.getElementById('weaknesses').textContent = stats.weaknesses ? stats.weaknesses.join(', ') : 'None';
         }
 
         fetchStats();
