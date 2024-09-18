@@ -43,9 +43,9 @@ logger = logging.getLogger(__name__)
 
 # Move this function before get_openai_api_key()
 def get_db_connection():
-    database_name = os.getenv("MYSQLDATABASE")
+    database_name = os.getenv("MYSQL_DATABASE")
     if not database_name:
-        logger.error("Environment variable MYSQLDATABASE is not set.")
+        logger.error("Environment variable MYSQL_DATABASE is not set.")
         return None
     try:
         connection = mysql.connector.connect(
@@ -66,7 +66,7 @@ def get_db_connection():
 # Initialize OpenAI client
 def get_openai_api_key():
     # First, try to get the API key from the environment variable
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("API_KEY")
     
     # If not found in environment, try to get it from the database
     if not api_key:
@@ -88,8 +88,8 @@ def get_openai_api_key():
 
 openai_api_key = get_openai_api_key()
 if not openai_api_key:
-    logger.error("OPENAI_API_KEY environment variable is not set. Please set it and restart the application.")
-    raise ValueError("OPENAI_API_KEY is not set")
+    logger.error("API_KEY environment variable is not set. Please set it and restart the application.")
+    raise ValueError("API_KEY is not set")
 
 try:
     client = AsyncOpenAI(api_key=openai_api_key)
@@ -1231,7 +1231,7 @@ class ZenQuest:
                 {"role": "user", "content": prompt},
             ]
             response = await client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4",
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=0.7,
