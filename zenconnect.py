@@ -108,8 +108,10 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 # Rate limiting parameters
-RATE_LIMIT = 5  # Number of messages
-RATE_TIME_WINDOW = 60  # Time window in seconds
+RATE_LIMIT = 10  # Increased from 5 to 10 messages
+RATE_TIME_WINDOW = 30  # Reduced from 60 to 30 seconds
+GROUP_RATE_LIMIT = 20  # Higher limit for group chats
+GROUP_RATE_TIME_WINDOW = 60  # 1 minute window for group chats
 rate_limit_lock = asyncio.Lock()
 chat_message_times = defaultdict(list)
 
@@ -474,17 +476,26 @@ class ZenQuest:
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
+        is_group_chat = update.effective_chat.type in ["group", "supergroup"]
 
         # Rate limiting using asyncio.Lock
         async with rate_limit_lock:
             current_time = datetime.now()
             chat_times = chat_message_times[chat_id]
-            chat_times = [t for t in chat_times if (current_time - t).seconds < RATE_TIME_WINDOW]
+            if is_group_chat:
+                chat_times = [t for t in chat_times if (current_time - t).total_seconds() < GROUP_RATE_TIME_WINDOW]
+                limit = GROUP_RATE_LIMIT
+                window = GROUP_RATE_TIME_WINDOW
+            else:
+                chat_times = [t for t in chat_times if (current_time - t).total_seconds() < RATE_TIME_WINDOW]
+                limit = RATE_LIMIT
+                window = RATE_TIME_WINDOW
+            
             chat_times.append(current_time)
             chat_message_times[chat_id] = chat_times
-            if len(chat_times) > RATE_LIMIT:
+            if len(chat_times) > limit:
                 await update.message.reply_text(
-                    "This chat is sending messages too quickly. Please slow down."
+                    f"This chat is very active. Please wait a moment before sending more messages. (Limit: {limit} messages per {window} seconds)"
                 )
                 return
 
@@ -493,7 +504,7 @@ class ZenQuest:
         else:
             return  # Non-text message received
 
-        if update.effective_chat.type in ["group", "supergroup"]:
+        if is_group_chat:
             if not self.group_quests.get(chat_id, {}).get("ready", False):
                 return
             if self.group_quests[chat_id]["current_player"] != user_id:
@@ -1397,8 +1408,8 @@ async def start_journey_command(update: Update, context: ContextTypes.DEFAULT_TY
 # Update the zenstats_command function
 async def zenstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    app_url = os.environ.get("APP_URL", "https://github.com/ber1nd/ZenConnectBot/blob/main/templates/zen_stats.html")
-    zenstats_url = f"{app_url}/zenstats?user_id={user_id}"
+    github_raw_url = "https://raw.githubusercontent.com/ber1nd/ZenConnectBot/main/templates/zen_stats.html"
+    zenstats_url = f"{github_raw_url}?user_id={user_id}"
     await update.message.reply_text(
         "View your Zen Warrior stats:",
         reply_markup=InlineKeyboardMarkup(
@@ -1419,6 +1430,16 @@ async def get_stats(user_id: int):
         return JSONResponse(content=stats)
     else:
         return JSONResponse(content={"error": "Character not found"}, status_code=404)
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 
 def main():
