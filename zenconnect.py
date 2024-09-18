@@ -477,13 +477,13 @@ class ZenQuest:
             return
 
         character = self.character_classes[class_name]
-        self.characters[chat_id] = character
+        self.characters[user_id] = character  # Use user_id instead of chat_id
         self.quest_active[chat_id] = True
         self.current_stage[chat_id] = 0
         self.total_stages[chat_id] = random.randint(self.min_stages, self.max_stages)
         self.quest_state[chat_id] = "beginning"
         self.in_combat[chat_id] = False
-        self.player_karma[chat_id] = 100
+        self.player_karma[user_id] = 100  # Use user_id instead of chat_id
 
         # Save character to database
         self.save_character_to_db(user_id, character)
@@ -499,6 +499,7 @@ class ZenQuest:
             f"{self.current_scene[chat_id]}"
         )
         await query.edit_message_text(start_message)
+        logger.info(f"Character class {class_name} selected for user {user_id}")
 
     def save_character_to_db(self, user_id, character):
         connection = get_db_connection()
@@ -521,11 +522,14 @@ class ZenQuest:
                           character.strength, character.dexterity, character.constitution, character.charisma)
                 cursor.execute(query, values)
                 connection.commit()
+                logger.info(f"Character saved to database for user {user_id}")
             except Error as e:
-                print(f"Error saving character to database: {e}")
+                logger.error(f"Error saving character to database: {e}")
             finally:
                 cursor.close()
                 connection.close()
+        else:
+            logger.error("Failed to connect to the database when saving character")
 
     def get_character_stats(self, user_id):
         connection = get_db_connection()
@@ -536,6 +540,7 @@ class ZenQuest:
                 cursor.execute(query, (user_id,))
                 result = cursor.fetchone()
                 if result:
+                    logger.info(f"Character stats retrieved for user {user_id}")
                     return {
                         "name": result['name'],
                         "class": result['class'],
@@ -552,13 +557,39 @@ class ZenQuest:
                         "constitution": result['constitution'],
                         "charisma": result['charisma'],
                     }
+                else:
+                    logger.info(f"No character found in database for user {user_id}")
             except Error as e:
-                print(f"Error retrieving character from database: {e}")
+                logger.error(f"Error retrieving character from database: {e}")
             finally:
                 cursor.close()
                 connection.close()
+        else:
+            logger.error("Failed to connect to the database when retrieving character stats")
+        
+        # If no character is found in the database, check the in-memory storage
+        if user_id in self.characters:
+            character = self.characters[user_id]
+            logger.info(f"Character found in memory for user {user_id}")
+            return {
+                "name": character.name,
+                "class": character.__class__.__name__,
+                "hp": character.current_hp,
+                "max_hp": character.max_hp,
+                "energy": character.current_energy,
+                "max_energy": character.max_energy,
+                "karma": self.player_karma.get(user_id, 100),
+                "abilities": character.abilities,
+                "wisdom": character.wisdom,
+                "intelligence": character.intelligence,
+                "strength": character.strength,
+                "dexterity": character.dexterity,
+                "constitution": character.constitution,
+                "charisma": character.charisma,
+            }
         
         # If no character is found, return default data
+        logger.info(f"No character found for user {user_id}")
         return {
             "name": "No Active Character",
             "class": "None",
@@ -1421,6 +1452,7 @@ class ZenQuest:
                 cursor.execute(query, (user_id,))
                 result = cursor.fetchone()
                 if result:
+                    logger.info(f"Character stats retrieved for user {user_id}")
                     return {
                         "name": result['name'],
                         "class": result['class'],
@@ -1437,13 +1469,39 @@ class ZenQuest:
                         "constitution": result['constitution'],
                         "charisma": result['charisma'],
                     }
+                else:
+                    logger.info(f"No character found in database for user {user_id}")
             except Error as e:
-                print(f"Error retrieving character from database: {e}")
+                logger.error(f"Error retrieving character from database: {e}")
             finally:
                 cursor.close()
                 connection.close()
+        else:
+            logger.error("Failed to connect to the database when retrieving character stats")
+        
+        # If no character is found in the database, check the in-memory storage
+        if user_id in self.characters:
+            character = self.characters[user_id]
+            logger.info(f"Character found in memory for user {user_id}")
+            return {
+                "name": character.name,
+                "class": character.__class__.__name__,
+                "hp": character.current_hp,
+                "max_hp": character.max_hp,
+                "energy": character.current_energy,
+                "max_energy": character.max_energy,
+                "karma": self.player_karma.get(user_id, 100),
+                "abilities": character.abilities,
+                "wisdom": character.wisdom,
+                "intelligence": character.intelligence,
+                "strength": character.strength,
+                "dexterity": character.dexterity,
+                "constitution": character.constitution,
+                "charisma": character.charisma,
+            }
         
         # If no character is found, return default data
+        logger.info(f"No character found for user {user_id}")
         return {
             "name": "No Active Character",
             "class": "None",
@@ -1547,6 +1605,7 @@ async def zenstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [[InlineKeyboardButton("Open Stats", web_app=WebAppInfo(url=zenstats_url))]]
         ),
     )
+    logger.info(f"Zenstats command triggered for user {user_id}")
 
 
 @app.get("/zenstats", response_class=HTMLResponse)
