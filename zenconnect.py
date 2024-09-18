@@ -28,6 +28,8 @@ from openai import OpenAIError
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 import uvicorn
 import aiohttp
 
@@ -114,6 +116,8 @@ chat_message_times = defaultdict(list)
 # OpenAI Moderation Endpoint
 MODERATION_URL = "https://api.openai.com/v1/moderations"
 
+# Mount the static files directory
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 def setup_database():
     connection = get_db_connection()
@@ -1231,7 +1235,7 @@ class ZenQuest:
                 {"role": "user", "content": prompt},
             ]
             response = await client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o-mini",
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=0.7,
@@ -1284,7 +1288,15 @@ class ZenQuest:
             players = list(self.group_quests[chat_id]["players"].keys())
             current_index = players.index(self.group_quests[chat_id]["current_player"])
             next_index = (current_index + 1) % len(players)
-            self.group_quests[chat_id]["current_player"] = players[next_index]
+            next_player = players[next_index]
+            self.group_quests[chat_id]["current_player"] = next_player
+            
+            # Notify the next player
+            next_player_name = self.group_quests[chat_id]["players"][next_player].name
+            await self.send_message(
+                chat_id,
+                f"It's now {next_player_name}'s turn to act. What would you like to do?"
+            )
 
     def get_character_stats(self, user_id):
         character = self.characters.get(user_id)
@@ -1395,9 +1407,8 @@ async def zenstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-@app.get("/zenstats")
-async def zenstats(request: Request):
-    user_id = request.query_params.get("user_id")
+@app.get("/zenstats", response_class=HTMLResponse)
+async def zenstats(request: Request, user_id: int):
     return templates.TemplateResponse("zen_stats.html", {"request": request, "user_id": user_id})
 
 
@@ -1438,10 +1449,16 @@ def main():
     # Set up the database
     setup_database()
 
+    # Set up FastAPI
+    from fastapi.templating import Jinja2Templates
+    global templates
+    templates = Jinja2Templates(directory="templates")
+
     # Start Uvicorn in a separate process
     import multiprocessing
 
     def run_uvicorn():
+        import uvicorn
         uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 
     p = multiprocessing.Process(target=run_uvicorn)
