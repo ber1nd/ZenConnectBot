@@ -5,6 +5,7 @@ import random
 import asyncio
 from dotenv import load_dotenv
 import mysql.connector
+from mysql.connector import Error
 from datetime import datetime
 from collections import defaultdict
 import math
@@ -139,6 +140,27 @@ def setup_database():
                     zen_points INT DEFAULT 0,
                     level INT DEFAULT 0,
                     subscription_status BOOLEAN DEFAULT FALSE
+                )
+                """
+            )
+            # Create characters table
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS characters (
+                    user_id BIGINT PRIMARY KEY,
+                    name VARCHAR(255),
+                    class VARCHAR(255),
+                    hp INT,
+                    max_hp INT,
+                    energy INT,
+                    max_energy INT,
+                    karma INT,
+                    wisdom INT,
+                    intelligence INT,
+                    strength INT,
+                    dexterity INT,
+                    constitution INT,
+                    charisma INT
                 )
                 """
             )
@@ -443,6 +465,7 @@ class ZenQuest:
         query = update.callback_query
         await query.answer()
         chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
         data_parts = query.data.split("_")
         if len(data_parts) < 2:
             await query.edit_message_text("Invalid class selection. Please try again.")
@@ -453,13 +476,17 @@ class ZenQuest:
             await query.edit_message_text("Invalid class selection. Please choose a valid class.")
             return
 
-        self.characters[chat_id] = self.character_classes[class_name]
+        character = self.character_classes[class_name]
+        self.characters[chat_id] = character
         self.quest_active[chat_id] = True
         self.current_stage[chat_id] = 0
         self.total_stages[chat_id] = random.randint(self.min_stages, self.max_stages)
         self.quest_state[chat_id] = "beginning"
         self.in_combat[chat_id] = False
         self.player_karma[chat_id] = 100
+
+        # Save character to database
+        self.save_character_to_db(user_id, character)
 
         self.quest_goal[chat_id] = await self.generate_quest_goal(class_name)
         self.current_scene[chat_id] = await self.generate_initial_scene(
@@ -472,6 +499,82 @@ class ZenQuest:
             f"{self.current_scene[chat_id]}"
         )
         await query.edit_message_text(start_message)
+
+    def save_character_to_db(self, user_id, character):
+        connection = get_db_connection()
+        if connection:
+            try:
+                cursor = connection.cursor()
+                query = """
+                INSERT INTO characters (user_id, name, class, hp, max_hp, energy, max_energy, karma, 
+                                        wisdom, intelligence, strength, dexterity, constitution, charisma)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                name = VALUES(name), class = VALUES(class), hp = VALUES(hp), max_hp = VALUES(max_hp),
+                energy = VALUES(energy), max_energy = VALUES(max_energy), karma = VALUES(karma),
+                wisdom = VALUES(wisdom), intelligence = VALUES(intelligence), strength = VALUES(strength),
+                dexterity = VALUES(dexterity), constitution = VALUES(constitution), charisma = VALUES(charisma)
+                """
+                values = (user_id, character.name, character.__class__.__name__, character.current_hp, 
+                          character.max_hp, character.current_energy, character.max_energy, 
+                          self.player_karma.get(user_id, 100), character.wisdom, character.intelligence, 
+                          character.strength, character.dexterity, character.constitution, character.charisma)
+                cursor.execute(query, values)
+                connection.commit()
+            except Error as e:
+                print(f"Error saving character to database: {e}")
+            finally:
+                cursor.close()
+                connection.close()
+
+    def get_character_stats(self, user_id):
+        connection = get_db_connection()
+        if connection:
+            try:
+                cursor = connection.cursor(dictionary=True)
+                query = "SELECT * FROM characters WHERE user_id = %s"
+                cursor.execute(query, (user_id,))
+                result = cursor.fetchone()
+                if result:
+                    return {
+                        "name": result['name'],
+                        "class": result['class'],
+                        "hp": result['hp'],
+                        "max_hp": result['max_hp'],
+                        "energy": result['energy'],
+                        "max_energy": result['max_energy'],
+                        "karma": result['karma'],
+                        "abilities": [],  # You might want to store abilities separately
+                        "wisdom": result['wisdom'],
+                        "intelligence": result['intelligence'],
+                        "strength": result['strength'],
+                        "dexterity": result['dexterity'],
+                        "constitution": result['constitution'],
+                        "charisma": result['charisma'],
+                    }
+            except Error as e:
+                print(f"Error retrieving character from database: {e}")
+            finally:
+                cursor.close()
+                connection.close()
+        
+        # If no character is found, return default data
+        return {
+            "name": "No Active Character",
+            "class": "None",
+            "hp": 0,
+            "max_hp": 0,
+            "energy": 0,
+            "max_energy": 0,
+            "karma": 0,
+            "abilities": [],
+            "wisdom": 0,
+            "intelligence": 0,
+            "strength": 0,
+            "dexterity": 0,
+            "constitution": 0,
+            "charisma": 0,
+        }
 
     async def handle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
@@ -1310,42 +1413,53 @@ class ZenQuest:
             )
 
     def get_character_stats(self, user_id):
-        character = self.characters.get(user_id)
-        if character:
-            return {
-                "name": character.name,
-                "class": character.__class__.__name__,  # Add this line to get the class name
-                "hp": character.current_hp,
-                "max_hp": character.max_hp,
-                "energy": character.current_energy,
-                "max_energy": character.max_energy,
-                "karma": self.player_karma.get(user_id, 0),
-                "abilities": character.abilities,
-                "wisdom": character.wisdom,
-                "intelligence": character.intelligence,
-                "strength": character.strength,
-                "dexterity": character.dexterity,
-                "constitution": character.constitution,
-                "charisma": character.charisma,
-            }
-        else:
-            # If no character is found, return some default or placeholder data
-            return {
-                "name": "No Active Character",
-                "class": "None",
-                "hp": 0,
-                "max_hp": 0,
-                "energy": 0,
-                "max_energy": 0,
-                "karma": 0,
-                "abilities": [],
-                "wisdom": 0,
-                "intelligence": 0,
-                "strength": 0,
-                "dexterity": 0,
-                "constitution": 0,
-                "charisma": 0,
-            }
+        connection = get_db_connection()
+        if connection:
+            try:
+                cursor = connection.cursor(dictionary=True)
+                query = "SELECT * FROM characters WHERE user_id = %s"
+                cursor.execute(query, (user_id,))
+                result = cursor.fetchone()
+                if result:
+                    return {
+                        "name": result['name'],
+                        "class": result['class'],
+                        "hp": result['hp'],
+                        "max_hp": result['max_hp'],
+                        "energy": result['energy'],
+                        "max_energy": result['max_energy'],
+                        "karma": result['karma'],
+                        "abilities": [],  # You might want to store abilities separately
+                        "wisdom": result['wisdom'],
+                        "intelligence": result['intelligence'],
+                        "strength": result['strength'],
+                        "dexterity": result['dexterity'],
+                        "constitution": result['constitution'],
+                        "charisma": result['charisma'],
+                    }
+            except Error as e:
+                print(f"Error retrieving character from database: {e}")
+            finally:
+                cursor.close()
+                connection.close()
+        
+        # If no character is found, return default data
+        return {
+            "name": "No Active Character",
+            "class": "None",
+            "hp": 0,
+            "max_hp": 0,
+            "energy": 0,
+            "max_energy": 0,
+            "karma": 0,
+            "abilities": [],
+            "wisdom": 0,
+            "intelligence": 0,
+            "strength": 0,
+            "dexterity": 0,
+            "constitution": 0,
+            "charisma": 0,
+        }
 
 
 # Instantiate the ZenQuest class
