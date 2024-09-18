@@ -1408,8 +1408,8 @@ async def start_journey_command(update: Update, context: ContextTypes.DEFAULT_TY
 # Update the zenstats_command function
 async def zenstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    github_raw_url = "https://raw.githubusercontent.com/ber1nd/ZenConnectBot/main/templates/zen_stats.html"
-    zenstats_url = f"{github_raw_url}?user_id={user_id}"
+    app_url = "https://zenconnectbot-production.up.railway.app"
+    zenstats_url = f"{app_url}/zenstats?user_id={user_id}"
     await update.message.reply_text(
         "View your Zen Warrior stats:",
         reply_markup=InlineKeyboardMarkup(
@@ -1435,12 +1435,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["https://zenconnectbot-production.up.railway.app"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-
 
 def main():
     # Set up the application
@@ -1471,7 +1470,6 @@ def main():
     setup_database()
 
     # Set up FastAPI
-    from fastapi.templating import Jinja2Templates
     global templates
     templates = Jinja2Templates(directory="templates")
 

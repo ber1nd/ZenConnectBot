@@ -27,7 +27,7 @@
         async function fetchStats() {
             try {
                 console.log("Fetching stats for user ID:", userId);
-                const response = await fetch(`https://zenconnectbot-production.up.railway.app/api/stats?user_id=${userId}`);
+                const response = await fetch(`/api/stats?user_id=${userId}`);
                 console.log("Response status:", response.status);
                 if (!response.ok) {
                     const errorText = await response.text();
