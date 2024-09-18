@@ -493,11 +493,12 @@ class ZenQuest:
                 INSERT INTO characters (user_id, name, class, hp, max_hp, energy, max_energy, karma, 
                                         wisdom, intelligence, strength, dexterity, constitution, charisma)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                AS new_values
                 ON DUPLICATE KEY UPDATE
-                name = VALUES(name), class = VALUES(class), hp = VALUES(hp), max_hp = VALUES(max_hp),
-                energy = VALUES(energy), max_energy = VALUES(max_energy), karma = VALUES(karma),
-                wisdom = VALUES(wisdom), intelligence = VALUES(intelligence), strength = VALUES(strength),
-                dexterity = VALUES(dexterity), constitution = VALUES(constitution), charisma = VALUES(charisma)
+                name = new_values.name, class = new_values.class, hp = new_values.hp, max_hp = new_values.max_hp,
+                energy = new_values.energy, max_energy = new_values.max_energy, karma = new_values.karma,
+                wisdom = new_values.wisdom, intelligence = new_values.intelligence, strength = new_values.strength,
+                dexterity = new_values.dexterity, constitution = new_values.constitution, charisma = new_values.charisma
                 """
                 values = (user_id, character.name, character.__class__.__name__, character.current_hp, 
                           character.max_hp, character.current_energy, character.max_energy, 
