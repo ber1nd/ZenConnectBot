@@ -1314,11 +1314,12 @@ class ZenQuest:
         if character:
             return {
                 "name": character.name,
+                "class": character.__class__.__name__,  # Add this line to get the class name
                 "hp": character.current_hp,
                 "max_hp": character.max_hp,
                 "energy": character.current_energy,
                 "max_energy": character.max_energy,
-                "karma": self.player_karma.get(user_id),
+                "karma": self.player_karma.get(user_id, 0),
                 "abilities": character.abilities,
                 "wisdom": character.wisdom,
                 "intelligence": character.intelligence,
@@ -1328,7 +1329,23 @@ class ZenQuest:
                 "charisma": character.charisma,
             }
         else:
-            return None
+            # If no character is found, return some default or placeholder data
+            return {
+                "name": "No Active Character",
+                "class": "None",
+                "hp": 0,
+                "max_hp": 0,
+                "energy": 0,
+                "max_energy": 0,
+                "karma": 0,
+                "abilities": [],
+                "wisdom": 0,
+                "intelligence": 0,
+                "strength": 0,
+                "dexterity": 0,
+                "constitution": 0,
+                "charisma": 0,
+            }
 
 
 # Instantiate the ZenQuest class
@@ -1426,10 +1443,7 @@ async def zenstats(request: Request, user_id: int):
 @app.get("/api/stats")
 async def get_stats(user_id: int):
     stats = zen_quest.get_character_stats(user_id)
-    if stats:
-        return JSONResponse(content=stats)
-    else:
-        return JSONResponse(content={"error": "Character not found"}, status_code=404)
+    return JSONResponse(content=stats)
 
 from fastapi.middleware.cors import CORSMiddleware
 
