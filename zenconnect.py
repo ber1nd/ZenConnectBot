@@ -117,7 +117,7 @@ chat_message_times = defaultdict(list)
 MODERATION_URL = "https://api.openai.com/v1/moderations"
 
 # Mount the static files directory
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# app.mount("/static", StaticFiles(directory="static"), name="static")
 
 def setup_database():
     connection = get_db_connection()
