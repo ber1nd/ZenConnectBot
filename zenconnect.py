@@ -297,6 +297,9 @@ class ZenQuest:
         self.max_riddle_attempts = 3
         self.puzzles = {}
         self.combat_systems = {}
+        self.group_turn_locks = {}
+        self.group_turn_orders = {}
+        self.current_group_turns = {}
 
     async def start_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
@@ -484,8 +487,8 @@ class ZenQuest:
         await query.edit_message_text(start_message)
         logger.info(f"Character class {class_name} selected for user {user_id}")
 
-    def save_character_to_db(self, user_id, character):
-        connection = get_db_connection()
+    async def save_character_to_db(self, user_id, character):
+        connection = await asyncio.to_thread(get_db_connection)
         if connection:
             try:
                 cursor = connection.cursor()
@@ -504,26 +507,26 @@ class ZenQuest:
                           character.max_hp, character.current_energy, character.max_energy, 
                           self.player_karma.get(user_id, 100), character.wisdom, character.intelligence, 
                           character.strength, character.dexterity, character.constitution, character.charisma)
-                cursor.execute(query, values)
-                connection.commit()
+                await asyncio.to_thread(cursor.execute, query, values)
+                await asyncio.to_thread(connection.commit)
                 logger.info(f"Character saved to database for user {user_id}")
             except Error as e:
                 logger.error(f"Error saving character to database: {e}")
             finally:
-                cursor.close()
-                connection.close()
+                await asyncio.to_thread(cursor.close)
+                await asyncio.to_thread(connection.close)
         else:
             logger.error("Failed to connect to the database when saving character")
 
-    def get_character_stats(self, user_id):
+    async def get_character_stats(self, user_id):
         logger.info(f"Attempting to get character stats for user {user_id}")
-        connection = get_db_connection()
+        connection = await asyncio.to_thread(get_db_connection)
         if connection:
             try:
                 cursor = connection.cursor(dictionary=True)
                 query = "SELECT * FROM characters WHERE user_id = %s"
-                cursor.execute(query, (user_id,))
-                result = cursor.fetchone()
+                await asyncio.to_thread(cursor.execute, query, (user_id,))
+                result = await asyncio.to_thread(cursor.fetchone)
                 if result:
                     logger.info(f"Character stats retrieved from database for user {user_id}")
                     return {
@@ -547,8 +550,8 @@ class ZenQuest:
             except Error as e:
                 logger.error(f"Error retrieving character from database: {e}")
             finally:
-                cursor.close()
-                connection.close()
+                await asyncio.to_thread(cursor.close)
+                await asyncio.to_thread(connection.close)
         else:
             logger.error("Failed to connect to the database when retrieving character stats")
         
@@ -605,10 +608,87 @@ class ZenQuest:
             await update.message.reply_text("You're not on a quest. Use /zenquest to start one!")
             return
 
-        if self.in_combat.get(chat_id, False):
+        if chat_id in self.group_quests:
+            await self.handle_group_input(update, context, user_input)
+        elif self.in_combat.get(chat_id, False):
             await self.handle_combat_action(update, context, user_input)
         else:
             await self.progress_quest(update, context, user_input)
+
+    async def handle_group_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+
+        if chat_id not in self.group_turn_locks:
+            self.group_turn_locks[chat_id] = asyncio.Lock()
+            self.group_turn_orders[chat_id] = list(self.group_quests[chat_id]["players"].keys())
+            self.current_group_turns[chat_id] = 0
+
+        async with self.group_turn_locks[chat_id]:
+            current_player = self.group_turn_orders[chat_id][self.current_group_turns[chat_id]]
+            if user_id != current_player:
+                await update.message.reply_text("It's not your turn yet. Please wait.")
+                return
+
+            # Process the player's action
+            await self.progress_quest(update, context, user_input)
+
+            # Move to the next player's turn
+            self.current_group_turns[chat_id] = (self.current_group_turns[chat_id] + 1) % len(self.group_turn_orders[chat_id])
+            next_player = self.group_turn_orders[chat_id][self.current_group_turns[chat_id]]
+            await update.message.reply_text(f"It's now <@{next_player}>'s turn.")
+
+    async def generate_response(self, prompt):
+        try:
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant for a Zen-themed D&D-style game."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=300,
+                n=1,
+                temperature=0.7,
+            )
+            return response.choices[0].message.content.strip()
+        except OpenAIError as e:
+            logger.error(f"OpenAI API error: {e}")
+            return "An error occurred while generating the response. Please try again."
+        except Exception as e:
+            logger.error(f"Unexpected error in generate_response: {e}")
+            return "An unexpected error occurred. Please try again later."
+
+    async def generate_opponent(self, character):
+        level = self.current_stage[character.user_id] // 3 + 1  # Every 3 stages increase opponent level
+        prompt = f"""
+        Generate a challenging opponent for a level {level} {character.__class__.__name__} in a Zen-themed D&D-style quest.
+        Include:
+        1. Name
+        2. Brief description (1-2 sentences)
+        3. HP (between 20-50)
+        4. Two unique abilities
+        5. Two strengths
+        6. Two weaknesses
+
+        Format the response as a JSON object.
+        """
+        opponent_json = await self.generate_response(prompt)
+        try:
+            opponent_data = json.loads(opponent_json)
+            return Character(
+                opponent_data['name'],
+                opponent_data['hp'],
+                opponent_data['hp'],  # max_hp same as current_hp
+                opponent_data['abilities'],
+                opponent_data['strengths'],
+                opponent_data['weaknesses']
+            )
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding JSON: {e}")
+            return None
+        except KeyError as e:
+            logger.error(f"Missing key in opponent data: {e}")
+            return None
 
     async def progress_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         chat_id = update.effective_chat.id
@@ -673,7 +753,6 @@ class ZenQuest:
         chat_id = update.effective_chat.id
         character = self.characters[chat_id]
 
-        # Generate an opponent based on the character's level and quest progress
         opponent = await self.generate_opponent(character)
         self.current_opponent[chat_id] = opponent
         self.in_combat[chat_id] = True
@@ -761,24 +840,28 @@ class ZenQuest:
         2. Brief description (1-2 sentences)
         3. HP (between 20-50)
         4. Two unique abilities
+        5. Two strengths
+        6. Two weaknesses
 
         Format the response as a JSON object.
         """
         opponent_json = await self.generate_response(prompt)
         try:
             opponent_data = json.loads(opponent_json)
+            return Character(
+                opponent_data['name'],
+                opponent_data['hp'],
+                opponent_data['hp'],  # max_hp same as current_hp
+                opponent_data['abilities'],
+                opponent_data['strengths'],
+                opponent_data['weaknesses']
+            )
         except json.JSONDecodeError as e:
             logger.error(f"Error decoding JSON: {e}")
             return None
-        
-        return Character(
-            opponent_data['name'],
-            opponent_data['hp'],
-            opponent_data['hp'],  # max_hp same as current_hp
-            opponent_data['abilities'],
-            [],  # strengths
-            [],  # weaknesses
-        )
+        except KeyError as e:
+            logger.error(f"Missing key in opponent data: {e}")
+            return None
 
     async def generate_quest_goal(self, class_name):
         prompt = f"""
@@ -802,29 +885,165 @@ class ZenQuest:
         """
         return await self.generate_response(prompt)
 
-    async def handle_riddle_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
-        chat_id = update.effective_chat.id
-        riddle = self.riddles[chat_id]
-
-        riddle["attempts"] += 1
-
-        if user_input.lower() == riddle["answer"].lower():
-            success_message = await self.generate_response(
-                f"Generate a brief success message for solving the riddle: {riddle['riddle']}. "
-                f"Include a small reward or positive outcome for the {self.characters[chat_id].name}. "
-                f"Keep it under 100 words."
+    async def generate_response(self, prompt):
+        try:
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant for a Zen-themed D&D-style game."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=300,
+                n=1,
+                temperature=0.7,
             )
-            await self.send_message(update, success_message)
-            self.riddles[chat_id]["active"] = False
-            await self.progress_quest(update, context, "solved riddle")
-        elif riddle["attempts"] >= self.max_riddle_attempts:
-            failure_consequence = await self.generate_riddle_failure_consequence(chat_id)
-            await self.send_message(update, failure_consequence)
-            self.riddles[chat_id]["active"] = False
-            await self.progress_quest(update, context, "failed riddle")
+            return response.choices[0].message.content.strip()
+        except OpenAIError as e:
+            logger.error(f"OpenAI API error: {e}")
+            return "An error occurred while generating the response. Please try again."
+        except Exception as e:
+            logger.error(f"Unexpected error in generate_response: {e}")
+            return "An unexpected error occurred. Please try again later."
+
+    async def send_message(self, update: Update, message: str):
+        try:
+            await update.message.reply_text(message)
+        except Exception as e:
+            logger.error(f"Error sending message: {e}")
+
+    async def update_quest_state(self, chat_id: int):
+        progress = (self.current_stage[chat_id] / self.total_stages[chat_id]) * 100
+        if progress < 33:
+            self.quest_state[chat_id] = "beginning"
+        elif progress < 66:
+            self.quest_state[chat_id] = "middle"
         else:
-            remaining_attempts = self.max_riddle_attempts - riddle["attempts"]
-            await self.send_message(
-                update,
-                f"That's not correct. You have {remaining_attempts} attempts remaining. Use /hint for a clue.",
-            )
+            self.quest_state[chat_id] = "nearing_end"
+
+    async def end_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, victory: bool, reason: str):
+        chat_id = update.effective_chat.id
+        self.quest_active[chat_id] = False
+        
+        if victory:
+            message = f"Congratulations! {reason}\nYour quest has come to a successful end."
+        else:
+            message = f"Quest failed. {reason}\nBetter luck on your next journey."
+        
+        await self.send_message(update, message)
+        # Reset quest-related data for this chat
+        self.current_stage.pop(chat_id, None)
+        self.total_stages.pop(chat_id, None)
+        self.current_scene.pop(chat_id, None)
+        self.quest_state.pop(chat_id, None)
+        self.quest_goal.pop(chat_id, None)
+
+    async def initiate_riddle(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        riddle_data = await self.generate_riddle()
+        self.riddles[chat_id] = {
+            "riddle": riddle_data["riddle"],
+            "answer": riddle_data["answer"],
+            "hint": riddle_data["hint"],
+            "attempts": 0,
+            "active": True
+        }
+        await self.send_message(update, f"Riddle: {riddle_data['riddle']}")
+
+    async def generate_riddle(self):
+        prompt = """
+        Generate a Zen-themed riddle with the following:
+        1. The riddle itself
+        2. The answer
+        3. A hint
+
+        Format the response as a JSON object.
+        """
+        riddle_json = await self.generate_response(prompt)
+        try:
+            return json.loads(riddle_json)
+        except json.JSONDecodeError:
+            logger.error("Error decoding riddle JSON")
+            return {"riddle": "What is the sound of one hand clapping?", "answer": "Silence", "hint": "Listen carefully to nothing"}
+
+    async def generate_riddle_failure_consequence(self, chat_id: int):
+        character = self.characters[chat_id]
+        prompt = f"""
+        Generate a brief consequence for a {character.__class__.__name__} failing to solve a riddle in a Zen-themed quest.
+        The consequence should be minor but impactful. Keep it under 100 words.
+        """
+        return await self.generate_response(prompt)
+
+    async def handle_hint(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        if chat_id in self.riddles and self.riddles[chat_id]["active"]:
+            hint = self.riddles[chat_id]["hint"]
+            await self.send_message(update, f"Hint: {hint}")
+        else:
+            await self.send_message(update, "There is no active riddle to hint for.")
+
+    async def handle_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        
+        if not self.quest_active.get(chat_id, False):
+            await update.message.reply_text("You're not on an active quest. Use /zenquest to start one!")
+            return
+
+        character_stats = await self.get_character_stats(user_id)
+        progress = (self.current_stage[chat_id] / self.total_stages[chat_id]) * 100
+
+        status_message = (
+            f"Quest Progress: {progress:.2f}%\n"
+            f"Current Stage: {self.current_stage[chat_id]}/{self.total_stages[chat_id]}\n"
+            f"Character: {character_stats['name']} ({character_stats['class']})\n"
+            f"HP: {character_stats['hp']}/{character_stats['max_hp']}\n"
+            f"Energy: {character_stats['energy']}/{character_stats['max_energy']}\n"
+            f"Karma: {character_stats['karma']}\n"
+            f"Quest State: {self.quest_state[chat_id]}\n"
+            f"\nAbilities: {', '.join(character_stats['abilities'])}\n"
+            f"\nStats:\n"
+            f"Strength: {character_stats['strength']}\n"
+            f"Dexterity: {character_stats['dexterity']}\n"
+            f"Constitution: {character_stats['constitution']}\n"
+            f"Intelligence: {character_stats['intelligence']}\n"
+            f"Wisdom: {character_stats['wisdom']}\n"
+            f"Charisma: {character_stats['charisma']}"
+        )
+
+        await update.message.reply_text(status_message)
+
+    async def handle_interrupt(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        
+        if not self.quest_active.get(chat_id, False):
+            await update.message.reply_text("There's no active quest to interrupt.")
+            return
+
+        await self.end_quest(update, context, victory=False, reason="Quest interrupted by user.")
+        await update.message.reply_text("Your quest has been interrupted and ended.")
+
+# Main function to set up and run the bot
+def main():
+    setup_database()
+    
+    application = Application.builder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
+    
+    zen_quest = ZenQuest()
+    
+    application.add_handler(CommandHandler("start", zen_quest.start_quest))
+    application.add_handler(CommandHandler("zenquest", zen_quest.start_quest))
+    application.add_handler(CommandHandler("join", zen_quest.join_group_quest))
+    application.add_handler(CommandHandler("start_journey", zen_quest.start_group_journey))
+    application.add_handler(CommandHandler("status", zen_quest.handle_status))
+    application.add_handler(CommandHandler("hint", zen_quest.handle_hint))
+    application.add_handler(CommandHandler("interrupt", zen_quest.handle_interrupt))
+    
+    application.add_handler(CallbackQueryHandler(zen_quest.select_character_class, pattern="^class_"))
+    application.add_handler(CallbackQueryHandler(zen_quest.select_group_character_class, pattern="^group_class_"))
+    
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, zen_quest.handle_input))
+    
+    application.run_polling()
+
+if __name__ == "__main__":
+    main()
