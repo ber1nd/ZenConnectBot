@@ -725,7 +725,35 @@ class ZenQuest:
         if self.current_stage[chat_id] >= self.total_stages[chat_id]:
             await self.end_quest(update, context, victory=True, reason="You have reached the end of your journey!")
 
-    
+    async def generate_next_scene(self, chat_id: int, user_input: str, character):
+        current_scene = self.current_scene[chat_id]
+        quest_state = self.quest_state[chat_id]
+        karma = self.player_karma[chat_id]
+        progress = (self.current_stage[chat_id] / self.total_stages[chat_id]) * 100
+
+        prompt = f"""
+        Current scene: {current_scene}
+        User action: "{user_input}"
+        Character class: {character.__class__.__name__}
+        Character stats: Strength {character.strength}, Dexterity {character.dexterity}, 
+                         Constitution {character.constitution}, Intelligence {character.intelligence}, 
+                         Wisdom {character.wisdom}, Charisma {character.charisma}
+        Quest state: {quest_state}
+        Karma: {karma}
+        Progress: {progress:.2f}%
+
+        Generate the next scene of the Zen-themed D&D-style quest. Include:
+        1. A brief description of the new situation (2-3 sentences).
+        2. The outcome of the user's action, considering their character's stats and abilities.
+        3. A new challenge or decision point related to the quest goal.
+        4. A subtle Zen teaching or insight.
+        5. Three numbered options for the player's next action.
+
+        If appropriate, include one of these tags: [COMBAT_START], [RIDDLE_START], [QUEST_COMPLETE], [QUEST_FAIL]
+
+        Keep the entire response under 200 words and maintain an engaging, D&D with Zen vibes style.
+        """
+        return await self.generate_response(prompt)
 
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
@@ -1113,7 +1141,7 @@ def main():
     application.add_handler(CallbackQueryHandler(zen_quest.select_character_class, pattern="^class_"))
     application.add_handler(CallbackQueryHandler(zen_quest.select_group_character_class, pattern="^group_class_"))
     
-    # Add MessageHandler for text messages
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, zen_quest.handle_input))
-    
     application.run_polling()
+
+if __name__ == "__main__":
+    main()
