@@ -9,6 +9,7 @@ from mysql.connector import Error
 from datetime import datetime
 from collections import defaultdict
 import math
+import urllib.parse
 
 from telegram import (
     Update,
@@ -1036,25 +1037,77 @@ class ZenQuest:
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
         
+        # Check if a specific user ID was provided (for group quests)
+        if context.args and len(context.args) > 0:
+            try:
+                target_user_id = int(context.args[0])
+                if chat_id in self.group_quests and target_user_id in self.group_quests[chat_id]["players"]:
+                    user_id = target_user_id
+                else:
+                    await update.message.reply_text("Invalid user ID or user not in this group quest.")
+                    return
+            except ValueError:
+                await update.message.reply_text("Invalid user ID format.")
+                return
+        
         character_stats = await self.get_character_stats(user_id)
         
         if character_stats['name'] == "No Active Character":
-            await update.message.reply_text("You don't have an active character. Start a quest to create one!")
+            await update.message.reply_text("This user doesn't have an active character.")
             return
 
-        # Create a web app button that opens the character sheet
-        github_url = "https://github.com/ber1nd/ZenConnectBot/blob/main/templates/zen_stats.html"
-        preview_url = f"https://htmlpreview.github.io/?{github_url}"
+        # Encode character stats as a JSON string and then URL-encode it
+        stats_json = json.dumps(character_stats)
+        encoded_stats = urllib.parse.quote(stats_json)
+
+        # Use the raw GitHub content URL
+        github_raw_url = "https://raw.githubusercontent.com/ber1nd/ZenConnectBot/main/templates/zen_stats.html"
+        
         webapp_button = InlineKeyboardButton(
             text="View Character Sheet",
-            web_app=WebAppInfo(url=f"{preview_url}?user_id={user_id}")
+            web_app=WebAppInfo(url=f"{github_raw_url}?stats={encoded_stats}")
         )
         keyboard = InlineKeyboardMarkup([[webapp_button]])
 
         await update.message.reply_text(
-            "Click the button below to view your character sheet:",
+            f"Click the button below to view the character sheet for user {user_id}:",
             reply_markup=keyboard
         )
+
+    async def handle_group_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+
+        if chat_id not in self.group_turn_locks:
+            self.group_turn_locks[chat_id] = asyncio.Lock()
+            self.group_turn_orders[chat_id] = list(self.group_quests[chat_id]["players"].keys())
+            self.current_group_turns[chat_id] = 0
+
+        async with self.group_turn_locks[chat_id]:
+            current_player = self.group_turn_orders[chat_id][self.current_group_turns[chat_id]]
+            if user_id != current_player:
+                await update.message.reply_text("It's not your turn yet. Please wait.")
+                return
+
+            # Process the player's action
+            await self.progress_quest(update, context, user_input)
+
+            # Move to the next player's turn
+            self.current_group_turns[chat_id] = (self.current_group_turns[chat_id] + 1) % len(self.group_turn_orders[chat_id])
+            next_player = self.group_turn_orders[chat_id][self.current_group_turns[chat_id]]
+            await update.message.reply_text(f"It's now <@{next_player}>'s turn.")
+
+    async def list_group_players(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        if chat_id not in self.group_quests:
+            await update.message.reply_text("There is no active group quest in this chat.")
+            return
+
+        players = self.group_quests[chat_id]["players"]
+        player_list = "\n".join([f"Player {i+1}: {player.name} (ID: {user_id})" 
+                                 for i, (user_id, player) in enumerate(players.items())])
+        await update.message.reply_text(f"Players in this group quest:\n{player_list}\n\n"
+                                        f"Use /zenstats <player_id> to view a specific player's stats.")
 
 # Main function to set up and run the bot
 def main():
@@ -1083,11 +1136,10 @@ def main():
     application.add_handler(CommandHandler("hint", zen_quest.handle_hint))
     application.add_handler(CommandHandler("interrupt", zen_quest.handle_interrupt))
     application.add_handler(CommandHandler("zenstats", zen_quest.handle_zenstats))
+    application.add_handler(CommandHandler("groupplayers", zen_quest.list_group_players))
     
     application.add_handler(CallbackQueryHandler(zen_quest.select_character_class, pattern="^class_"))
     application.add_handler(CallbackQueryHandler(zen_quest.select_group_character_class, pattern="^group_class_"))
-    
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, zen_quest.handle_quest_message))
     
     application.run_polling()
 

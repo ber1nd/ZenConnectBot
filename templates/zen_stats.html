@@ -187,26 +187,8 @@
             return results === null ? '' : decodeURIComponent(results[1].replace(/\+/g, ' '));
         }
 
-        const userId = getUrlParameter('user_id');
-
-        async function fetchStats() {
-            try {
-                console.log("Fetching stats for user ID:", userId);
-                const response = await fetch(`/api/stats?user_id=${userId}`);
-                console.log("Response status:", response.status);
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`Failed to fetch stats: ${response.status} ${errorText}`);
-                }
-                const stats = await response.json();
-                console.log("Received stats:", stats);
-                updateCharacterSheet(stats);
-            } catch (error) {
-                console.error('Error fetching stats:', error);
-                document.getElementById('error-message').textContent = `Error: ${error.message}`;
-            }
-        }
-
+        const statsJson = getUrlParameter('stats');
+        
         function updateCharacterSheet(stats) {
             document.getElementById('character-name').textContent = stats.name || 'Unknown';
             document.getElementById('character-class').textContent = stats.class || 'Unknown';
@@ -242,7 +224,17 @@
             }
         }
 
-        fetchStats();
+        if (statsJson) {
+            try {
+                const stats = JSON.parse(decodeURIComponent(statsJson));
+                updateCharacterSheet(stats);
+            } catch (error) {
+                console.error('Error parsing stats:', error);
+                document.getElementById('error-message').textContent = 'Error loading character stats.';
+            }
+        } else {
+            document.getElementById('error-message').textContent = 'No character stats provided.';
+        }
     </script>
 </body>
 </html>
