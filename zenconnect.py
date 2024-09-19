@@ -33,6 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 import uvicorn
 import aiohttp
+from telegram.error import InvalidToken
 
 # Load environment variables
 load_dotenv()
@@ -127,29 +128,34 @@ def setup_database():
     if connection:
         try:
             cursor = connection.cursor()
-            # Create characters table
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS characters (
-                    user_id BIGINT PRIMARY KEY,
-                    name VARCHAR(255),
-                    class VARCHAR(255),
-                    hp INT,
-                    max_hp INT,
-                    energy INT,
-                    max_energy INT,
-                    karma INT,
-                    wisdom INT,
-                    intelligence INT,
-                    strength INT,
-                    dexterity INT,
-                    constitution INT,
-                    charisma INT
+            # Check if the table exists before trying to create it
+            cursor.execute("SHOW TABLES LIKE 'characters'")
+            result = cursor.fetchone()
+            if not result:
+                cursor.execute(
+                    """
+                    CREATE TABLE characters (
+                        user_id BIGINT PRIMARY KEY,
+                        name VARCHAR(255),
+                        class VARCHAR(255),
+                        hp INT,
+                        max_hp INT,
+                        energy INT,
+                        max_energy INT,
+                        karma INT,
+                        wisdom INT,
+                        intelligence INT,
+                        strength INT,
+                        dexterity INT,
+                        constitution INT,
+                        charisma INT
+                    )
+                    """
                 )
-                """
-            )
-            connection.commit()
-            logger.info("Database setup completed successfully.")
+                connection.commit()
+                logger.info("Characters table created successfully.")
+            else:
+                logger.info("Characters table already exists.")
         except mysql.connector.Error as e:
             logger.error(f"Error setting up database: {e}")
         finally:
@@ -1026,7 +1032,18 @@ class ZenQuest:
 def main():
     setup_database()
     
-    application = Application.builder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
+    token = os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        logger.error("TELEGRAM_TOKEN environment variable is not set!")
+        return
+
+    logger.info(f"Token: {token[:5]}...{token[-5:]}")  # Log first and last 5 characters of the token
+    
+    try:
+        application = Application.builder().token(token).build()
+    except InvalidToken:
+        logger.error("Invalid Telegram Bot Token. Please check your TELEGRAM_TOKEN environment variable.")
+        return
     
     zen_quest = ZenQuest()
     
