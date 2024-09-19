@@ -1,4 +1,3 @@
-import base64
 import json
 import os
 import logging
@@ -699,12 +698,7 @@ class ZenQuest:
 
     async def progress_quest(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         chat_id = update.effective_chat.id
-        user_id = update.effective_user.id
-        character = self.characters.get(user_id)
-        
-        if not character:
-            await update.message.reply_text("You don't have an active character. Start a new quest with /zenquest.")
-            return
+        character = self.characters[chat_id]
         
         # Generate the next scene based on user input and character
         next_scene = await self.generate_next_scene(chat_id, user_input, character)
@@ -713,81 +707,25 @@ class ZenQuest:
         self.current_scene[chat_id] = next_scene
         self.current_stage[chat_id] += 1
         
-        # Check for special events and consequences
+        # Check for special events
         if "[COMBAT_START]" in next_scene:
             await self.initiate_combat(update, context)
         elif "[RIDDLE_START]" in next_scene:
             await self.initiate_riddle(update, context)
         elif "[QUEST_COMPLETE]" in next_scene:
             await self.end_quest(update, context, victory=True, reason="You have completed your journey!")
-            return
         elif "[QUEST_FAIL]" in next_scene:
             await self.end_quest(update, context, victory=False, reason="Your quest has come to an unfortunate end.")
-            return
-        elif "[KARMA_CHANGE]" in next_scene:
-            karma_change = int(next_scene.split("[KARMA_CHANGE]")[1].split("]")[0])
-            self.player_karma[user_id] += karma_change
-            await update.message.reply_text(f"Your karma has changed by {karma_change}. New karma: {self.player_karma[user_id]}")
-        
-        # Send the scene to the user
-        await self.send_message(update, next_scene)
+        else:
+            # Send the scene to the user
+            await self.send_message(update, next_scene)
         
         # Update quest state and check for quest completion
         await self.update_quest_state(chat_id)
         if self.current_stage[chat_id] >= self.total_stages[chat_id]:
-            if self.player_karma[user_id] >= 100:  # Assuming 100 karma is needed to win
-                await self.end_quest(update, context, victory=True, reason="You have reached enlightenment and completed your journey!")
-            else:
-                await self.end_quest(update, context, victory=False, reason="Your journey has ended, but you have not reached enlightenment.")
-        else:
-            # Offer choices for the next action
-            choices = await self.generate_choices(chat_id, character)
-            choice_message = "What will you do next?\n" + "\n".join([f"{i+1}. {choice}" for i, choice in enumerate(choices)])
-            await self.send_message(update, choice_message)
+            await self.end_quest(update, context, victory=True, reason="You have reached the end of your journey!")
 
-    async def generate_choices(self, chat_id: int, character):
-        prompt = f"""
-        Current scene: {self.current_scene[chat_id]}
-        Character class: {character.__class__.__name__}
-        Quest progress: {self.current_stage[chat_id]}/{self.total_stages[chat_id]}
-
-        Generate 3 interesting and diverse choices for the player's next action. 
-        These should be relevant to the current scene and character abilities.
-        Each choice should be a short phrase or sentence.
-        """
-        choices_text = await self.generate_response(prompt)
-        return choices_text.strip().split('\n')
-
-    async def generate_next_scene(self, chat_id: int, user_input: str, character):
-        current_scene = self.current_scene[chat_id]
-        quest_state = self.quest_state[chat_id]
-        karma = self.player_karma[chat_id]
-        progress = (self.current_stage[chat_id] / self.total_stages[chat_id]) * 100
-
-        prompt = f"""
-        Current scene: {current_scene}
-        User action: "{user_input}"
-        Character class: {character.__class__.__name__}
-        Character stats: Strength {character.strength}, Dexterity {character.dexterity}, 
-                        Constitution {character.constitution}, Intelligence {character.intelligence}, 
-                        Wisdom {character.wisdom}, Charisma {character.charisma}
-        Quest state: {quest_state}
-        Karma: {karma}
-        Progress: {progress:.2f}%
-
-        Generate the next scene of the Zen-themed D&D-style quest. Include:
-        1. A vivid description of the new situation (2-3 sentences).
-        2. The outcome of the user's action, considering their character's stats and abilities.
-        3. A new challenge or decision point related to the quest goal.
-        4. A subtle Zen teaching or insight.
-        5. Consequences of the action (positive or negative).
-
-        If appropriate, include one of these tags: 
-        [COMBAT_START], [RIDDLE_START], [QUEST_COMPLETE], [QUEST_FAIL], [KARMA_CHANGE:X] (where X is the karma change value)
-
-        Keep the entire response under 200 words and maintain an engaging, D&D with Zen vibes style.
-        """
-        return await self.generate_response(prompt)
+    
 
     async def initiate_combat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
@@ -1090,28 +1028,16 @@ class ZenQuest:
             await update.message.reply_text("This user doesn't have an active character.")
             return
 
-        # Encode character stats as a JSON string
+        # Encode character stats as a JSON string and then URL-encode it
         stats_json = json.dumps(character_stats)
+        encoded_stats = urllib.parse.quote(stats_json)
 
-        # Read the HTML template
-        with open('templates/zen_stats.html', 'r') as file:
-            html_content = file.read()
-
-        # Replace the stats placeholder in the HTML with the actual stats
-        html_content = html_content.replace(
-            'const statsJson = getUrlParameter(\'stats\');',
-            f'const statsJson = {json.dumps(stats_json)};'
-        )
-
-        # Encode the entire HTML content
-        encoded_html = base64.b64encode(html_content.encode()).decode()
-
-        # Create the data URI
-        data_uri = f"data:text/html;base64,{encoded_html}"
-
+        # Use the raw GitHub content URL
+        github_raw_url = "https://raw.githubusercontent.com/ber1nd/ZenConnectBot/main/templates/zen_stats.html"
+        
         webapp_button = InlineKeyboardButton(
             text="View Character Sheet",
-            web_app=WebAppInfo(url=data_uri)
+            web_app=WebAppInfo(url=f"{github_raw_url}?stats={encoded_stats}")
         )
         keyboard = InlineKeyboardMarkup([[webapp_button]])
 
