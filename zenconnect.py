@@ -1041,7 +1041,6 @@ class ZenQuest:
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
         
-        # Check if a specific user ID was provided (for group quests)
         if context.args and len(context.args) > 0:
             try:
                 target_user_id = int(context.args[0])
@@ -1065,11 +1064,11 @@ class ZenQuest:
         encoded_stats = urllib.parse.quote(stats_json)
 
         # Use the raw GitHub content URL
-        github_raw_url = "https://raw.githubusercontent.com/ber1nd/ZenConnectBot/main/templates/zen_stats.html"
+        html_url = "https://raw.githubusercontent.com/ber1nd/ZenConnectBot/main/templates/zen_stats.html"
         
         webapp_button = InlineKeyboardButton(
             text="View Character Sheet",
-            web_app=WebAppInfo(url=f"{github_raw_url}?stats={encoded_stats}")
+            web_app=WebAppInfo(url=f"{html_url}?stats={encoded_stats}")
         )
         keyboard = InlineKeyboardMarkup([[webapp_button]])
 

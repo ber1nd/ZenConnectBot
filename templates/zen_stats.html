@@ -180,8 +180,10 @@
         const tg = window.Telegram.WebApp;
         tg.expand();
 
-        // The statsJson variable will be directly available here
-        const statsJson = `{{STATS_JSON}}`;  // This placeholder will be replaced by the actual stats JSON
+        function getQueryParam(name) {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(name);
+        }
 
         function updateCharacterSheet(stats) {
             document.getElementById('character-name').textContent = stats.name || 'Unknown';
@@ -218,9 +220,11 @@
             }
         }
 
-        if (statsJson) {
+        // Load and parse stats from URL parameter
+        const statsParam = getQueryParam('stats');
+        if (statsParam) {
             try {
-                const stats = JSON.parse(statsJson);
+                const stats = JSON.parse(decodeURIComponent(statsParam));
                 updateCharacterSheet(stats);
             } catch (error) {
                 console.error('Error parsing stats:', error);
