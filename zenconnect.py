@@ -1063,8 +1063,8 @@ class ZenQuest:
         stats_json = json.dumps(character_stats)
         encoded_stats = urllib.parse.quote(stats_json)
 
-        # Use the raw GitHub content URL
-        html_url = "https://raw.githubusercontent.com/ber1nd/ZenConnectBot/main/templates/zen_stats.html"
+        # Use the GitHub Pages URL
+        html_url = "https://ber1nd.github.io/ZenConnectBot/templates/zen_stats.html"
         
         webapp_button = InlineKeyboardButton(
             text="View Character Sheet",
