@@ -610,16 +610,15 @@ class ZenQuest:
         else:
             return  # Non-text message received
 
-        if not self.quest_active.get(chat_id, False):
-            await update.message.reply_text("You're not on a quest. Use /zenquest to start one!")
-            return
-
-        if chat_id in self.group_quests:
-            await self.handle_group_input(update, context, user_input)
-        elif self.in_combat.get(chat_id, False):
-            await self.handle_combat_action(update, context, user_input)
-        else:
-            await self.progress_quest(update, context, user_input)
+        # Only process input if there's an active quest for this chat
+        if self.quest_active.get(chat_id, False):
+            if chat_id in self.group_quests:
+                await self.handle_group_input(update, context, user_input)
+            elif self.in_combat.get(chat_id, False):
+                await self.handle_combat_action(update, context, user_input)
+            else:
+                await self.progress_quest(update, context, user_input)
+        # Don't respond if there's no active quest
 
     async def handle_group_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_input: str):
         chat_id = update.effective_chat.id
@@ -1058,7 +1057,8 @@ def main():
     application.add_handler(CallbackQueryHandler(zen_quest.select_character_class, pattern="^class_"))
     application.add_handler(CallbackQueryHandler(zen_quest.select_group_character_class, pattern="^group_class_"))
     
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, zen_quest.handle_input))
+    # Remove this line to prevent the bot from responding to all text messages
+    # application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, zen_quest.handle_input))
     
     application.run_polling()
 
