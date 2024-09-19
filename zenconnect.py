@@ -1057,8 +1057,8 @@ def main():
     application.add_handler(CallbackQueryHandler(zen_quest.select_character_class, pattern="^class_"))
     application.add_handler(CallbackQueryHandler(zen_quest.select_group_character_class, pattern="^group_class_"))
     
-    # Remove this line to prevent the bot from responding to all text messages
-    # application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, zen_quest.handle_input))
+    # Add a MessageHandler for quest-related inputs when a quest is active
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, zen_quest.handle_quest_message))
     
     application.run_polling()
 
