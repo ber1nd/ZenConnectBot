@@ -1031,7 +1031,11 @@ class ZenQuest:
     async def handle_quest_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         if self.quest_active.get(chat_id, False):
-            await self.handle_input(update, context)
+            if update.message and update.message.text:
+                user_input = update.message.text.strip()
+                await self.handle_input(update, context)
+            else:
+                await update.message.reply_text("Please provide a text input for your action.")
 
     async def handle_zenstats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
@@ -1141,7 +1145,10 @@ def main():
     application.add_handler(CallbackQueryHandler(zen_quest.select_character_class, pattern="^class_"))
     application.add_handler(CallbackQueryHandler(zen_quest.select_group_character_class, pattern="^group_class_"))
     
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, zen_quest.handle_quest_message))
+    
     application.run_polling()
+
 
 if __name__ == "__main__":
     main()
