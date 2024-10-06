@@ -237,8 +237,8 @@ class ZenQuest:
 
     async def generate_response(self, prompt):
         try:
-            response = await client.chat_completions.create(
-                model="gpt-3.5-turbo",
+            response = await client.acompletion(
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant for a Zen-themed D&D-style game."},
                     {"role": "user", "content": prompt}
